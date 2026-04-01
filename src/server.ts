@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Computer Use MCP Server — exposes tools over MCP protocol.
  * Backed by in-process Rust NAPI module via session.
