@@ -1,37 +1,37 @@
 use base64::Engine;
 use napi_derive::napi;
 use std::process::Command;
+use std::fs::OpenOptions;
 
 #[napi]
 pub fn take_screenshot() -> napi::Result<serde_json::Value> {
-    // Include thread id + time to avoid predictable temp path (symlink attack)
     let entropy = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
     let tmp = format!("/tmp/cu-napi-{}-{}.jpg", std::process::id(), entropy);
+
+    // Create exclusively — prevents symlink attack (fails if path already exists)
+    OpenOptions::new().write(true).create_new(true).open(&tmp)
+        .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
+
     let status = Command::new("screencapture")
         .args(["-x", "-t", "jpg", &tmp])
         .status()
         .map_err(|e| napi::Error::from_reason(format!("screencapture: {e}")))?;
 
     if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
         return Err(napi::Error::from_reason("screencapture failed"));
     }
 
     let data = std::fs::read(&tmp).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
     let _ = std::fs::remove_file(&tmp);
 
-    // Parse JPEG dimensions from SOF0 marker
     let (w, h) = jpeg_dimensions(&data).unwrap_or((0, 0));
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
 
-    Ok(serde_json::json!({
-        "base64": b64,
-        "width": w,
-        "height": h,
-        "mimeType": "image/jpeg",
-    }))
+    Ok(serde_json::json!({ "base64": b64, "width": w, "height": h, "mimeType": "image/jpeg" }))
 }
 
 /// Extract width/height from JPEG SOF0/SOF2 marker

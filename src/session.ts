@@ -41,7 +41,9 @@ export function createSession(): Session {
 
   async function dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
     // Override target if explicitly passed
-    if (args.target_app) targetApp = args.target_app as string
+    if (typeof args.target_app === 'string' && args.target_app.length > 0) {
+      targetApp = args.target_app
+    }
 
     // Input guards
     const coord = (key = 'coordinate'): [number, number] => {
@@ -139,7 +141,8 @@ export function createSession(): Session {
         }
         case 'hold_key': {
           await ensureFocus()
-          if (!Array.isArray(args.keys)) throw new Error('Invalid keys: expected string[]')
+          if (!Array.isArray(args.keys) || !args.keys.every(k => typeof k === 'string'))
+            throw new Error('Invalid keys: expected string[]')
           n.holdKey(args.keys as string[], num('duration', 1) * 1000)
           return ok('Held')
         }
@@ -150,7 +153,7 @@ export function createSession(): Session {
           return ok(text)
         }
         case 'write_clipboard': {
-          execFileSync('pbcopy', [], { input: args.text as string })
+          execFileSync('pbcopy', [], { input: str('text') })
           return ok('Written')
         }
 
@@ -169,7 +172,7 @@ export function createSession(): Session {
         case 'unhide_app':
           return ok(n.unhideApp(str('bundle_id')) ? 'Unhidden' : 'App not found')
         case 'get_display_size':
-          return ok(JSON.stringify(n.getDisplaySize(args.display_id !== undefined ? num('display_id', 0) : undefined)))
+          return ok(JSON.stringify(n.getDisplaySize(typeof args.display_id === 'number' ? args.display_id : undefined)))
         case 'list_displays':
           return ok(JSON.stringify(n.listDisplays()))
         case 'wait': {

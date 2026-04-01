@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "description": "Computer Use MCP — Rust NAPI native module, in-process CGEvent/NSWorkspace, MCP server + client",
   "type": "module",
+  "engines": { "node": ">=18" },
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node",
     "build:ts": "tsc",
@@ -11,7 +12,8 @@
     "demo": "tsx src/demo.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

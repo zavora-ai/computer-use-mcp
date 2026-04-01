@@ -5,7 +5,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { z } from 'zod'
+import { z, ZodTypeAny } from 'zod'
 import { createSession } from './session.js'
 
 const targetAppParam = z.string().optional().describe('Bundle ID of target app (auto-focuses before action)')
@@ -15,7 +15,7 @@ export function createComputerUseServer(): McpServer {
   const server = new McpServer({ name: 'computer-use', version: '2.0.0' })
   const session = createSession()
 
-  const tool = (name: string, desc: string, schema: Record<string, any>) => {
+  const tool = (name: string, desc: string, schema: Record<string, ZodTypeAny>) => {
     server.tool(name, desc, schema, async (args: any) => {
       const result = await session.dispatch(name, args)
       return {

@@ -28,7 +28,6 @@ export interface NativeModule {
   listRunningApps(): Array<{ bundleId: string; displayName: string; pid: number; isHidden: boolean }>
   hideApp(bundleId: string): boolean
   unhideApp(bundleId: string): boolean
-  openApp(bundleId: string): boolean
   // Display
   getDisplaySize(displayId?: number): { width: number; height: number; pixelWidth: number; pixelHeight: number; scaleFactor: number; displayId: number }
   listDisplays(): Array<{ width: number; height: number; scaleFactor: number; displayId: number }>

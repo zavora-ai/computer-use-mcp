@@ -50,11 +50,16 @@ pub fn mouse_click(x: f64, y: f64, button: String, count: i32) {
 }
 
 #[napi]
-pub fn mouse_button(action: String, x: f64, y: f64) {
+pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
     let point = CGPoint::new(x, y);
-    let evt_type = if action == "press" { CGEventType::LeftMouseDown } else { CGEventType::LeftMouseUp };
+    let evt_type = match action.as_str() {
+        "press" => CGEventType::LeftMouseDown,
+        "release" => CGEventType::LeftMouseUp,
+        _ => return Err(napi::Error::from_reason(format!("Invalid action: {action}, expected 'press' or 'release'"))),
+    };
     let event = CGEvent::new_mouse_event(source(), evt_type, point, CGMouseButton::Left).unwrap();
     post(event);
+    Ok(())
 }
 
 #[napi]

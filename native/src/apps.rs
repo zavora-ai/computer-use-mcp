@@ -165,20 +165,6 @@ pub fn unhide_app(bundle_id: String) -> napi::Result<bool> {
     }
 }
 
-#[napi]
-pub fn open_app(bundle_id: String) -> napi::Result<bool> {
-    unsafe {
-        let ws = shared_workspace();
-        let bid_nsstr = nsstring_from_str(&bundle_id);
-        let url: *mut Object = msg_send![ws, URLForApplicationWithBundleIdentifier: bid_nsstr];
-        if url.is_null() { return Ok(false); }
-        let config_cls = Class::get("NSWorkspaceOpenConfiguration").unwrap();
-        let config: *mut Object = msg_send![config_cls, configuration];
-        let _: () = msg_send![ws, openApplicationAtURL: url configuration: config completionHandler: std::ptr::null::<Object>()];
-        Ok(true)
-    }
-}
-
 fn nsstring_from_str(s: &str) -> *mut Object {
     unsafe {
         let cls = Class::get("NSString").unwrap();
