@@ -1,0 +1,82 @@
+/**
+ * Computer Use MCP Server — exposes tools over MCP protocol.
+ * Backed by in-process Rust NAPI module via session.
+ */
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { z } from 'zod'
+import { createSession } from './session.js'
+
+const targetAppParam = z.string().optional().describe('Bundle ID of target app (auto-focuses before action)')
+const coord = { coordinate: z.tuple([z.number(), z.number()]).describe('[x, y] pixels') }
+
+export function createComputerUseServer(): McpServer {
+  const server = new McpServer({ name: 'computer-use', version: '2.0.0' })
+  const session = createSession()
+
+  const tool = (name: string, desc: string, schema: Record<string, any>, toolName?: string) => {
+    server.tool(name, desc, schema, async (args: any) => {
+      const result = await session.dispatch(toolName ?? name, args)
+      return {
+        content: result.content.map(c =>
+          c.type === 'image'
+            ? { type: 'image' as const, data: (c as any).data, mimeType: (c as any).mimeType }
+            : { type: 'text' as const, text: (c as any).text ?? '' }
+        ),
+        isError: result.isError,
+      }
+    })
+  }
+
+  tool('screenshot', 'Take a screenshot of the screen', {})
+  tool('left_click', 'Left-click at coordinates', coord)
+  tool('right_click', 'Right-click at coordinates', coord)
+  tool('middle_click', 'Middle-click at coordinates', coord)
+  tool('double_click', 'Double-click at coordinates', coord)
+  tool('triple_click', 'Triple-click at coordinates', coord)
+  tool('mouse_move', 'Move cursor to coordinates', coord)
+  tool('left_click_drag', 'Click and drag', {
+    coordinate: z.tuple([z.number(), z.number()]),
+    start_coordinate: z.tuple([z.number(), z.number()]).optional(),
+  })
+  tool('cursor_position', 'Get current cursor position', {})
+  tool('left_mouse_down', 'Press left mouse button', coord)
+  tool('left_mouse_up', 'Release left mouse button', coord)
+  tool('scroll', 'Scroll at position', {
+    ...coord,
+    direction: z.enum(['up', 'down', 'left', 'right']),
+    amount: z.number().int().positive().default(3),
+    target_app: targetAppParam,
+  })
+  tool('type', 'Type text into the focused app', {
+    text: z.string(),
+    target_app: targetAppParam,
+  })
+  tool('key', 'Press a key combination (e.g. "command+c", "return")', {
+    text: z.string().describe('Key combo like "command+c" or "return"'),
+    repeat: z.number().int().positive().optional(),
+    target_app: targetAppParam,
+  })
+  tool('hold_key', 'Hold keys for a duration', {
+    keys: z.array(z.string()),
+    duration: z.number().positive().describe('Seconds'),
+    target_app: targetAppParam,
+  })
+  tool('read_clipboard', 'Read clipboard contents', {})
+  tool('write_clipboard', 'Write text to clipboard', { text: z.string() })
+  tool('open_application', 'Open and focus an app by bundle ID', {
+    bundle_id: z.string().describe('macOS bundle ID e.g. "com.apple.Safari"'),
+  })
+  tool('wait', 'Wait for N seconds', { duration: z.number().positive() })
+
+  return server
+}
+
+// Standalone stdio entrypoint
+if (process.argv[1]?.match(/server\.[tj]s$/)) {
+  const server = createComputerUseServer()
+  const transport = new StdioServerTransport()
+  server.connect(transport).then(() => console.error('[computer-use-mcp] Server running'))
+    .catch(err => { console.error('Fatal:', err); process.exit(1) })
+}
