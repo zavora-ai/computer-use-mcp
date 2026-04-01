@@ -30,7 +30,7 @@ export function createSession(): Session {
     const front = n.getFrontmostApp()
     if (front?.bundleId === targetApp) return
     n.activateApp(targetApp, 2000)
-    await sleep(150) // let activation settle
+    await sleep(80) // let activation settle
   }
 
   /** After a click, detect what app received it */
@@ -70,17 +70,17 @@ export function createSession(): Session {
         case 'left_click_drag': {
           const to = args.coordinate as [number, number]
           const from = args.start_coordinate as [number, number] | undefined
-          if (from) { n.mouseMove(from[0], from[1]); await sleep(50) }
+          if (from) { n.mouseMove(from[0], from[1]); await sleep(30) }
           n.mouseButton('press', from?.[0] ?? to[0], from?.[1] ?? to[1])
-          await sleep(50)
+          await sleep(30)
           const steps = 10
           for (let i = 1; i <= steps; i++) {
             const t = i / steps
             const sx = from?.[0] ?? to[0], sy = from?.[1] ?? to[1]
             n.mouseDrag(Math.round(sx + (to[0] - sx) * t), Math.round(sy + (to[1] - sy) * t))
-            if (i < steps) await sleep(20)
+            if (i < steps) await sleep(16)
           }
-          await sleep(50)
+          await sleep(30)
           n.mouseButton('release', to[0], to[1])
           return ok(`Dragged to (${to[0]}, ${to[1]})`)
         }
@@ -106,7 +106,7 @@ export function createSession(): Session {
           const dir = args.direction as string
           const amt = (args.amount as number) ?? 3
           n.mouseMove(x, y)
-          await sleep(30)
+          await sleep(15)
           const dx = dir === 'left' ? -amt : dir === 'right' ? amt : 0
           const dy = dir === 'up' ? -amt : dir === 'down' ? amt : 0
           n.mouseScroll(dy, dx)
@@ -145,7 +145,7 @@ export function createSession(): Session {
           const bid = args.bundle_id as string
           const r = n.activateApp(bid, 3000)
           targetApp = bid
-          await sleep(500) // let app fully launch
+          await sleep(300) // let app fully launch
           return ok(`Opened ${bid} (activated: ${r.activated})`)
         }
         case 'list_running_apps': {

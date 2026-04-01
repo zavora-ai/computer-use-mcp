@@ -88,7 +88,7 @@ pub fn activate_app(bundle_id: String, timeout_ms: Option<i32>) -> napi::Result<
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(30));
         }
 
         let name: *mut Object = msg_send![target, localizedName];

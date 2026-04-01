@@ -86,7 +86,7 @@ pub fn key_press(combo: String, repeat: Option<i32>) {
         up.set_flags(flags);
         post(up);
         if i < repeat - 1 {
-            std::thread::sleep(std::time::Duration::from_millis(8));
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
 }
@@ -101,7 +101,7 @@ pub fn type_text(text: String) {
         post(down);
         let up = CGEvent::new_keyboard_event(source(), 0, false).unwrap();
         post(up);
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(std::time::Duration::from_millis(3));
     }
 }
 

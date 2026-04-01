@@ -34,7 +34,7 @@ pub fn mouse_click(x: f64, y: f64, button: String, count: i32) {
     // Move first
     let move_evt = CGEvent::new_mouse_event(source(), CGEventType::MouseMoved, point, CGMouseButton::Left).unwrap();
     post(move_evt);
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    std::thread::sleep(std::time::Duration::from_millis(15));
 
     for i in 1..=count {
         let down = CGEvent::new_mouse_event(source(), down_type, point, btn).unwrap();
@@ -44,7 +44,7 @@ pub fn mouse_click(x: f64, y: f64, button: String, count: i32) {
         up.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
         post(up);
         if i < count {
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(30));
         }
     }
 }
