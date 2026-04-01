@@ -7,6 +7,10 @@ import { createRequire } from 'module'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 
+if (process.platform !== 'darwin') {
+  throw new Error(`computer-use-mcp requires macOS (got ${process.platform})`)
+}
+
 const require = createRequire(import.meta.url)
 const ADDON_PATH = join(fileURLToPath(import.meta.url), '..', '..', 'computer-use-napi.node')
 

@@ -1,133 +1,86 @@
-# Computer Use MCP
+# computer-use-mcp
 
-Standalone MCP server and client for computer control — screenshot, mouse, keyboard, clipboard, and app management. Extracted from Claude Code's "Chicago MCP" architecture and rebuilt with zero native module dependencies (uses macOS built-in `screencapture`, `osascript`, and CoreGraphics via Python).
+MCP server + client for macOS computer control. Screenshot, mouse, keyboard, clipboard, and app management — all in-process via Rust NAPI (no subprocesses, no focus stealing).
 
-## Architecture
+**macOS only.** Requires Accessibility permission.
 
-```
-┌─────────────────────┐         MCP Protocol         ┌──────────────────────┐
-│     MCP Client      │ ◄──── stdio or in-memory ───► │     MCP Server       │
-│                     │                               │                      │
-│  client.ts          │                               │  server.ts           │
-│  • connectStdio()   │                               │  • 20 tools          │
-│  • connectInProcess()│                              │  • screenshot        │
-│  • typed methods    │                               │  • mouse/keyboard    │
-│                     │                               │  • clipboard         │
-└─────────────────────┘                               │  • app management    │
-                                                      └──────┬───────────────┘
-                                                             │
-                                                      ┌──────▼───────────────┐
-                                                      │    Executor          │
-                                                      │                      │
-                                                      │  executor.ts         │
-                                                      │  • screencapture     │
-                                                      │  • CoreGraphics/py   │
-                                                      │  • osascript         │
-                                                      │  • pbcopy/pbpaste    │
-                                                      └──────────────────────┘
-```
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `screenshot` | Capture the screen (returns PNG image) |
-| `left_click` | Left-click at coordinates |
-| `right_click` | Right-click at coordinates |
-| `middle_click` | Middle-click at coordinates |
-| `double_click` | Double-click at coordinates |
-| `triple_click` | Triple-click at coordinates |
-| `mouse_move` | Move cursor to coordinates |
-| `left_click_drag` | Click-drag from one point to another |
-| `left_mouse_down` | Press left mouse button |
-| `left_mouse_up` | Release left mouse button |
-| `cursor_position` | Get current cursor position |
-| `scroll` | Scroll at a position (up/down/left/right) |
-| `type` | Type text via keystrokes |
-| `key` | Press key combination (e.g. `command+c`) |
-| `hold_key` | Hold keys for a duration |
-| `read_clipboard` | Read clipboard contents |
-| `write_clipboard` | Write text to clipboard |
-| `open_application` | Open app by bundle ID |
-| `wait` | Wait for N seconds |
-
-## Quick Start
+## Install
 
 ```bash
-npm install
+npm install computer-use-mcp
 ```
 
-### Run as MCP server (stdio)
+> The package ships a prebuilt `.node` binary for macOS. To build from source: `npm run build` (requires Rust + Cargo).
 
-```bash
-# Start the server — an MCP client (like Claude Desktop) connects via stdio
-npx ts-node --esm src/server.ts
-```
+## Tools (24)
 
-Add to Claude Desktop's `claude_desktop_config.json`:
+| Category | Tools |
+|---|---|
+| Screen | `screenshot` |
+| Mouse | `left_click` `right_click` `middle_click` `double_click` `triple_click` `mouse_move` `left_click_drag` `left_mouse_down` `left_mouse_up` `scroll` `cursor_position` |
+| Keyboard | `type` `key` `hold_key` |
+| Clipboard | `read_clipboard` `write_clipboard` |
+| Apps | `open_application` `list_running_apps` `hide_app` `unhide_app` |
+| Display | `get_display_size` `list_displays` |
+| Util | `wait` |
+
+## Usage
+
+### As MCP server (Claude Desktop / any MCP client)
+
 ```json
 {
   "mcpServers": {
     "computer-use": {
-      "command": "npx",
-      "args": ["ts-node", "--esm", "src/server.ts"],
-      "cwd": "/path/to/computer-use-mcp"
+      "command": "node",
+      "args": ["node_modules/computer-use-mcp/dist/server.js"]
     }
   }
 }
 ```
 
-### Run the demo (in-process client + server)
-
-```bash
-npx ts-node --esm src/demo.ts
-```
-
-### Use as a library
+### As a library
 
 ```typescript
-import { createComputerUseServer } from './server.js'
-import { connectInProcess, connectStdio } from './client.js'
+import { createComputerUseServer } from 'computer-use-mcp'
+import { connectInProcess, connectStdio } from 'computer-use-mcp/client'
 
-// Option 1: In-process (no subprocess)
+// In-process (fastest)
 const server = createComputerUseServer()
 const client = await connectInProcess(server)
 
-// Option 2: Subprocess via stdio
-const client = await connectStdio('npx', ['ts-node', '--esm', 'src/server.ts'])
+// Via stdio subprocess
+const client = await connectStdio('node', ['node_modules/computer-use-mcp/dist/server.js'])
 
-// Use typed methods
 await client.screenshot()
 await client.click(500, 300)
 await client.type('Hello world')
 await client.key('command+s')
-await client.scroll(500, 300, 'down', 5)
-
-// Or call any tool by name
-await client.callTool('left_click', { coordinate: [500, 300] })
+await client.openApp('com.apple.Safari')
 
 await client.close()
 ```
 
 ## Requirements
 
-- macOS (uses `screencapture`, `osascript`, CoreGraphics)
-- Node.js >= 18
-- Python 3 with PyObjC (`Quartz` module — pre-installed on macOS)
-- Accessibility permission for the terminal (System Settings → Privacy → Accessibility)
+- macOS 12+
+- Node.js 18+
+- System Settings → Privacy → Accessibility → grant permission to your terminal
 
-## How It Works
+## Architecture
 
-The executor uses macOS built-in tools — no native Node.js modules to compile:
+```
+Client (TypeScript)
+  └─ MCP protocol (in-memory or stdio)
+       └─ Server (TypeScript)
+            └─ Session (TypeScript)
+                 └─ NAPI (.node binary)
+                      ├─ CGEvent      — mouse & keyboard
+                      ├─ NSWorkspace  — app management
+                      ├─ CoreGraphics — display info
+                      └─ screencapture — screenshots
+```
 
-- **Screenshot**: `screencapture` CLI (built into macOS)
-- **Mouse**: CoreGraphics `CGEventCreateMouseEvent` via Python's `Quartz` bridge
-- **Keyboard**: AppleScript `System Events` via `osascript`
-- **Clipboard**: `pbcopy` / `pbpaste`
-- **Apps**: `open -b <bundleId>`
+## License
 
-The MCP server wraps these in standard MCP tool definitions. The client connects via stdio (subprocess) or in-memory transports (same process).
-
-## Extending
-
-To add cross-platform support, replace `executor.ts` with platform-specific implementations. The server and client are platform-agnostic — only the executor touches OS APIs.
+MIT

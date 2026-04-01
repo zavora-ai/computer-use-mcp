@@ -1,13 +1,42 @@
 {
   "name": "computer-use-mcp",
   "version": "2.0.0",
-  "description": "Computer Use MCP — Rust NAPI native module, in-process CGEvent/NSWorkspace, MCP server + client",
+  "description": "MCP server + client for macOS computer control — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "type": "module",
   "engines": { "node": ">=18" },
+  "os": ["darwin"],
+  "exports": {
+    ".": {
+      "import": "./dist/server.js",
+      "types": "./dist/server.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./dist/client.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server.js",
+      "types": "./dist/server.d.ts"
+    }
+  },
+  "files": [
+    "dist/server.js",
+    "dist/server.d.ts",
+    "dist/client.js",
+    "dist/client.d.ts",
+    "dist/session.js",
+    "dist/session.d.ts",
+    "dist/native.js",
+    "dist/native.d.ts",
+    "computer-use-napi.node",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
+    "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",
     "demo": "tsx src/demo.ts"
   },
