@@ -16,7 +16,7 @@ export function createComputerUseServer(): McpServer {
   const session = createSession()
 
   const tool = (name: string, desc: string, schema: Record<string, ZodTypeAny>) => {
-    server.tool(name, desc, schema, async (args: any) => {
+    server.tool(name, desc, schema, async (args: Record<string, unknown>) => {
       const result = await session.dispatch(name, args)
       return {
         content: result.content.map(c =>

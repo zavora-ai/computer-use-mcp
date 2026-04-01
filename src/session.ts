@@ -183,8 +183,9 @@ export function createSession(): Session {
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${tool}` }], isError: true }
       }
-    } catch (err: any) {
-      return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true }
     }
   }
 

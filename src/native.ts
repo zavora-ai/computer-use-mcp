@@ -13,15 +13,15 @@ const ADDON_PATH = join(fileURLToPath(import.meta.url), '..', '..', 'computer-us
 export interface NativeModule {
   // Mouse
   mouseMove(x: number, y: number): void
-  mouseClick(x: number, y: number, button: string, count: number): void
-  mouseButton(action: string, x: number, y: number): void
+  mouseClick(x: number, y: number, button: string, count: number): void  // throws on invalid button
+  mouseButton(action: string, x: number, y: number): void                // throws on invalid action
   mouseScroll(dy: number, dx: number): void
   mouseDrag(x: number, y: number): void
   cursorPosition(): { x: number; y: number }
   // Keyboard
-  keyPress(combo: string, repeat?: number): void
+  keyPress(combo: string, repeat?: number): void   // throws on unknown key
   typeText(text: string): void
-  holdKey(keys: string[], durationMs: number): void
+  holdKey(keys: string[], durationMs: number): void // throws on unknown key
   // Apps
   activateApp(bundleId: string, timeoutMs?: number): { bundleId: string; activated: boolean; displayName?: string }
   getFrontmostApp(): { bundleId: string; displayName: string; pid: number } | null

@@ -2,15 +2,14 @@ use base64::Engine;
 use napi_derive::napi;
 use std::process::Command;
 use std::fs::OpenOptions;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
 
 #[napi]
 pub fn take_screenshot() -> napi::Result<serde_json::Value> {
-    // O_EXCL create prevents symlink attack; screencapture overwrites the empty file
-    let entropy = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() ^ (std::process::id() as u32 * 2654435761))
-        .unwrap_or(std::process::id());
-    let tmp = format!("/tmp/cu-{:08x}.jpg", entropy);
+    let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = format!("/tmp/cu-{}-{}.jpg", std::process::id(), seq);
 
     OpenOptions::new().write(true).create_new(true).open(&tmp)
         .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
