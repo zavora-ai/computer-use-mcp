@@ -60,7 +60,8 @@ fn modifier_flag(name: &str) -> Option<CGEventFlags> {
 pub fn key_press(combo: String, repeat: Option<i32>) {
     let map = key_code_map();
     let repeat = repeat.unwrap_or(1);
-    let parts: Vec<&str> = combo.to_lowercase().leak().split('+').map(|s| s.trim()).collect();
+    let combo_lower = combo.to_lowercase();
+    let parts: Vec<&str> = combo_lower.split('+').map(|s| s.trim()).collect();
 
     let mut flags = CGEventFlags::empty();
     let mut main_key: Option<CGKeyCode> = None;

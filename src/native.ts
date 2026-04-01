@@ -1,6 +1,6 @@
 /**
  * Native NAPI module loader — loads the compiled .node addon.
- * All 18 functions run in-process via CGEvent/NSWorkspace.
+ * All functions run in-process via CGEvent/NSWorkspace.
  */
 
 import { createRequire } from 'module'

@@ -4,7 +4,12 @@ use std::process::Command;
 
 #[napi]
 pub fn take_screenshot() -> napi::Result<serde_json::Value> {
-    let tmp = format!("/tmp/cu-napi-{}.jpg", std::process::id());
+    // Include thread id + time to avoid predictable temp path (symlink attack)
+    let entropy = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tmp = format!("/tmp/cu-napi-{}-{}.jpg", std::process::id(), entropy);
     let status = Command::new("screencapture")
         .args(["-x", "-t", "jpg", &tmp])
         .status()

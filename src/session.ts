@@ -43,6 +43,22 @@ export function createSession(): Session {
     // Override target if explicitly passed
     if (args.target_app) targetApp = args.target_app as string
 
+    // Input guards
+    const coord = (key = 'coordinate'): [number, number] => {
+      const v = args[key]
+      if (!Array.isArray(v) || v.length < 2 || typeof v[0] !== 'number' || typeof v[1] !== 'number')
+        throw new Error(`Invalid ${key}: expected [number, number]`)
+      return [v[0], v[1]]
+    }
+    const str = (key: string): string => {
+      if (typeof args[key] !== 'string') throw new Error(`Invalid ${key}: expected string`)
+      return args[key] as string
+    }
+    const num = (key: string, fallback: number): number => {
+      const v = args[key]
+      return typeof v === 'number' ? v : fallback
+    }
+
     try {
       switch (tool) {
         // ── Screenshot (read-only, no focus needed) ─────────────────
@@ -55,21 +71,20 @@ export function createSession(): Session {
         }
 
         // ── Clicks — focus happens via the click itself ─────────────
-        case 'left_click': return doClick(n, args, 'left', 1)
-        case 'right_click': return doClick(n, args, 'right', 1)
-        case 'middle_click': return doClick(n, args, 'middle', 1)
-        case 'double_click': return doClick(n, args, 'left', 2)
-        case 'triple_click': return doClick(n, args, 'left', 3)
+        case 'left_click': return doClick(n, coord(), 'left', 1)
+        case 'right_click': return doClick(n, coord(), 'right', 1)
+        case 'middle_click': return doClick(n, coord(), 'middle', 1)
+        case 'double_click': return doClick(n, coord(), 'left', 2)
+        case 'triple_click': return doClick(n, coord(), 'left', 3)
 
-        // ── Mouse movement ──────────────────────────────────────────
         case 'mouse_move': {
-          const [x, y] = args.coordinate as [number, number]
+          const [x, y] = coord()
           n.mouseMove(x, y)
           return ok(`Moved to (${x}, ${y})`)
         }
         case 'left_click_drag': {
-          const to = args.coordinate as [number, number]
-          const from = args.start_coordinate as [number, number] | undefined
+          const to = coord()
+          const from = args.start_coordinate ? coord('start_coordinate') : undefined
           if (from) { n.mouseMove(from[0], from[1]); await sleep(30) }
           n.mouseButton('press', from?.[0] ?? to[0], from?.[1] ?? to[1])
           await sleep(30)
@@ -85,12 +100,12 @@ export function createSession(): Session {
           return ok(`Dragged to (${to[0]}, ${to[1]})`)
         }
         case 'left_mouse_down': {
-          const [x, y] = args.coordinate as [number, number]
+          const [x, y] = coord()
           n.mouseButton('press', x, y)
           return ok('Mouse down')
         }
         case 'left_mouse_up': {
-          const [x, y] = args.coordinate as [number, number]
+          const [x, y] = coord()
           n.mouseButton('release', x, y)
           return ok('Mouse up')
         }
@@ -99,12 +114,11 @@ export function createSession(): Session {
           return ok(`(${p.x}, ${p.y})`)
         }
 
-        // ── Scroll — needs focus ────────────────────────────────────
         case 'scroll': {
           await ensureFocus()
-          const [x, y] = args.coordinate as [number, number]
-          const dir = args.direction as string
-          const amt = (args.amount as number) ?? 3
+          const [x, y] = coord()
+          const dir = str('direction')
+          const amt = num('amount', 3)
           n.mouseMove(x, y)
           await sleep(15)
           const dx = dir === 'left' ? -amt : dir === 'right' ? amt : 0
@@ -113,20 +127,20 @@ export function createSession(): Session {
           return ok(`Scrolled ${dir} ${amt}`)
         }
 
-        // ── Keyboard — MUST have focus ──────────────────────────────
         case 'type': {
           await ensureFocus()
-          n.typeText(args.text as string)
+          n.typeText(str('text'))
           return ok('Typed')
         }
         case 'key': {
           await ensureFocus()
-          n.keyPress(args.text as string, (args.repeat as number) ?? undefined)
+          n.keyPress(str('text'), args.repeat !== undefined ? num('repeat', 1) : undefined)
           return ok(`Pressed ${args.text}`)
         }
         case 'hold_key': {
           await ensureFocus()
-          n.holdKey(args.keys as string[], ((args.duration as number) ?? 1) * 1000)
+          if (!Array.isArray(args.keys)) throw new Error('Invalid keys: expected string[]')
+          n.holdKey(args.keys as string[], num('duration', 1) * 1000)
           return ok('Held')
         }
 
@@ -142,36 +156,24 @@ export function createSession(): Session {
 
         // ── App management ──────────────────────────────────────────
         case 'open_application': {
-          const bid = args.bundle_id as string
+          const bid = str('bundle_id')
           const r = n.activateApp(bid, 3000)
           targetApp = bid
-          await sleep(300) // let app fully launch
+          await sleep(300)
           return ok(`Opened ${bid} (activated: ${r.activated})`)
         }
-        case 'list_running_apps': {
-          const apps = n.listRunningApps()
-          return ok(JSON.stringify(apps))
-        }
-        case 'hide_app': {
-          const found = n.hideApp(args.bundle_id as string)
-          return ok(found ? 'Hidden' : 'App not found')
-        }
-        case 'unhide_app': {
-          const found = n.unhideApp(args.bundle_id as string)
-          return ok(found ? 'Unhidden' : 'App not found')
-        }
-        case 'get_display_size': {
-          const info = n.getDisplaySize(args.display_id as number | undefined)
-          return ok(JSON.stringify(info))
-        }
-        case 'list_displays': {
-          const displays = n.listDisplays()
-          return ok(JSON.stringify(displays))
-        }
-
-        // ── Wait ────────────────────────────────────────────────────
+        case 'list_running_apps':
+          return ok(JSON.stringify(n.listRunningApps()))
+        case 'hide_app':
+          return ok(n.hideApp(str('bundle_id')) ? 'Hidden' : 'App not found')
+        case 'unhide_app':
+          return ok(n.unhideApp(str('bundle_id')) ? 'Unhidden' : 'App not found')
+        case 'get_display_size':
+          return ok(JSON.stringify(n.getDisplaySize(args.display_id !== undefined ? num('display_id', 0) : undefined)))
+        case 'list_displays':
+          return ok(JSON.stringify(n.listDisplays()))
         case 'wait': {
-          await sleep(((args.duration as number) ?? 1) * 1000)
+          await sleep(num('duration', 1) * 1000)
           return ok(`Waited ${args.duration}s`)
         }
 
@@ -183,8 +185,7 @@ export function createSession(): Session {
     }
   }
 
-  function doClick(n: NativeModule, args: Record<string, unknown>, button: string, count: number): ToolResult {
-    const [x, y] = args.coordinate as [number, number]
+  function doClick(n: NativeModule, [x, y]: [number, number], button: string, count: number): ToolResult {
     n.mouseClick(x, y, button, count)
     trackClickTarget()
     return ok(`Clicked (${x}, ${y})`)
