@@ -15,14 +15,14 @@ export function createComputerUseServer(): McpServer {
   const server = new McpServer({ name: 'computer-use', version: '2.0.0' })
   const session = createSession()
 
-  const tool = (name: string, desc: string, schema: Record<string, any>, toolName?: string) => {
+  const tool = (name: string, desc: string, schema: Record<string, any>) => {
     server.tool(name, desc, schema, async (args: any) => {
-      const result = await session.dispatch(toolName ?? name, args)
+      const result = await session.dispatch(name, args)
       return {
         content: result.content.map(c =>
           c.type === 'image'
-            ? { type: 'image' as const, data: (c as any).data, mimeType: (c as any).mimeType }
-            : { type: 'text' as const, text: (c as any).text ?? '' }
+            ? { type: 'image' as const, data: c.data, mimeType: c.mimeType }
+            : { type: 'text' as const, text: c.text }
         ),
         isError: result.isError,
       }

@@ -6,14 +6,11 @@
  */
 
 import { loadNative, type NativeModule } from './native.js'
+import { execFileSync } from 'child_process'
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 export interface Session {
-  /** Set the target app for all subsequent actions */
-  setTarget(bundleId: string): void
-  /** Get current target app */
-  getTarget(): string | undefined
   /** Dispatch a tool call */
   dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult>
 }
@@ -135,14 +132,11 @@ export function createSession(): Session {
 
         // ── Clipboard (no focus needed) ─────────────────────────────
         case 'read_clipboard': {
-          const { execFileSync } = await import('child_process')
           const text = execFileSync('pbpaste', []).toString()
           return ok(text)
         }
         case 'write_clipboard': {
-          const { execFileSync } = await import('child_process')
-          const text = args.text as string
-          execFileSync('pbcopy', [], { input: text })
+          execFileSync('pbcopy', [], { input: args.text as string })
           return ok('Written')
         }
 
@@ -196,11 +190,7 @@ export function createSession(): Session {
     return ok(`Clicked (${x}, ${y})`)
   }
 
-  return {
-    setTarget(bid) { targetApp = bid },
-    getTarget() { return targetApp },
-    dispatch,
-  }
+  return { dispatch }
 }
 
 function ok(text: string): ToolResult {
