@@ -497,7 +497,7 @@ interface ToolResult {
 You need:
 - [Rust](https://rustup.rs) (stable, 1.70+)
 - [Node.js](https://nodejs.org) 18+
-- macOS 12+ (Monterey or later)
+- macOS 10.15+ (Catalina or later)
 
 ```bash
 # Clone
@@ -561,7 +561,8 @@ This package has **full control of your Mac** when Accessibility permission is g
 
 ### Platform
 - **macOS only.** The native module uses CoreGraphics, NSWorkspace, and `screencapture` — all macOS-specific. Linux and Windows are not supported.
-- Tested on macOS 12 (Monterey), 13 (Ventura), 14 (Sonoma), 15 (Sequoia).
+- **Minimum**: macOS 10.15 (Catalina) — required for `NSWorkspaceOpenConfiguration`.
+- **Tested on**: macOS 12 (Monterey), 13 (Ventura), 14 (Sonoma), 15 (Sequoia).
 
 ### Architecture
 - The prebuilt `.node` binary is compiled for the architecture of the machine it was built on (arm64 for Apple Silicon, x86_64 for Intel). If you're on a different architecture, build from source.
