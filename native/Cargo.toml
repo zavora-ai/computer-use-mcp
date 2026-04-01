@@ -2,6 +2,9 @@
 name = "computer-use-napi"
 version = "1.0.0"
 edition = "2021"
+authors = ["James Karanja Maina <james@zavora.ai>"]
+description = "Rust NAPI native module for computer-use-mcp"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]

@@ -631,3 +631,7 @@ Check that all key names are in the supported list. Common mistakes:
 ## License
 
 MIT — see [LICENSE](LICENSE)
+
+---
+
+*Built by [James Karanja Maina](https://github.com/jkmaina) at [Zavora Technologies Ltd](https://zavora.ai)*

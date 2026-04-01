@@ -2,6 +2,8 @@
   "name": "computer-use-mcp",
   "version": "2.0.0",
   "description": "MCP server + client for macOS computer control — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
+  "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
+  "license": "MIT",
   "type": "module",
   "engines": { "node": ">=18" },
   "os": ["darwin"],
