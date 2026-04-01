@@ -6,6 +6,9 @@ authors = ["James Karanja Maina <james@zavora.ai>"]
 description = "Rust NAPI native module for computer-use-mcp"
 license = "MIT"
 
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(cargo_clippy)'] }
+
 [lib]
 crate-type = ["cdylib"]
 

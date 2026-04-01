@@ -4,10 +4,14 @@ use objc::{msg_send, sel, sel_impl};
 use std::ffi::CStr;
 
 fn nsstring_to_string(nsstr: *mut Object) -> Option<String> {
-    if nsstr.is_null() { return None; }
+    if nsstr.is_null() {
+        return None;
+    }
     unsafe {
         let cstr: *const i8 = msg_send![nsstr, UTF8String];
-        if cstr.is_null() { return None; }
+        if cstr.is_null() {
+            return None;
+        }
         Some(CStr::from_ptr(cstr).to_string_lossy().into_owned())
     }
 }
@@ -111,7 +115,9 @@ pub fn list_running_apps() -> napi::Result<serde_json::Value> {
         for i in 0..count {
             let app: *mut Object = msg_send![apps, objectAtIndex: i];
             let policy: i64 = msg_send![app, activationPolicy];
-            if policy != 0 { continue; } // NSApplicationActivationPolicyRegular = 0
+            if policy != 0 {
+                continue;
+            } // NSApplicationActivationPolicyRegular = 0
             let bid: *mut Object = msg_send![app, bundleIdentifier];
             let name: *mut Object = msg_send![app, localizedName];
             let pid: i32 = msg_send![app, processIdentifier];

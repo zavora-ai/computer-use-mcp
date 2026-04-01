@@ -1,5 +1,5 @@
-mod mouse;
-mod keyboard;
 mod apps;
 mod display;
+mod keyboard;
+mod mouse;
 mod screenshot;

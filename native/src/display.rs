@@ -34,7 +34,9 @@ pub fn list_displays() -> napi::Result<serde_json::Value> {
     let mut count = 0u32;
     let err = unsafe { CGGetActiveDisplayList(16, displays.as_mut_ptr(), &mut count) };
     if err != 0 {
-        return Err(napi::Error::from_reason(format!("CGGetActiveDisplayList error: {err}")));
+        return Err(napi::Error::from_reason(format!(
+            "CGGetActiveDisplayList error: {err}"
+        )));
     }
     let mut result = Vec::new();
     for i in 0..count as usize {

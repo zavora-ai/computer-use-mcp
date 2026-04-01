@@ -1,6 +1,4 @@
-use core_graphics::event::{
-    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
-};
+use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use napi_derive::napi;
@@ -17,8 +15,12 @@ fn post(event: CGEvent) {
 pub fn mouse_move(x: f64, y: f64) {
     let point = CGPoint::new(x, y);
     let event = CGEvent::new_mouse_event(
-        source(), CGEventType::MouseMoved, point, CGMouseButton::Left,
-    ).unwrap();
+        source(),
+        CGEventType::MouseMoved,
+        point,
+        CGMouseButton::Left,
+    )
+    .unwrap();
     post(event);
 }
 
@@ -26,13 +28,35 @@ pub fn mouse_move(x: f64, y: f64) {
 pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
     let point = CGPoint::new(x, y);
     let (btn, down_type, up_type) = match button.as_str() {
-        "left"   => (CGMouseButton::Left,   CGEventType::LeftMouseDown,  CGEventType::LeftMouseUp),
-        "right"  => (CGMouseButton::Right,  CGEventType::RightMouseDown, CGEventType::RightMouseUp),
-        "middle" => (CGMouseButton::Center, CGEventType::OtherMouseDown, CGEventType::OtherMouseUp),
-        _ => return Err(napi::Error::from_reason(format!("Invalid button: {button}, expected left/right/middle"))),
+        "left" => (
+            CGMouseButton::Left,
+            CGEventType::LeftMouseDown,
+            CGEventType::LeftMouseUp,
+        ),
+        "right" => (
+            CGMouseButton::Right,
+            CGEventType::RightMouseDown,
+            CGEventType::RightMouseUp,
+        ),
+        "middle" => (
+            CGMouseButton::Center,
+            CGEventType::OtherMouseDown,
+            CGEventType::OtherMouseUp,
+        ),
+        _ => {
+            return Err(napi::Error::from_reason(format!(
+                "Invalid button: {button}, expected left/right/middle"
+            )))
+        }
     };
 
-    let move_evt = CGEvent::new_mouse_event(source(), CGEventType::MouseMoved, point, CGMouseButton::Left).unwrap();
+    let move_evt = CGEvent::new_mouse_event(
+        source(),
+        CGEventType::MouseMoved,
+        point,
+        CGMouseButton::Left,
+    )
+    .unwrap();
     post(move_evt);
     std::thread::sleep(std::time::Duration::from_millis(15));
 
@@ -56,7 +80,11 @@ pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
     let evt_type = match action.as_str() {
         "press" => CGEventType::LeftMouseDown,
         "release" => CGEventType::LeftMouseUp,
-        _ => return Err(napi::Error::from_reason(format!("Invalid action: {action}, expected 'press' or 'release'"))),
+        _ => {
+            return Err(napi::Error::from_reason(format!(
+                "Invalid action: {action}, expected 'press' or 'release'"
+            )))
+        }
     };
     let event = CGEvent::new_mouse_event(source(), evt_type, point, CGMouseButton::Left).unwrap();
     post(event);
@@ -79,8 +107,12 @@ pub fn mouse_scroll(dy: i32, dx: i32) {
     }
     unsafe {
         let event = CGEventCreateScrollWheelEvent2(
-            std::ptr::null(), 0, // kCGScrollEventUnitLine = 0
-            2, dy, dx, 0,
+            std::ptr::null(),
+            0, // kCGScrollEventUnitLine = 0
+            2,
+            dy,
+            dx,
+            0,
         );
         if !event.is_null() {
             CGEventPost(0, event); // kCGHIDEventTap = 0
@@ -93,8 +125,12 @@ pub fn mouse_scroll(dy: i32, dx: i32) {
 pub fn mouse_drag(x: f64, y: f64) {
     let point = CGPoint::new(x, y);
     let event = CGEvent::new_mouse_event(
-        source(), CGEventType::LeftMouseDragged, point, CGMouseButton::Left,
-    ).unwrap();
+        source(),
+        CGEventType::LeftMouseDragged,
+        point,
+        CGMouseButton::Left,
+    )
+    .unwrap();
     post(event);
 }
 

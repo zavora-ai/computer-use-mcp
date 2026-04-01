@@ -1,7 +1,7 @@
 use base64::Engine;
 use napi_derive::napi;
-use std::process::Command;
 use std::fs::OpenOptions;
+use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
@@ -11,13 +11,19 @@ pub fn take_screenshot() -> napi::Result<serde_json::Value> {
     let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = format!("/tmp/cu-{}-{}.jpg", std::process::id(), seq);
 
-    OpenOptions::new().write(true).create_new(true).open(&tmp)
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
         .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
 
     let status = Command::new("screencapture")
         .args(["-x", "-t", "jpg", &tmp])
         .status()
-        .map_err(|e| { let _ = std::fs::remove_file(&tmp); napi::Error::from_reason(format!("screencapture: {e}")) })?;
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            napi::Error::from_reason(format!("screencapture: {e}"))
+        })?;
 
     if !status.success() {
         let _ = std::fs::remove_file(&tmp);
@@ -36,7 +42,10 @@ pub fn take_screenshot() -> napi::Result<serde_json::Value> {
 fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let mut i = 0;
     while i + 1 < data.len() {
-        if data[i] != 0xFF { i += 1; continue; }
+        if data[i] != 0xFF {
+            i += 1;
+            continue;
+        }
         let marker = data[i + 1];
         if marker == 0xC0 || marker == 0xC2 {
             // SOF0 or SOF2: skip marker(2) + length(2) + precision(1), then height(2) + width(2)
