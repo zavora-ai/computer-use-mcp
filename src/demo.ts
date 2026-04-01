@@ -34,10 +34,12 @@ async function main() {
 
   // 4. Type 42 + 58 =
   console.log('4. Computing 42 + 58...')
-  await client.type('42', calc)
-  await client.key('shift+=', calc)  // + key
-  await client.type('58', calc)
-  await client.key('=', calc)
+  await client.type('4', calc); await client.wait(0.05)
+  await client.type('2', calc); await client.wait(0.05)
+  await client.key('shift+=', calc); await client.wait(0.1)  // +
+  await client.type('5', calc); await client.wait(0.05)
+  await client.type('8', calc); await client.wait(0.05)
+  await client.key('return', calc)
   await client.wait(0.5)
 
   // 5. Screenshot to see result
