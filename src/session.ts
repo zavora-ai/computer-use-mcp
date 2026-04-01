@@ -154,6 +154,26 @@ export function createSession(): Session {
           await sleep(500) // let app fully launch
           return ok(`Opened ${bid} (activated: ${r.activated})`)
         }
+        case 'list_running_apps': {
+          const apps = n.listRunningApps()
+          return ok(JSON.stringify(apps))
+        }
+        case 'hide_app': {
+          const found = n.hideApp(args.bundle_id as string)
+          return ok(found ? 'Hidden' : 'App not found')
+        }
+        case 'unhide_app': {
+          const found = n.unhideApp(args.bundle_id as string)
+          return ok(found ? 'Unhidden' : 'App not found')
+        }
+        case 'get_display_size': {
+          const info = n.getDisplaySize(args.display_id as number | undefined)
+          return ok(JSON.stringify(info))
+        }
+        case 'list_displays': {
+          const displays = n.listDisplays()
+          return ok(JSON.stringify(displays))
+        }
 
         // ── Wait ────────────────────────────────────────────────────
         case 'wait': {

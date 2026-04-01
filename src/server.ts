@@ -68,6 +68,13 @@ export function createComputerUseServer(): McpServer {
   tool('open_application', 'Open and focus an app by bundle ID', {
     bundle_id: z.string().describe('macOS bundle ID e.g. "com.apple.Safari"'),
   })
+  tool('list_running_apps', 'List all running regular applications', {})
+  tool('hide_app', 'Hide an app by bundle ID', { bundle_id: z.string() })
+  tool('unhide_app', 'Unhide an app by bundle ID', { bundle_id: z.string() })
+  tool('get_display_size', 'Get display dimensions and scale factor', {
+    display_id: z.number().optional().describe('Display ID (omit for main display)'),
+  })
+  tool('list_displays', 'List all connected displays', {})
   tool('wait', 'Wait for N seconds', { duration: z.number().positive() })
 
   return server

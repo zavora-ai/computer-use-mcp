@@ -31,6 +31,11 @@ export interface ComputerUseClient {
   openApp(bundleId: string): Promise<ToolResult>
   cursorPosition(): Promise<ToolResult>
   wait(seconds: number): Promise<ToolResult>
+  listRunningApps(): Promise<ToolResult>
+  hideApp(bundleId: string): Promise<ToolResult>
+  unhideApp(bundleId: string): Promise<ToolResult>
+  getDisplaySize(displayId?: number): Promise<ToolResult>
+  listDisplays(): Promise<ToolResult>
 }
 
 export async function connectStdio(command: string, args: string[], cwd?: string): Promise<ComputerUseClient> {
@@ -70,5 +75,10 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     openApp: (id) => call('open_application', { bundle_id: id }),
     cursorPosition: () => call('cursor_position'),
     wait: (s) => call('wait', { duration: s }),
+    listRunningApps: () => call('list_running_apps'),
+    hideApp: (id) => call('hide_app', { bundle_id: id }),
+    unhideApp: (id) => call('unhide_app', { bundle_id: id }),
+    getDisplaySize: (id) => call('get_display_size', id !== undefined ? { display_id: id } : {}),
+    listDisplays: () => call('list_displays'),
   }
 }

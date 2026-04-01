@@ -182,8 +182,6 @@ pub fn open_app(bundle_id: String) -> napi::Result<bool> {
 fn nsstring_from_str(s: &str) -> *mut Object {
     unsafe {
         let cls = Class::get("NSString").unwrap();
-        let bytes = s.as_ptr();
-        let len = s.len();
-        msg_send![cls, stringWithUTF8String: bytes as *const i8]
+        msg_send![cls, stringWithUTF8String: s.as_ptr() as *const i8]
     }
 }
