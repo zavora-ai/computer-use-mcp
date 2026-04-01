@@ -5,20 +5,20 @@ use std::fs::OpenOptions;
 
 #[napi]
 pub fn take_screenshot() -> napi::Result<serde_json::Value> {
+    // O_EXCL create prevents symlink attack; screencapture overwrites the empty file
     let entropy = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let tmp = format!("/tmp/cu-napi-{}-{}.jpg", std::process::id(), entropy);
+        .map(|d| d.subsec_nanos() ^ (std::process::id() as u32 * 2654435761))
+        .unwrap_or(std::process::id());
+    let tmp = format!("/tmp/cu-{:08x}.jpg", entropy);
 
-    // Create exclusively — prevents symlink attack (fails if path already exists)
     OpenOptions::new().write(true).create_new(true).open(&tmp)
         .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
 
     let status = Command::new("screencapture")
         .args(["-x", "-t", "jpg", &tmp])
         .status()
-        .map_err(|e| napi::Error::from_reason(format!("screencapture: {e}")))?;
+        .map_err(|e| { let _ = std::fs::remove_file(&tmp); napi::Error::from_reason(format!("screencapture: {e}")) })?;
 
     if !status.success() {
         let _ = std::fs::remove_file(&tmp);
@@ -30,7 +30,6 @@ pub fn take_screenshot() -> napi::Result<serde_json::Value> {
 
     let (w, h) = jpeg_dimensions(&data).unwrap_or((0, 0));
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-
     Ok(serde_json::json!({ "base64": b64, "width": w, "height": h, "mimeType": "image/jpeg" }))
 }
 

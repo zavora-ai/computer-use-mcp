@@ -4,7 +4,7 @@
  */
 
 import { createComputerUseServer } from './server.js'
-import { connectInProcess } from './client.js'
+import { connectInProcess, type ToolResult } from './client.js'
 import { writeFile } from 'fs/promises'
 
 async function main() {
@@ -49,13 +49,15 @@ async function main() {
 
   // 6. Read cursor position
   const pos = await client.cursorPosition()
-  console.log(`   Cursor: ${pos.content[0]?.text}`)
+  const posText = pos.content[0]
+  console.log(`   Cursor: ${posText?.type === 'text' ? posText.text : ''}`)
 
   // 7. Clipboard round-trip
   console.log('6. Clipboard test...')
   await client.writeClipboard('NAPI works!')
   const clip = await client.readClipboard()
-  console.log(`   Clipboard: "${clip.content[0]?.text}"`)
+  const clipText = clip.content[0]
+  console.log(`   Clipboard: "${clipText?.type === 'text' ? clipText.text : ''}"`)
 
   // 8. Close Calculator
   console.log('7. Closing Calculator...')
@@ -65,12 +67,12 @@ async function main() {
   console.log('\n✓ Demo complete — check /tmp/cu-demo-*.jpg')
 }
 
-async function saveScreenshot(result: any, path: string) {
-  const img = result.content.find((c: any) => c.type === 'image')
-  const txt = result.content.find((c: any) => c.type === 'text')
-  if (img?.data) {
+async function saveScreenshot(result: ToolResult, path: string) {
+  const img = result.content.find(c => c.type === 'image')
+  const txt = result.content.find(c => c.type === 'text')
+  if (img?.type === 'image') {
     await writeFile(path, Buffer.from(img.data, 'base64'))
-    console.log(`   ${txt?.text} → ${path}`)
+    console.log(`   ${txt?.type === 'text' ? txt.text : ''} → ${path}`)
   }
 }
 

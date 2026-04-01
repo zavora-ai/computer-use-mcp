@@ -107,19 +107,20 @@ pub fn type_text(text: String) {
 }
 
 #[napi]
-pub fn hold_key(keys: Vec<String>, duration_ms: i32) {
+pub fn hold_key(keys: Vec<String>, duration_ms: i32) -> napi::Result<()> {
     let map = key_code_map();
     let mut pressed: Vec<(CGKeyCode, CGEventFlags)> = Vec::new();
 
     for k in &keys {
         let lower = k.to_lowercase();
         let flag = modifier_flag(&lower).unwrap_or(CGEventFlags::empty());
-        if let Some(&code) = map.get(lower.as_str()) {
-            let down = CGEvent::new_keyboard_event(source(), code, true).unwrap();
-            down.set_flags(flag);
-            post(down);
-            pressed.push((code, flag));
-        }
+        let code = map.get(lower.as_str())
+            .copied()
+            .ok_or_else(|| napi::Error::from_reason(format!("Unknown key: {k}")))?;
+        let down = CGEvent::new_keyboard_event(source(), code, true).unwrap();
+        down.set_flags(flag);
+        post(down);
+        pressed.push((code, flag));
     }
 
     std::thread::sleep(std::time::Duration::from_millis(duration_ms as u64));
@@ -129,4 +130,5 @@ pub fn hold_key(keys: Vec<String>, duration_ms: i32) {
         up.set_flags(flags);
         post(up);
     }
+    Ok(())
 }

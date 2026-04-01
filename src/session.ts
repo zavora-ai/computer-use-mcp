@@ -161,7 +161,7 @@ export function createSession(): Session {
         case 'open_application': {
           const bid = str('bundle_id')
           const r = n.activateApp(bid, 3000)
-          targetApp = bid
+          if (r.activated) targetApp = bid
           await sleep(300)
           return ok(`Opened ${bid} (activated: ${r.activated})`)
         }

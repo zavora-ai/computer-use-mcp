@@ -23,15 +23,15 @@ pub fn mouse_move(x: f64, y: f64) {
 }
 
 #[napi]
-pub fn mouse_click(x: f64, y: f64, button: String, count: i32) {
+pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
     let point = CGPoint::new(x, y);
     let (btn, down_type, up_type) = match button.as_str() {
-        "right" => (CGMouseButton::Right, CGEventType::RightMouseDown, CGEventType::RightMouseUp),
+        "left"   => (CGMouseButton::Left,   CGEventType::LeftMouseDown,  CGEventType::LeftMouseUp),
+        "right"  => (CGMouseButton::Right,  CGEventType::RightMouseDown, CGEventType::RightMouseUp),
         "middle" => (CGMouseButton::Center, CGEventType::OtherMouseDown, CGEventType::OtherMouseUp),
-        _ => (CGMouseButton::Left, CGEventType::LeftMouseDown, CGEventType::LeftMouseUp),
+        _ => return Err(napi::Error::from_reason(format!("Invalid button: {button}, expected left/right/middle"))),
     };
 
-    // Move first
     let move_evt = CGEvent::new_mouse_event(source(), CGEventType::MouseMoved, point, CGMouseButton::Left).unwrap();
     post(move_evt);
     std::thread::sleep(std::time::Duration::from_millis(15));
@@ -47,6 +47,7 @@ pub fn mouse_click(x: f64, y: f64, button: String, count: i32) {
             std::thread::sleep(std::time::Duration::from_millis(30));
         }
     }
+    Ok(())
 }
 
 #[napi]

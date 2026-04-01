@@ -3,7 +3,7 @@
  */
 
 import { createComputerUseServer } from './server.js'
-import { connectInProcess } from './client.js'
+import { connectInProcess, type ToolResult } from './client.js'
 import { writeFile } from 'fs/promises'
 
 const safari = 'com.apple.Safari'
@@ -43,7 +43,8 @@ async function main() {
   await client.key('command+c', safari)
   await client.wait(0.3)
   const clip = await client.readClipboard()
-  const text = clip.content[0]?.text ?? ''
+  const clipItem = clip.content[0]
+  const text = clipItem?.type === 'text' ? clipItem.text : ''
   console.log(`   Copied ${text.length} chars: "${text.slice(0, 100).replace(/\n/g, ' ')}..."`)
 
   // 6. New tab → github.com
@@ -64,12 +65,12 @@ async function main() {
   console.log('\n✓ Done — check /tmp/cu-browser-*.jpg')
 }
 
-async function save(result: any, path: string) {
-  const img = result.content.find((c: any) => c.type === 'image')
-  const txt = result.content.find((c: any) => c.type === 'text')
-  if (img?.data) {
+async function save(result: ToolResult, path: string) {
+  const img = result.content.find(c => c.type === 'image')
+  const txt = result.content.find(c => c.type === 'text')
+  if (img?.type === 'image') {
     await writeFile(path, Buffer.from(img.data, 'base64'))
-    console.log(`   ${txt?.text} → ${path}`)
+    console.log(`   ${txt?.type === 'text' ? txt.text : ''} → ${path}`)
   }
 }
 

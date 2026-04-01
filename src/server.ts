@@ -75,13 +75,13 @@ export function createComputerUseServer(): McpServer {
     display_id: z.number().optional().describe('Display ID (omit for main display)'),
   })
   tool('list_displays', 'List all connected displays', {})
-  tool('wait', 'Wait for N seconds', { duration: z.number().positive() })
+  tool('wait', 'Wait for N seconds', { duration: z.number().positive().max(300) })
 
   return server
 }
 
 // Standalone stdio entrypoint
-if (process.argv[1]?.match(/server\.[tj]s$/)) {
+if (process.argv[1]?.endsWith('/server.ts') || process.argv[1]?.endsWith('/server.js')) {
   const server = createComputerUseServer()
   const transport = new StdioServerTransport()
   server.connect(transport).then(() => console.error('[computer-use-mcp] Server running'))
