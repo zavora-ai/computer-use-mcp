@@ -100,20 +100,33 @@ AI sends: { tool: "left_click", args: { coordinate: [500, 300] } }
 
 ## Installation
 
-### Option 1: npm (prebuilt binary, recommended)
+### Option 1: npx (no install required — recommended)
+
+Run the server directly without installing anything:
 
 ```bash
-npm install computer-use-mcp
+npx @zavora-ai/computer-use-mcp
 ```
 
-The package ships a prebuilt `.node` binary for macOS. No Rust required.
+That's it. Use this path in your MCP client config:
 
-### Option 2: Build from source
+```
+command: npx
+args: ["-y", "@zavora-ai/computer-use-mcp"]
+```
+
+### Option 2: npm install
+
+```bash
+npm install @zavora-ai/computer-use-mcp
+```
+
+### Option 3: Build from source
 
 Requires [Rust](https://rustup.rs) and Cargo.
 
 ```bash
-git clone https://github.com/your-org/computer-use-mcp
+git clone https://github.com/zavora-ai/computer-use-mcp
 cd computer-use-mcp
 npm install
 npm run build
@@ -145,7 +158,7 @@ macOS requires explicit permission for apps that control the computer. You need 
 Run the built-in demo:
 
 ```bash
-npx tsx node_modules/computer-use-mcp/src/demo.ts
+npx @zavora-ai/computer-use-mcp demo
 ```
 
 If permissions are correct, you'll see Calculator open, compute 42+58, and close. If you see an error about permissions, revisit the steps above.
@@ -157,7 +170,7 @@ If permissions are correct, you'll see Calculator open, compute 42+58, and close
 ### Run the MCP server
 
 ```bash
-node node_modules/computer-use-mcp/dist/server.js
+npx @zavora-ai/computer-use-mcp
 ```
 
 The server speaks MCP over stdio and is ready to connect to any MCP client.
@@ -167,8 +180,8 @@ The server speaks MCP over stdio and is ready to connect to any MCP client.
 ```bash
 # Takes a screenshot and saves it
 node -e "
-import('computer-use-mcp').then(async ({ createComputerUseServer }) => {
-  const { connectInProcess } = await import('computer-use-mcp/client')
+import('@zavora-ai/computer-use-mcp').then(async ({ createComputerUseServer }) => {
+  const { connectInProcess } = await import('@zavora-ai/computer-use-mcp/client')
   const s = createComputerUseServer()
   const c = await connectInProcess(s)
   const shot = await c.screenshot()
@@ -198,8 +211,8 @@ import('computer-use-mcp').then(async ({ createComputerUseServer }) => {
 {
   "mcpServers": {
     "computer-use": {
-      "command": "node",
-      "args": ["/absolute/path/to/node_modules/computer-use-mcp/dist/server.js"]
+      "command": "npx",
+      "args": ["-y", "@zavora-ai/computer-use-mcp"]
     }
   }
 }
@@ -211,8 +224,6 @@ import('computer-use-mcp').then(async ({ createComputerUseServer }) => {
 
 5. Try asking Claude: *"Take a screenshot and describe what you see"* or *"Open Safari and navigate to example.com"*
 
-> **Tip:** Use the absolute path to avoid issues with working directory. You can find it by running `pwd` in your project directory.
-
 ---
 
 ### Cursor
@@ -221,8 +232,8 @@ import('computer-use-mcp').then(async ({ createComputerUseServer }) => {
 
 2. Click **Add MCP Server** and fill in:
    - **Name**: `computer-use`
-   - **Command**: `node`
-   - **Args**: `["/absolute/path/to/node_modules/computer-use-mcp/dist/server.js"]`
+   - **Command**: `npx`
+   - **Args**: `["-y", "@zavora-ai/computer-use-mcp"]`
 
 3. Save and reload the window (`Cmd+Shift+P` → "Reload Window").
 
@@ -238,8 +249,8 @@ import('computer-use-mcp').then(async ({ createComputerUseServer }) => {
 {
   "mcpServers": {
     "computer-use": {
-      "command": "node",
-      "args": ["/absolute/path/to/node_modules/computer-use-mcp/dist/server.js"]
+      "command": "npx",
+      "args": ["-y", "@zavora-ai/computer-use-mcp"]
     }
   }
 }
@@ -251,23 +262,11 @@ import('computer-use-mcp').then(async ({ createComputerUseServer }) => {
 
 ### Any MCP-compatible client
 
-The server speaks standard MCP over stdio. Point any MCP client at:
+The server speaks standard MCP over stdio. The simplest config for any client:
 
 ```
-command: node
-args: ["/path/to/node_modules/computer-use-mcp/dist/server.js"]
-```
-
-Or use the npm global install for a cleaner path:
-
-```bash
-npm install -g computer-use-mcp
-```
-
-Then use:
-```
-command: node
-args: ["$(npm root -g)/computer-use-mcp/dist/server.js"]
+command: npx
+args: ["-y", "@zavora-ai/computer-use-mcp"]
 ```
 
 ---
@@ -281,8 +280,8 @@ Import the server and client directly in your TypeScript/JavaScript code.
 Both server and client run in the same Node.js process. No subprocess, no IPC overhead.
 
 ```typescript
-import { createComputerUseServer } from 'computer-use-mcp'
-import { connectInProcess } from 'computer-use-mcp/client'
+import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
+import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
 
 const server = createComputerUseServer()
 const client = await connectInProcess(server)
@@ -340,10 +339,10 @@ await client.close()
 Useful when you want the server in a separate process (e.g. for isolation).
 
 ```typescript
-import { connectStdio } from 'computer-use-mcp/client'
+import { connectStdio } from '@zavora-ai/computer-use-mcp/client'
 
 const client = await connectStdio('node', [
-  'node_modules/computer-use-mcp/dist/server.js'
+  'node_modules/@zavora-ai/computer-use-mcp/dist/server.js'
 ])
 
 await client.screenshot()
@@ -454,7 +453,7 @@ const result = await client.callTool('triple_click', {
 Creates an MCP server instance with all 24 tools registered. The server is not started until you connect a transport.
 
 ```typescript
-import { createComputerUseServer } from 'computer-use-mcp'
+import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
 const server = createComputerUseServer()
 ```
 
@@ -463,7 +462,7 @@ const server = createComputerUseServer()
 Connects a client to the server using an in-memory transport. Both run in the same process.
 
 ```typescript
-import { connectInProcess } from 'computer-use-mcp/client'
+import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
 const client = await connectInProcess(server)
 ```
 
@@ -472,7 +471,7 @@ const client = await connectInProcess(server)
 Connects a client to a server running as a subprocess over stdio.
 
 ```typescript
-import { connectStdio } from 'computer-use-mcp/client'
+import { connectStdio } from '@zavora-ai/computer-use-mcp/client'
 const client = await connectStdio('node', ['dist/server.js'])
 ```
 
