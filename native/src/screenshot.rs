@@ -6,8 +6,32 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
 
+/// Get the CGWindowID of the frontmost window belonging to the given bundle ID.
+fn window_id_for_bundle(bundle_id: &str) -> Option<u32> {
+    // Use osascript to get the PID of the app, then match via CGWindowListCopyWindowInfo
+    let pid_out = Command::new("osascript")
+        .args(["-e", &format!(
+            "tell application \"System Events\" to get unix id of (first application process whose bundle identifier is \"{}\")",
+            bundle_id
+        )])
+        .output()
+        .ok()?;
+    let pid: u32 = String::from_utf8_lossy(&pid_out.stdout).trim().parse().ok()?;
+
+    // Use swift to get the CGWindowID for that PID's frontmost window
+    let script = format!(
+        "import CoreGraphics; \
+         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)! as! [[String:Any]]; \
+         let w = list.first(where: {{ ($0[\"kCGWindowOwnerPID\"] as? Int) == {} && ($0[\"kCGWindowLayer\"] as? Int) == 0 }}); \
+         if let id = w?[\"kCGWindowNumber\"] as? Int {{ print(id) }}",
+        pid
+    );
+    let out = Command::new("swift").args(["-e", &script]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
 #[napi]
-pub fn take_screenshot(width: Option<u32>) -> napi::Result<serde_json::Value> {
+pub fn take_screenshot(width: Option<u32>, target_app: Option<String>) -> napi::Result<serde_json::Value> {
     let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = format!("/tmp/cu-{}-{}.jpg", std::process::id(), seq);
 
@@ -17,8 +41,19 @@ pub fn take_screenshot(width: Option<u32>) -> napi::Result<serde_json::Value> {
         .open(&tmp)
         .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
 
+    let mut args: Vec<String> = vec!["-x".into(), "-t".into(), "jpg".into()];
+
+    if let Some(bundle_id) = target_app {
+        if let Some(wid) = window_id_for_bundle(&bundle_id) {
+            args.push("-l".into());
+            args.push(wid.to_string());
+        }
+    }
+
+    args.push(tmp.clone());
+
     let status = Command::new("screencapture")
-        .args(["-x", "-t", "jpg", &tmp])
+        .args(&args)
         .status()
         .map_err(|e| {
             let _ = std::fs::remove_file(&tmp);

@@ -66,7 +66,8 @@ export function createSession(): Session {
         // ── Screenshot (read-only, no focus needed) ─────────────────
         case 'screenshot': {
           const w = num('width', 1024)
-          const r = n.takeScreenshot(w)
+          const app = args.target_app !== undefined ? str('target_app') : undefined
+          const r = n.takeScreenshot(w, app)
           return { content: [
             { type: 'image', data: r.base64, mimeType: r.mimeType },
             { type: 'text', text: `${r.width}x${r.height}` },

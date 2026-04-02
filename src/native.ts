@@ -36,7 +36,7 @@ export interface NativeModule {
   getDisplaySize(displayId?: number): { width: number; height: number; pixelWidth: number; pixelHeight: number; scaleFactor: number; displayId: number }
   listDisplays(): Array<{ width: number; height: number; scaleFactor: number; displayId: number }>
   // Screenshot
-  takeScreenshot(width?: number): { base64: string; width: number; height: number; mimeType: string }
+  takeScreenshot(width?: number, targetApp?: string): { base64: string; width: number; height: number; mimeType: string }
 }
 
 let cached: NativeModule | undefined
