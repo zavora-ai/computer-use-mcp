@@ -10,8 +10,31 @@ import { execFileSync } from 'child_process'
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
+// ── Provider-aware screenshot defaults ────────────────────────────────────────
+
+const PROVIDER_WIDTH: Record<string, number> = {
+  anthropic:     1024,
+  openai:        1024,
+  'openai-low':   512,
+  gemini:         768,
+  llama:         1120,
+  grok:          1024,
+  mistral:       1024,
+  qwen:           896,
+  nova:          1024,
+  'deepseek-vl':  896,
+  phi:            896,
+  auto:          1024,
+}
+
+const PROVIDER_QUALITY: Record<string, number> = {
+  anthropic: 80,
+  openai:    80,
+  gemini:    75,
+  default:   80,
+}
+
 export interface Session {
-  /** Dispatch a tool call */
   dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult>
 }
 
@@ -20,32 +43,50 @@ export interface ToolResult {
   isError?: boolean
 }
 
-export function createSession(): Session {
+export interface SessionOptions {
+  /** Disable image output for text-only models (DeepSeek-V3, R1, etc.) */
+  vision?: boolean
+  /** Default provider — sets optimal width/quality when not specified per-call */
+  provider?: string
+}
+
+export function createSession(opts: SessionOptions = {}): Session {
   const n = loadNative()
   let targetApp: string | undefined
+  const visionEnabled = opts.vision !== false
+  const defaultProvider = opts.provider ?? process.env.COMPUTER_USE_PROVIDER ?? 'auto'
 
-  /** Ensure target app is frontmost. In-process — no focus steal. */
+  // Screenshot dedup cache
+  let _lastHash: string | undefined
+  let _lastResult: ToolResult | undefined
+
   async function ensureFocus(): Promise<void> {
     if (!targetApp) return
     const front = n.getFrontmostApp()
     if (front?.bundleId === targetApp) return
     n.activateApp(targetApp, 2000)
-    await sleep(80) // let activation settle
+    await sleep(80)
   }
 
-  /** After a click, detect what app received it */
   function trackClickTarget(): void {
     const front = n.getFrontmostApp()
     if (front?.bundleId) targetApp = front.bundleId
   }
 
+  async function doClick(coord: [number, number], button: string, count: number): Promise<ToolResult> {
+    const [x, y] = coord
+    n.mouseMove(x, y)
+    await sleep(50)  // HID round-trip settle before click
+    n.mouseClick(x, y, button, count)
+    trackClickTarget()
+    return ok(`Clicked (${x}, ${y})`)
+  }
+
   async function dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-    // Override target if explicitly passed
     if (typeof args.target_app === 'string' && args.target_app.length > 0) {
       targetApp = args.target_app
     }
 
-    // Input guards
     const coord = (key = 'coordinate'): [number, number] => {
       const v = args[key]
       if (!Array.isArray(v) || v.length < 2 || typeof v[0] !== 'number' || typeof v[1] !== 'number')
@@ -63,46 +104,78 @@ export function createSession(): Session {
 
     try {
       switch (tool) {
-        // ── Screenshot (read-only, no focus needed) ─────────────────
+
+        // ── Screenshot ───────────────────────────────────────────────────────
         case 'screenshot': {
-          const w = num('width', 1024)
+          const provider = (typeof args.provider === 'string' ? args.provider : defaultProvider)
+          const defaultWidth = PROVIDER_WIDTH[provider] ?? 1024
+          const defaultQuality = PROVIDER_QUALITY[provider] ?? PROVIDER_QUALITY.default
+          const w = typeof args.width === 'number' ? args.width
+                  : typeof process.env.COMPUTER_USE_WIDTH !== 'undefined' ? parseInt(process.env.COMPUTER_USE_WIDTH)
+                  : defaultWidth
+          const q = typeof args.quality === 'number' ? args.quality
+                  : typeof process.env.COMPUTER_USE_QUALITY !== 'undefined' ? parseInt(process.env.COMPUTER_USE_QUALITY)
+                  : defaultQuality
           const app = args.target_app !== undefined ? str('target_app') : undefined
-          const r = n.takeScreenshot(w, app)
-          return { content: [
-            { type: 'image', data: r.base64, mimeType: r.mimeType },
-            { type: 'text', text: `${r.width}x${r.height}` },
-          ]}
+
+          if (!visionEnabled) {
+            const front = n.getFrontmostApp()
+            const display = n.getDisplaySize()
+            return ok(`Screen: ${display.width}×${display.height} | Frontmost: ${front?.bundleId ?? 'unknown'} (${front?.displayName ?? ''})`)
+          }
+
+          const r = n.takeScreenshot(w, app, q)
+
+          // Dedup: skip re-encoding if screen unchanged
+          const hash = r.base64.slice(0, 64)
+          if (hash === _lastHash && _lastResult) return _lastResult
+          _lastHash = hash
+          _lastResult = {
+            content: [
+              { type: 'image', data: r.base64, mimeType: r.mimeType },
+              { type: 'text', text: `${r.width}x${r.height}` },
+            ]
+          }
+          return _lastResult
         }
 
-        // ── Clicks — focus happens via the click itself ─────────────
-        case 'left_click': return doClick(n, coord(), 'left', 1)
-        case 'right_click': return doClick(n, coord(), 'right', 1)
-        case 'middle_click': return doClick(n, coord(), 'middle', 1)
-        case 'double_click': return doClick(n, coord(), 'left', 2)
-        case 'triple_click': return doClick(n, coord(), 'left', 3)
+        // ── Clicks ───────────────────────────────────────────────────────────
+        case 'left_click':   return doClick(coord(), 'left', 1)
+        case 'right_click':  return doClick(coord(), 'right', 1)
+        case 'middle_click': return doClick(coord(), 'middle', 1)
+        case 'double_click': return doClick(coord(), 'left', 2)
+        case 'triple_click': return doClick(coord(), 'left', 3)
 
         case 'mouse_move': {
           const [x, y] = coord()
           n.mouseMove(x, y)
           return ok(`Moved to (${x}, ${y})`)
         }
+
         case 'left_click_drag': {
           const to = coord()
           const from = args.start_coordinate ? coord('start_coordinate') : undefined
-          if (from) { n.mouseMove(from[0], from[1]); await sleep(30) }
+          if (from) { n.mouseMove(from[0], from[1]); await sleep(50) }
           n.mouseButton('press', from?.[0] ?? to[0], from?.[1] ?? to[1])
-          await sleep(30)
-          const steps = 10
-          for (let i = 1; i <= steps; i++) {
-            const t = i / steps
-            const sx = from?.[0] ?? to[0], sy = from?.[1] ?? to[1]
-            n.mouseDrag(Math.round(sx + (to[0] - sx) * t), Math.round(sy + (to[1] - sy) * t))
-            if (i < steps) await sleep(16)
+          await sleep(50)
+
+          // Ease-out-cubic at 60fps, distance-proportional duration, max 500ms
+          const sx = from?.[0] ?? to[0], sy = from?.[1] ?? to[1]
+          const dist = Math.hypot(to[0] - sx, to[1] - sy)
+          const durationMs = Math.min(dist / 2, 500)
+          const frames = Math.max(Math.floor(durationMs / 16), 1)
+          for (let i = 1; i <= frames; i++) {
+            const t = i / frames
+            const eased = 1 - Math.pow(1 - t, 3)
+            n.mouseDrag(Math.round(sx + (to[0] - sx) * eased), Math.round(sy + (to[1] - sy) * eased))
+            if (i < frames) await sleep(16)
           }
-          await sleep(30)
+
+          await sleep(50)
           n.mouseButton('release', to[0], to[1])
           return ok(`Dragged to (${to[0]}, ${to[1]})`)
         }
+
         case 'left_mouse_down': {
           const [x, y] = coord()
           n.mouseButton('press', x, y)
@@ -131,11 +204,34 @@ export function createSession(): Session {
           return ok(`Scrolled ${dir} ${amt}`)
         }
 
+        // ── Keyboard ─────────────────────────────────────────────────────────
         case 'type': {
           await ensureFocus()
-          n.typeText(str('text'))
+          const text = str('text')
+          if (text.length > 100) {
+            // Clipboard-based typing: faster and more reliable for long text
+            let saved: string | undefined
+            try { saved = execFileSync('pbpaste', []).toString() } catch { /* ignore */ }
+            try {
+              execFileSync('pbcopy', [], { input: text })
+              const verify = execFileSync('pbpaste', []).toString()
+              if (verify === text) {
+                n.keyPress('command+v')
+                await sleep(100)  // paste-effect vs clipboard-restore race
+              } else {
+                n.typeText(text)  // fallback to injection
+              }
+            } finally {
+              if (typeof saved === 'string') {
+                try { execFileSync('pbcopy', [], { input: saved }) } catch { /* ignore */ }
+              }
+            }
+          } else {
+            n.typeText(text)
+          }
           return ok('Typed')
         }
+
         case 'key': {
           await ensureFocus()
           n.keyPress(str('text'), args.repeat !== undefined ? num('repeat', 1) : undefined)
@@ -149,7 +245,7 @@ export function createSession(): Session {
           return ok('Held')
         }
 
-        // ── Clipboard (no focus needed) ─────────────────────────────
+        // ── Clipboard ────────────────────────────────────────────────────────
         case 'read_clipboard': {
           const text = execFileSync('pbpaste', []).toString()
           return ok(text)
@@ -159,7 +255,7 @@ export function createSession(): Session {
           return ok('Written')
         }
 
-        // ── App management ──────────────────────────────────────────
+        // ── Apps ─────────────────────────────────────────────────────────────
         case 'open_application': {
           const bid = str('bundle_id')
           const r = n.activateApp(bid, 3000)
@@ -189,12 +285,6 @@ export function createSession(): Session {
       const msg = err instanceof Error ? err.message : String(err)
       return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true }
     }
-  }
-
-  function doClick(n: NativeModule, [x, y]: [number, number], button: string, count: number): ToolResult {
-    n.mouseClick(x, y, button, count)
-    trackClickTarget()
-    return ok(`Clicked (${x}, ${y})`)
   }
 
   return { dispatch }

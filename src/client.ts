@@ -20,7 +20,7 @@ export interface ComputerUseClient {
   callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>
   close(): Promise<void>
   // Typed convenience
-  screenshot(args?: { width?: number; target_app?: string }): Promise<ToolResult>
+  screenshot(args?: { width?: number; quality?: number; target_app?: string; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto' }): Promise<ToolResult>
   click(x: number, y: number): Promise<ToolResult>
   doubleClick(x: number, y: number): Promise<ToolResult>
   rightClick(x: number, y: number): Promise<ToolResult>
@@ -64,7 +64,7 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     async listTools() { return (await client.listTools()).tools.map(t => ({ name: t.name, description: t.description })) },
     callTool: call,
     close: closeFn,
-    screenshot: (args?: { width?: number; target_app?: string }) => call('screenshot', args ?? {}),
+    screenshot: (args?) => call('screenshot', args ?? {}),
     click: (x, y) => call('left_click', { coordinate: [x, y] }),
     doubleClick: (x, y) => call('double_click', { coordinate: [x, y] }),
     rightClick: (x, y) => call('right_click', { coordinate: [x, y] }),

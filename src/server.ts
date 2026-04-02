@@ -7,14 +7,21 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z, ZodTypeAny } from 'zod'
-import { createSession } from './session.js'
+import { createSession, type SessionOptions } from './session.js'
 
 const targetAppParam = z.string().optional().describe('Bundle ID of target app (auto-focuses before action)')
 const coord = { coordinate: z.tuple([z.number(), z.number()]).describe('[x, y] pixels') }
 
-export function createComputerUseServer(): McpServer {
-  const server = new McpServer({ name: 'computer-use', version: '2.0.0' })
-  const session = createSession()
+const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'phi', 'auto'] as const
+
+export interface ServerOptions extends SessionOptions {}
+
+export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
+  const server = new McpServer({ name: 'computer-use', version: '3.0.0' })
+  const session = createSession({
+    vision: opts.vision ?? (process.env.COMPUTER_USE_VISION !== 'false'),
+    provider: opts.provider ?? process.env.COMPUTER_USE_PROVIDER,
+  })
 
   const tool = (name: string, desc: string, schema: Record<string, ZodTypeAny>) => {
     server.tool(name, desc, schema, async (args: Record<string, unknown>) => {
@@ -30,9 +37,15 @@ export function createComputerUseServer(): McpServer {
     })
   }
 
-  tool('screenshot', 'Take a screenshot of the screen', {
-    width: z.number().int().positive().optional().describe('Resize to this width in pixels (preserves aspect ratio). Default: 1024'),
-    target_app: z.string().optional().describe('Bundle ID of app to capture (captures only that window). Omit for full screen.'),
+  tool('screenshot', 'Capture the screen or a specific app window. Use `provider` to get optimal token cost for your AI provider.', {
+    width: z.number().int().positive().optional()
+      .describe('Override width in pixels. Omit to use provider-optimal default.'),
+    quality: z.number().int().min(1).max(100).optional()
+      .describe('JPEG quality 1–100. Default: 80. Lower = smaller = fewer tokens.'),
+    target_app: z.string().optional()
+      .describe('Bundle ID of app to capture (window only). Omit for full screen.'),
+    provider: z.enum(PROVIDERS).optional()
+      .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
   })
   tool('left_click', 'Left-click at coordinates', coord)
   tool('right_click', 'Right-click at coordinates', coord)

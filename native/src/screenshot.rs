@@ -8,7 +8,6 @@ static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
 
 /// Get the CGWindowID of the frontmost window belonging to the given bundle ID.
 fn window_id_for_bundle(bundle_id: &str) -> Option<u32> {
-    // Use osascript to get the PID of the app, then match via CGWindowListCopyWindowInfo
     let pid_out = Command::new("osascript")
         .args(["-e", &format!(
             "tell application \"System Events\" to get unix id of (first application process whose bundle identifier is \"{}\")",
@@ -18,7 +17,6 @@ fn window_id_for_bundle(bundle_id: &str) -> Option<u32> {
         .ok()?;
     let pid: u32 = String::from_utf8_lossy(&pid_out.stdout).trim().parse().ok()?;
 
-    // Use swift to get the CGWindowID for that PID's frontmost window
     let script = format!(
         "import CoreGraphics; \
          let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)! as! [[String:Any]]; \
@@ -31,7 +29,7 @@ fn window_id_for_bundle(bundle_id: &str) -> Option<u32> {
 }
 
 #[napi]
-pub fn take_screenshot(width: Option<u32>, target_app: Option<String>) -> napi::Result<serde_json::Value> {
+pub fn take_screenshot(width: Option<u32>, target_app: Option<String>, quality: Option<u32>) -> napi::Result<serde_json::Value> {
     let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = format!("/tmp/cu-{}-{}.jpg", std::process::id(), seq);
 
@@ -65,9 +63,19 @@ pub fn take_screenshot(width: Option<u32>, target_app: Option<String>) -> napi::
         return Err(napi::Error::from_reason("screencapture failed"));
     }
 
+    // Resize width if requested
     if let Some(w) = width {
         let _ = Command::new("sips")
             .args(["--resampleWidth", &w.to_string(), &tmp])
+            .output();
+    }
+
+    // Re-encode at requested quality (sips default is ~85; we use explicit quality)
+    let q = quality.unwrap_or(80).clamp(1, 100);
+    if q != 85 {
+        // sips --setProperty formatOptions <quality> re-encodes the JPEG in-place
+        let _ = Command::new("sips")
+            .args(["--setProperty", "formatOptions", &q.to_string(), &tmp])
             .output();
     }
 
@@ -89,7 +97,6 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
         }
         let marker = data[i + 1];
         if marker == 0xC0 || marker == 0xC2 {
-            // SOF0 or SOF2: skip marker(2) + length(2) + precision(1), then height(2) + width(2)
             if i + 9 < data.len() {
                 let h = ((data[i + 5] as u32) << 8) | data[i + 6] as u32;
                 let w = ((data[i + 7] as u32) << 8) | data[i + 8] as u32;
