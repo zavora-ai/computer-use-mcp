@@ -56,8 +56,8 @@ export function createSession(opts: SessionOptions = {}): Session {
   const visionEnabled = opts.vision !== false
   const defaultProvider = opts.provider ?? process.env.COMPUTER_USE_PROVIDER ?? 'auto'
 
-  // Screenshot dedup cache
-  let _lastHash: string | undefined
+  // Screenshot dedup cache — keyed on (params + content hash)
+  let _lastKey: string | undefined
   let _lastResult: ToolResult | undefined
 
   async function ensureFocus(): Promise<void> {
@@ -126,10 +126,11 @@ export function createSession(opts: SessionOptions = {}): Session {
 
           const r = n.takeScreenshot(w, app, q)
 
-          // Dedup: skip re-encoding if screen unchanged
-          const hash = r.base64.slice(0, 64)
-          if (hash === _lastHash && _lastResult) return _lastResult
-          _lastHash = hash
+          // Dedup: key = params + content sample (middle 64 chars avoids identical JPEG headers)
+          const mid = Math.floor(r.base64.length / 2)
+          const key = `${w}:${q}:${app ?? ''}:${r.base64.slice(mid, mid + 64)}`
+          if (key === _lastKey && _lastResult) return _lastResult
+          _lastKey = key
           _lastResult = {
             content: [
               { type: 'image', data: r.base64, mimeType: r.mimeType },
