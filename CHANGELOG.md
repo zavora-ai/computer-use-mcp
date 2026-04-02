@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.0.0 (2026-04-02)
+
+### Features
+- **Multi-provider screenshot sizing** — `provider` param on `screenshot` tool sets optimal width/quality per AI provider. Supported: `anthropic` (1024px), `openai` (1024px), `openai-low` (512px), `gemini` (768px), `llama` (1120px), `grok` (1024px), `mistral` (1024px), `qwen` (896px), `nova` (1024px), `deepseek-vl` (896px), `phi` (896px)
+- **JPEG quality control** — `quality` param (1–100) on `screenshot` tool, passed through to `sips --setProperty formatOptions`. Default: 80
+- **Non-vision model guard** — `COMPUTER_USE_VISION=false` env var (or `createComputerUseServer({ vision: false })`) makes `screenshot` return text metadata instead of image data, enabling text-only models (DeepSeek-V3, R1, etc.)
+- **Server-wide provider default** — `COMPUTER_USE_PROVIDER` env var or `createComputerUseServer({ provider: 'gemini' })` sets the default for all screenshot calls
+- **Screenshot deduplication** — consecutive identical screenshots return cached result without re-capturing
+- **Animated drag** — ease-out-cubic at 60fps, distance-proportional duration (max 500ms). Fixes drag in canvas, scrollbar, and window-resize scenarios
+
+### Reliability fixes
+- **Move-and-settle before clicks** — all click operations now move the cursor first, wait 50ms for HID round-trip, then click. Fixes missed clicks on fast-rendering UIs
+- **Clipboard-based typing** — text longer than 100 characters is typed via clipboard paste (save → write → verify → paste → restore) instead of CGEvent injection. Fixes long text in Electron apps, web inputs, and terminals
+
+### Breaking changes
+- `createComputerUseServer()` now accepts optional `ServerOptions` — backward compatible (no required params)
+- Version bumped to 3.0.0
+
 All notable changes to this project will be documented in this file.
 
 ## [2.0.4] - 2026-04-02
