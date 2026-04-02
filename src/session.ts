@@ -65,7 +65,8 @@ export function createSession(): Session {
       switch (tool) {
         // ── Screenshot (read-only, no focus needed) ─────────────────
         case 'screenshot': {
-          const r = n.takeScreenshot()
+          const w = num('width', 1024)
+          const r = n.takeScreenshot(w)
           return { content: [
             { type: 'image', data: r.base64, mimeType: r.mimeType },
             { type: 'text', text: `${r.width}x${r.height}` },

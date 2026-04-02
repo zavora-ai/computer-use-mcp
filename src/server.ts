@@ -30,7 +30,9 @@ export function createComputerUseServer(): McpServer {
     })
   }
 
-  tool('screenshot', 'Take a screenshot of the screen', {})
+  tool('screenshot', 'Take a screenshot of the screen', {
+    width: z.number().int().positive().optional().describe('Resize to this width in pixels (preserves aspect ratio). Default: 1024'),
+  })
   tool('left_click', 'Left-click at coordinates', coord)
   tool('right_click', 'Right-click at coordinates', coord)
   tool('middle_click', 'Middle-click at coordinates', coord)

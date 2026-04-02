@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
 
 #[napi]
-pub fn take_screenshot() -> napi::Result<serde_json::Value> {
+pub fn take_screenshot(width: Option<u32>) -> napi::Result<serde_json::Value> {
     let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = format!("/tmp/cu-{}-{}.jpg", std::process::id(), seq);
 
@@ -28,6 +28,12 @@ pub fn take_screenshot() -> napi::Result<serde_json::Value> {
     if !status.success() {
         let _ = std::fs::remove_file(&tmp);
         return Err(napi::Error::from_reason("screencapture failed"));
+    }
+
+    if let Some(w) = width {
+        let _ = Command::new("sips")
+            .args(["--resampleWidth", &w.to_string(), &tmp])
+            .output();
     }
 
     let data = std::fs::read(&tmp).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
