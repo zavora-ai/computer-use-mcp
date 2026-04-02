@@ -84,7 +84,7 @@ export function createComputerUseServer(): McpServer {
 }
 
 // Standalone stdio entrypoint
-if (process.argv[1]?.endsWith('/server.ts') || process.argv[1]?.endsWith('/server.js')) {
+if (process.argv[1]?.endsWith('/server.ts') || process.argv[1]?.endsWith('/server.js') || process.argv[1]?.endsWith('/computer-use-mcp')) {
   const server = createComputerUseServer()
   const transport = new StdioServerTransport()
   server.connect(transport).then(() => console.error('[computer-use-mcp] Server running'))
