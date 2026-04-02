@@ -184,7 +184,7 @@ import('@zavora-ai/computer-use-mcp').then(async ({ createComputerUseServer }) =
   const { connectInProcess } = await import('@zavora-ai/computer-use-mcp/client')
   const s = createComputerUseServer()
   const c = await connectInProcess(s)
-  const shot = await c.screenshot()
+  const shot = await c.screenshot({ width: 1024 })
   const img = shot.content.find(x => x.type === 'image')
   if (img?.type === 'image') {
     const { writeFileSync } = await import('fs')
@@ -286,8 +286,14 @@ import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
 const server = createComputerUseServer()
 const client = await connectInProcess(server)
 
-// Take a screenshot
+// Take a screenshot (full screen, resized to 1024px wide)
 const shot = await client.screenshot()
+
+// Capture a specific app window only
+const shot = await client.screenshot({ target_app: 'com.apple.Safari' })
+
+// Custom width
+const shot = await client.screenshot({ width: 800, target_app: 'com.apple.iCal' })
 const img = shot.content.find(c => c.type === 'image')
 if (img?.type === 'image') {
   // img.data is base64-encoded JPEG
@@ -367,7 +373,7 @@ const result = await client.callTool('triple_click', {
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `screenshot` | Capture the full screen | — |
+| `screenshot` | Capture the screen or a specific app window | `width?: number` (default 1024), `target_app?: string` (bundle ID) |
 
 ### Mouse
 
@@ -568,6 +574,8 @@ This package has **full control of your Mac** when Accessibility permission is g
 
 ### Screenshots
 - Screenshots are JPEG (not PNG) for size. Quality is high but not lossless.
+- Screenshots are resized to 1024px wide by default to reduce context size. Pass `width` to override.
+- Use `target_app` (bundle ID) to capture only a specific app window instead of the full screen.
 - Screenshot resolution matches your display's logical resolution (not pixel resolution on Retina displays). Use `get_display_size` to get both.
 
 ### Keyboard
