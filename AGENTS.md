@@ -23,7 +23,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "computer-use": {
       "command": "npx",
-      "args": ["-y", "@zavora-ai/computer-use-mcp"]
+      "args": ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
     }
   }
 }

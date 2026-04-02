@@ -105,14 +105,14 @@ AI sends: { tool: "left_click", args: { coordinate: [500, 300] } }
 Run the server directly without installing anything:
 
 ```bash
-npx @zavora-ai/computer-use-mcp
+npx --yes --prefer-offline @zavora-ai/computer-use-mcp
 ```
 
 That's it. Use this path in your MCP client config:
 
 ```
 command: npx
-args: ["-y", "@zavora-ai/computer-use-mcp"]
+args: ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
 ```
 
 ### Option 2: npm install
@@ -170,7 +170,7 @@ If permissions are correct, you'll see Calculator open, compute 42+58, and close
 ### Run the MCP server
 
 ```bash
-npx @zavora-ai/computer-use-mcp
+npx --yes --prefer-offline @zavora-ai/computer-use-mcp
 ```
 
 The server speaks MCP over stdio and is ready to connect to any MCP client.
@@ -212,7 +212,7 @@ import('@zavora-ai/computer-use-mcp').then(async ({ createComputerUseServer }) =
   "mcpServers": {
     "computer-use": {
       "command": "npx",
-      "args": ["-y", "@zavora-ai/computer-use-mcp"]
+      "args": ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
     }
   }
 }
@@ -233,7 +233,7 @@ import('@zavora-ai/computer-use-mcp').then(async ({ createComputerUseServer }) =
 2. Click **Add MCP Server** and fill in:
    - **Name**: `computer-use`
    - **Command**: `npx`
-   - **Args**: `["-y", "@zavora-ai/computer-use-mcp"]`
+   - **Args**: `["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]`
 
 3. Save and reload the window (`Cmd+Shift+P` → "Reload Window").
 
@@ -250,7 +250,7 @@ import('@zavora-ai/computer-use-mcp').then(async ({ createComputerUseServer }) =
   "mcpServers": {
     "computer-use": {
       "command": "npx",
-      "args": ["-y", "@zavora-ai/computer-use-mcp"]
+      "args": ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
     }
   }
 }
@@ -266,7 +266,7 @@ The server speaks standard MCP over stdio. The simplest config for any client:
 
 ```
 command: npx
-args: ["-y", "@zavora-ai/computer-use-mcp"]
+args: ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
 ```
 
 ---
