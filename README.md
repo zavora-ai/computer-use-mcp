@@ -1,6 +1,6 @@
 # computer-use-mcp
 
-> MCP server + client for macOS computer control. Screenshot, mouse, keyboard, clipboard, and app management — all in-process via Rust NAPI. No subprocesses. No focus stealing.
+> MCP server + client for macOS computer control. Screenshot, mouse, keyboard, clipboard, app management, and window-level targeting — all in-process via Rust NAPI. No subprocesses. No focus stealing.
 
 **macOS only** · Node.js 18+ · MIT License
 
@@ -9,34 +9,52 @@
 ## Table of Contents
 
 1. [What is this?](#what-is-this)
-2. [How it works](#how-it-works)
-3. [Architecture](#architecture)
-4. [Installation](#installation)
-5. [Permissions setup](#permissions-setup)
-6. [Quick start](#quick-start)
-7. [Using with MCP clients](#using-with-mcp-clients)
+2. [Tool priority guidance](#tool-priority-guidance)
+3. [How it works](#how-it-works)
+4. [Architecture](#architecture)
+5. [Installation](#installation)
+6. [Permissions setup](#permissions-setup)
+7. [Quick start](#quick-start)
+8. [Using with MCP clients](#using-with-mcp-clients)
+   - [Codex](#codex)
    - [Claude Desktop](#claude-desktop)
    - [Cursor](#cursor)
    - [Windsurf](#windsurf)
    - [Any MCP-compatible client](#any-mcp-compatible-client)
-8. [Using as a library](#using-as-a-library)
-9. [All 24 tools](#all-24-tools)
-10. [API reference](#api-reference)
-11. [Building from source](#building-from-source)
-12. [Security](#security)
-13. [Limitations](#limitations)
-14. [Troubleshooting](#troubleshooting)
-15. [License](#license)
+9. [Using as a library](#using-as-a-library)
+10. [All tools](#all-tools)
+11. [Window targeting and focus strategies](#window-targeting-and-focus-strategies)
+12. [API reference](#api-reference)
+13. [Building from source](#building-from-source)
+14. [Security](#security)
+15. [Limitations](#limitations)
+16. [Troubleshooting](#troubleshooting)
+17. [License](#license)
 
 ---
 
 ## What is this?
 
-`computer-use-mcp` lets an AI model (or any program) control your Mac — take screenshots, move the mouse, type text, press keys, read/write the clipboard, open and manage apps, and query display information.
+`computer-use-mcp` lets an AI model (or any program) control your Mac — take screenshots, move the mouse, type text, press keys, read/write the clipboard, open and manage apps, target specific windows, and query display information.
 
 It implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), which means any MCP-compatible AI client (Claude Desktop, Cursor, Windsurf, etc.) can use it as a tool server with zero extra code.
 
 It also ships a typed TypeScript client so you can drive your Mac programmatically from your own scripts.
+
+---
+
+## Tool priority guidance
+
+Desktop computer use is powerful but should be your **last resort**. Prefer more precise tools when they exist:
+
+| Priority | Approach | When to use |
+|---|---|---|
+| 1. **Connector / integration** | Structured APIs, MCP connectors, app-specific plugins | Always prefer if available |
+| 2. **Shell / filesystem** | Terminal commands, file I/O, `execFile` | File operations, CLI tools, system tasks |
+| 3. **Browser automation** | Playwright, Puppeteer, Browser Use | Web pages, web apps |
+| 4. **Desktop computer use** | This package | Native desktop apps, simulators, installers, modal dialogs, UI-only workflows |
+
+Desktop control is the broadest and slowest fallback. It works for anything on screen, but structured tools are faster, more reliable, and easier to recover from.
 
 ---
 
@@ -50,11 +68,13 @@ This package takes a different approach: a **Rust native module** (`.node` addon
 |---|---|
 | Mouse & keyboard | `CGEvent` (CoreGraphics) — same API the OS uses |
 | App management | `NSWorkspace` (AppKit) |
+| Window enumeration | `CGWindowListCopyWindowInfo` (CoreGraphics) — direct FFI, no subprocess |
+| Window activation | `AXUIElement` (Accessibility API) — window-level raise |
 | Display info | `CoreGraphics` display APIs |
 | Screenshots | `screencapture` CLI (fastest reliable method on macOS) |
 | Clipboard | `pbcopy` / `pbpaste` |
 
-Because everything runs in the same process as Node.js, there are no subprocess round-trips and no window focus changes.
+Mouse, keyboard, focus, window enumeration, and display operations run in-process via the native module. Screenshots and clipboard access still rely on the system utilities that are most reliable on macOS, but the control path avoids per-action shell hops.
 
 ---
 
@@ -66,34 +86,44 @@ Your AI client (Claude, Cursor, etc.)
         │  MCP protocol (JSON-RPC over stdio or in-memory)
         ▼
   MCP Server  (src/server.ts)
-  ├── Registers 24 tools with Zod schemas
+  ├── Registers 44 tools with Zod schemas
   ├── Validates all inputs at the boundary
   └── Delegates to Session
         │
         ▼
   Session  (src/session.ts)
-  ├── Manages target app focus state
-  ├── Validates inputs (second layer)
-  ├── Handles focus acquisition before keyboard/scroll actions
+  ├── Manages TargetState (bundleId + windowId + provenance)
+  ├── Resolves target: target_window_id → target_app → session state
+  ├── Applies focus strategy (strict / best_effort / none)
+  ├── Returns structured FocusFailure diagnostics on failure
   └── Calls native module
         │
         ▼
   NAPI Native Module  (computer-use-napi.node)
-  ├── mouse.rs    — CGEvent mouse events
-  ├── keyboard.rs — CGEvent keyboard events (static keycode map)
-  ├── apps.rs     — NSWorkspace app management
-  ├── display.rs  — CoreGraphics display queries
-  └── screenshot.rs — screencapture + JPEG parsing
+  ├── mouse.rs         — CGEvent mouse events
+  ├── keyboard.rs      — CGEvent keyboard events (static keycode map)
+  ├── apps.rs          — NSWorkspace app management
+  ├── windows.rs       — CGWindowListCopyWindowInfo + AXUIElement window raise
+  ├── display.rs       — CoreGraphics display queries
+  ├── accessibility.rs — AXUIElement tree walk / find / perform / set / menu (v5)
+  ├── spaces.rs        — CGS Space enumeration (read-only, v5)
+  └── screenshot.rs    — screencapture + JPEG parsing
 ```
 
-**Data flow for a tool call:**
+**Data flow for a window-targeted tool call:**
 
 ```
-AI sends: { tool: "left_click", args: { coordinate: [500, 300] } }
-  → Zod validates coordinate is [number, number]
-  → Session checks focus, validates coord
-  → Rust: CGEvent mouse move + click at (500, 300)
-  → Returns: { content: [{ type: "text", text: "Clicked (500, 300)" }] }
+AI sends: { tool: "key", args: { text: "command+v", target_window_id: 12345, focus_strategy: "strict" } }
+  → Zod validates parameters
+  → Session resolves window 12345 → bundleId "com.apple.iWork.Numbers"
+  → Session checks focus_strategy: strict
+  → Session confirms frontmost app == "com.apple.iWork.Numbers"
+  → Session confirms window 12345 is on-screen
+  → If not confirmed: attempt recovery (unhide → activate → raise → poll)
+  → If still not confirmed: return FocusFailure with suggestedRecovery
+  → If confirmed: Rust keyPress("command+v")
+  → Session updates TargetState { bundleId, windowId: 12345, establishedBy: 'keyboard' }
+  → Returns: { content: [{ type: "text", text: "Pressed command+v" }] }
 ```
 
 ---
@@ -200,6 +230,22 @@ import('@zavora-ai/computer-use-mcp').then(async ({ createComputerUseServer }) =
 
 ## Using with MCP clients
 
+### Codex
+
+Codex reads MCP server definitions from `~/.codex/config.toml`. Add this block:
+
+```toml
+[mcp_servers.computer-use]
+command = "npx"
+args = ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
+```
+
+If you already use the Codex CLI, you can verify the server is visible with:
+
+```bash
+codex mcp list
+```
+
 ### Claude Desktop
 
 1. Find your Claude Desktop config file:
@@ -292,6 +338,9 @@ const shot = await client.screenshot()
 // Capture a specific app window only
 const shot = await client.screenshot({ target_app: 'com.apple.Safari' })
 
+// Capture a specific window by ID
+const shot = await client.screenshot({ target_window_id: 12345 })
+
 // Custom width
 const shot = await client.screenshot({ width: 800, target_app: 'com.apple.iCal' })
 const img = shot.content.find(c => c.type === 'image')
@@ -300,19 +349,30 @@ if (img?.type === 'image') {
   // img.mimeType is "image/jpeg"
 }
 
-// Mouse
-await client.click(500, 300)           // left click
-await client.doubleClick(500, 300)     // double click
-await client.rightClick(500, 300)      // right click
-await client.moveMouse(500, 300)       // move without clicking
-await client.scroll(500, 300, 'down', 5) // scroll down 5 lines
-await client.drag([800, 400], [200, 200]) // drag from [200,200] to [800,400]
+// Mouse (with optional window targeting)
+await client.click(500, 300, 'com.apple.Safari')           // left click
+await client.click(500, 300, undefined, { targetWindowId: 12345 }) // target specific window
+await client.doubleClick(500, 300, 'com.apple.Safari')     // double click
+await client.rightClick(500, 300, 'com.apple.Safari')      // right click
+await client.moveMouse(500, 300, 'com.apple.Safari')       // move without clicking
+await client.scroll(500, 300, 'down', 5, 'com.apple.Safari') // scroll down 5 lines
+await client.drag([800, 400], [200, 200], 'com.apple.Safari') // drag from [200,200] to [800,400]
 
-// Keyboard
+// Keyboard (with optional focus strategy)
 await client.type('Hello, world!')     // type text
 await client.key('command+s')          // key combo
 await client.key('return')             // single key
 await client.key('command+z', 'com.apple.TextEdit') // target specific app
+await client.key('command+v', undefined, { targetWindowId: 12345, focusStrategy: 'strict' })
+
+// Window introspection (v4)
+const windows = await client.listWindows('com.apple.Safari')
+const win = await client.getWindow(12345)
+const cursorWin = await client.getCursorWindow()
+
+// Window activation (v4)
+await client.activateApp('com.apple.Safari')
+await client.activateWindow(12345)
 
 // Clipboard
 await client.writeClipboard('some text')
@@ -367,37 +427,81 @@ const result = await client.callTool('triple_click', {
 
 ---
 
-## All 24 tools
+
+## Semantic automation (v5)
+
+v5 gives agents three ordered approaches: **scripting → accessibility → coordinates**. Before reaching for screenshot + click, call `get_tool_guide` with the task description and `get_app_capabilities` with the bundle ID — the returned plan tells you whether AppleScript, AX, or coordinate automation is the right path.
+
+### Typical v5 flow
+
+```typescript
+// 1. Ask which approach to use
+const guide = await client.getToolGuide('reply to the selected email')
+// → { recommendedApproach: "scripting", suggestedTools: ["run_script"], ... }
+
+// 2. Probe the target app
+const caps = await client.getAppCapabilities('com.apple.mail')
+// → { scriptable: true, accessible: true, running: true, ... }
+
+// 3a. Scriptable app → run_script (fastest path)
+await client.runScript({
+  language: 'applescript',
+  script: 'tell application "Mail" to reply front message',
+})
+
+// 3b. Non-scriptable GUI → use AX instead of screenshot+click
+await client.fillForm({
+  target_app: 'com.apple.systempreferences',
+  fields: [
+    { role: 'AXTextField', label: 'Full Name', value: 'Jane Doe' },
+    { role: 'AXTextField', label: 'Email', value: 'jane@example.com' },
+  ],
+})
+```
+
+### Why prefer AX / scripting over pixel clicks?
+
+| Concern | Coordinate clicks | `click_element` / `run_script` |
+|---|---|---|
+| Survives window moves | No | Yes |
+| Survives resolution / scale changes | No | Yes |
+| Reliable on retina scaling edge cases | No | Yes |
+| Faster than screenshot + vision parse | No | Yes |
+| Reports structured errors | No | Yes (similar-labels ranking) |
+
+---
+
+## All tools
 
 ### Screenshot
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `screenshot` | Capture the screen or a specific app window | `width?: number` (default 1024), `target_app?: string` (bundle ID) |
+| `screenshot` | Capture the screen or a specific app/window | `width?: number` (default 1024), `quality?: number`, `provider?: string`, `target_app?: string` (bundle ID), `target_window_id?: number` (CGWindowID — takes precedence over `target_app`) |
 
 ### Mouse
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `left_click` | Left-click at coordinates | `coordinate: [x, y]` |
-| `right_click` | Right-click at coordinates | `coordinate: [x, y]` |
-| `middle_click` | Middle-click at coordinates | `coordinate: [x, y]` |
-| `double_click` | Double-click at coordinates | `coordinate: [x, y]` |
-| `triple_click` | Triple-click (select word) | `coordinate: [x, y]` |
-| `mouse_move` | Move cursor without clicking | `coordinate: [x, y]` |
-| `left_click_drag` | Click and drag | `coordinate: [x, y]`, `start_coordinate?: [x, y]` |
-| `left_mouse_down` | Press mouse button (hold) | `coordinate: [x, y]` |
-| `left_mouse_up` | Release mouse button | `coordinate: [x, y]` |
-| `scroll` | Scroll at position | `coordinate: [x, y]`, `direction: up\|down\|left\|right`, `amount?: number`, `target_app?: string` |
+| `left_click` | Left-click at coordinates | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `right_click` | Right-click at coordinates | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `middle_click` | Middle-click at coordinates | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `double_click` | Double-click at coordinates | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `triple_click` | Triple-click (select word) | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `mouse_move` | Move cursor without clicking | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `left_click_drag` | Click and drag | `coordinate: [x, y]`, `start_coordinate?: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `left_mouse_down` | Press mouse button (hold) | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `left_mouse_up` | Release mouse button | `coordinate: [x, y]`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `scroll` | Scroll at position | `coordinate: [x, y]`, `direction: up\|down\|left\|right`, `amount?: number`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
 | `cursor_position` | Get current cursor position | — |
 
 ### Keyboard
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `type` | Type text (Unicode, all characters) | `text: string`, `target_app?: string` |
-| `key` | Press a key or combo | `text: string` (e.g. `"command+c"`), `repeat?: number`, `target_app?: string` |
-| `hold_key` | Hold keys for a duration | `keys: string[]`, `duration: number` (seconds), `target_app?: string` |
+| `type` | Type text (Unicode, all characters) | `text: string`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `key` | Press a key or combo | `text: string` (e.g. `"command+c"`), `repeat?: number`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `hold_key` | Hold keys for a duration | `keys: string[]`, `duration: number` (seconds), `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
 
 **Supported key names:** `return`, `enter`, `tab`, `space`, `delete`, `backspace`, `escape`, `command`, `shift`, `option`, `alt`, `control`, `ctrl`, `fn`, `f1`–`f12`, `home`, `end`, `pageup`, `pagedown`, `left`, `right`, `up`, `down`, `a`–`z`, `0`–`9`, `-`, `=`, `[`, `]`, `\`, `;`, `'`, `,`, `.`, `/`, `` ` ``
 
@@ -437,6 +541,26 @@ const result = await client.callTool('triple_click', {
 | Xcode | `com.apple.dt.Xcode` |
 | Slack | `com.tinyspeck.slackmacgap` |
 
+### Window Introspection (v4)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `get_window` | Look up a window by CGWindowID | `window_id: number` |
+| `get_cursor_window` | Get the window under the mouse cursor | — |
+| `list_windows` | List visible on-screen windows | `bundle_id?: string` (filter by app) |
+| `get_frontmost_app` | Get the currently frontmost app | — |
+
+These are **observation tools** — they never change which app or window receives your next input. Safe to call between actions.
+
+### Window Activation (v4)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `activate_app` | Activate an app with structured diagnostics | `bundle_id: string`, `timeout_ms?: number` |
+| `activate_window` | Raise a specific window by CGWindowID | `window_id: number`, `timeout_ms?: number` |
+
+These return structured before/after state so you can verify activation succeeded and diagnose failures.
+
 ### Display
 
 | Tool | Description | Parameters |
@@ -450,13 +574,106 @@ const result = await client.callTool('triple_click', {
 |---|---|---|
 | `wait` | Pause execution | `duration: number` (seconds, max 300) |
 
+### Accessibility — observation (v5)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `get_ui_tree` | Accessibility tree for a window (role/label/value/bounds/actions/children). Capped at 500 nodes. | `target_app?: string`, `target_window_id?: number`, `max_depth?: number` |
+| `get_focused_element` | Currently focused element (where typed text will go). | — |
+| `find_element` | Search by role/label/value (AND of criteria). | `role?`, `label?`, `value?`, `target_app?`, `target_window_id?` |
+
+### Accessibility — mutation (v5)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `click_element` | Click a UI element by role + label. Falls back to coordinate click if AXPress is unsupported. | `role`, `label`, `target_app?`, `target_window_id?`, `focus_strategy?` |
+| `set_value` | Set a UI element's value directly (e.g. text field content). Defaults to `strict` focus. | `role`, `label`, `value`, `target_app?`, `target_window_id?`, `focus_strategy?` |
+| `press_button` | Shortcut for a button press (`role=AXButton`). | `label`, `target_app?`, `target_window_id?`, `focus_strategy?` |
+| `select_menu_item` | Walk AXMenuBar and select by path. Returns `availableMenus` on miss. | `menu_path: string[]`, `target_app?`, `focus_strategy?` |
+| `fill_form` | Set multiple values in one call; per-field results, no abort on partial failure. | `fields: Array<{ role, label, value }>`, `target_app?`, `target_window_id?`, `focus_strategy?` |
+
+### Scripting bridge (v5)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `run_script` | Execute AppleScript or JXA via bounded `osascript`. Fastest path for scriptable apps. | `language: "applescript"\|"jxa"`, `script: string`, `timeout_ms?: number` |
+| `get_app_dictionary` | Inspect a scriptable app's dictionary (suites/commands/classes). Cached per PID. | `bundle_id: string`, `suite?: string` |
+
+### Discovery (v5)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `get_tool_guide` | Recommend the best approach for a task. Call BEFORE screenshot + click. | `task_description: string` |
+| `get_app_capabilities` | Probe: scriptable? accessible? running? hidden? | `bundle_id: string` |
+
+### Spaces — read-only (v5)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `list_spaces` | List user Spaces grouped by display. Pure read via CGS. | — |
+| `get_active_space` | Currently active Space ID. | — |
+
+> **Note:** Space *mutation* tools (create / move / destroy) are not exposed. CGS-created Spaces are orphaned on SIP-enabled Macs (not visible in Mission Control) and window moves silently no-op without elevated entitlements. See [CHANGELOG](CHANGELOG.md) for details.
+
+---
+
+## Window targeting and focus strategies
+
+### `target_window_id` parameter
+
+All input tools accept an optional `target_window_id` parameter (CGWindowID). When provided, the session resolves the owning app from the window and uses that for focus acquisition. This is more precise than `target_app` for multi-window layouts.
+
+```typescript
+// Target a specific window instead of just an app
+await client.key('command+v', undefined, { targetWindowId: 12345, focusStrategy: 'strict' })
+```
+
+When both `target_window_id` and `target_app` are provided, `target_window_id` takes precedence.
+
+### `focus_strategy` parameter
+
+Controls how aggressively the server acquires focus before delivering input:
+
+| Strategy | Behavior | Default for |
+|---|---|---|
+| `strict` | Fail with `FocusFailure` if the target cannot be confirmed as frontmost. For keyboard tools with a `target_window_id`, also confirms the window is on-screen. | Keyboard tools (`type`, `key`, `hold_key`) |
+| `best_effort` | Attempt focus acquisition and proceed with input delivery even if full confirmation is not achieved. | Pointer tools (`left_click`, `scroll`, etc.) |
+| `none` | Skip all activation. Send input to the current frontmost target regardless of `target_app` or `target_window_id`. | — (must be explicit) |
+
+### Focus failure diagnostics
+
+When focus acquisition fails, the server returns a structured `FocusFailure` JSON payload with `isError: true`:
+
+```json
+{
+  "error": "focus_failed",
+  "requestedBundleId": "com.apple.iWork.Numbers",
+  "requestedWindowId": 12345,
+  "frontmostBefore": "com.openai.codex",
+  "frontmostAfter": "com.openai.codex",
+  "targetRunning": true,
+  "targetHidden": false,
+  "targetWindowVisible": true,
+  "activationAttempted": true,
+  "suggestedRecovery": "activate_window"
+}
+```
+
+The `suggestedRecovery` field tells you what to do next:
+
+| `suggestedRecovery` | Meaning | Action |
+|---|---|---|
+| `"activate_window"` | Window is visible but app is not frontmost | Call `activate_window(window_id)` |
+| `"unhide_app"` | App is hidden | Call `unhide_app(bundle_id)` then retry |
+| `"open_application"` | App is not running | Call `open_application(bundle_id)` then retry |
+
 ---
 
 ## API reference
 
 ### `createComputerUseServer(): McpServer`
 
-Creates an MCP server instance with all 24 tools registered. The server is not started until you connect a transport.
+Creates an MCP server instance with all 44 tools registered. The server is not started until you connect a transport.
 
 ```typescript
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
@@ -575,7 +792,8 @@ This package has **full control of your Mac** when Accessibility permission is g
 ### Screenshots
 - Screenshots are JPEG (not PNG) for size. Quality is high but not lossless.
 - Screenshots are resized to 1024px wide by default to reduce context size. Pass `width` to override.
-- Use `target_app` (bundle ID) to capture only a specific app window instead of the full screen.
+- Use `target_app` (bundle ID) to capture only a specific app window instead of the full screen. Use `target_window_id` (CGWindowID) for even more precise targeting.
+- If the target app or window does not have a visible on-screen window, `screenshot` returns an error instead of falling back to the entire display.
 - Screenshot resolution matches your display's logical resolution (not pixel resolution on Retina displays). Use `get_display_size` to get both.
 
 ### Keyboard
@@ -584,8 +802,9 @@ This package has **full control of your Mac** when Accessibility permission is g
 - The `type` tool types in chunks of 20 UTF-16 code units with 3ms gaps. Very fast typing may be dropped by some apps — add `wait` calls if needed.
 
 ### Focus management
-- The session tracks which app should receive keyboard/scroll events. If you switch apps manually between tool calls, the session may send events to the wrong app. Use `target_app` to be explicit.
+- The session tracks which app and window should receive keyboard/scroll events via `TargetState`. If you switch apps manually between tool calls, the session may send events to the wrong target. Use `target_app` or `target_window_id` to be explicit.
 - `open_application` waits up to 3 seconds for the app to become frontmost. Slow-launching apps may need an additional `wait`.
+- Window-level activation (`activate_window`) uses AXUIElement APIs which require Accessibility permission.
 
 ### Clipboard
 - `read_clipboard` reads plain text only. Rich text, images, and files in the clipboard are not accessible.
@@ -613,10 +832,10 @@ The native binary is missing. Either:
 4. Run `npm run demo` to verify
 
 ### The wrong app is receiving keyboard events
-Use the `target_app` parameter to explicitly specify the bundle ID:
+Use the `target_app` or `target_window_id` parameter to explicitly specify the target:
 ```typescript
 await client.type('hello', 'com.apple.TextEdit')
-await client.key('command+s', 'com.apple.TextEdit')
+await client.key('command+s', undefined, { targetWindowId: 12345, focusStrategy: 'strict' })
 ```
 
 ### Screenshots are black or empty
@@ -626,6 +845,13 @@ System Settings → Privacy & Security → Screen Recording → add your termina
 ### App won't open / `activated: false`
 - Verify the bundle ID is correct: `mdls -name kMDItemCFBundleIdentifier /Applications/YourApp.app`
 - The app may take longer to launch — add `await client.wait(2)` after `openApp`
+- Use `activate_app` for structured diagnostics — it returns `reason` and `suggestedRecovery`
+
+### Focus failure with `suggestedRecovery`
+When you get a `FocusFailure`, follow the `suggestedRecovery` field:
+- `"activate_window"` → call `activate_window(window_id)`
+- `"unhide_app"` → call `unhide_app(bundle_id)` then retry
+- `"open_application"` → call `open_application(bundle_id)` then retry
 
 ### Key combo not working
 Check that all key names are in the supported list. Common mistakes:

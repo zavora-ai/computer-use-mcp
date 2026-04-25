@@ -15,23 +15,53 @@ export interface ToolResult {
   isError?: boolean
 }
 
+export type FocusStrategy = 'strict' | 'best_effort' | 'none'
+
+/** Optional window-targeting and focus strategy options for input methods. */
+export interface WindowTargetOpts {
+  targetWindowId?: number
+  focusStrategy?: FocusStrategy
+}
+
+/** Options for semantic mutating tools — window_id is already required positionally. */
+export interface SemanticOpts {
+  focusStrategy?: FocusStrategy
+}
+
+/** Criteria for find_element — at least one must be present. */
+export interface FindElementCriteria {
+  role?: string
+  label?: string
+  value?: string
+  maxResults?: number
+}
+
+/** A single field for fill_form. */
+export interface FillFormField {
+  role: string
+  label: string
+  value: string
+}
+
 export interface ComputerUseClient {
   listTools(): Promise<Array<{ name: string; description?: string }>>
   callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>
   close(): Promise<void>
   // Typed convenience
-  screenshot(args?: { width?: number; quality?: number; target_app?: string; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto' }): Promise<ToolResult>
-  click(x: number, y: number): Promise<ToolResult>
-  doubleClick(x: number, y: number): Promise<ToolResult>
-  rightClick(x: number, y: number): Promise<ToolResult>
-  moveMouse(x: number, y: number): Promise<ToolResult>
-  drag(to: [number, number], from?: [number, number]): Promise<ToolResult>
-  type(text: string, targetApp?: string): Promise<ToolResult>
-  key(combo: string, targetApp?: string): Promise<ToolResult>
-  scroll(x: number, y: number, direction: 'up' | 'down' | 'left' | 'right', amount?: number): Promise<ToolResult>
+  screenshot(args?: { width?: number; quality?: number; target_app?: string; target_window_id?: number; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto' }): Promise<ToolResult>
+  click(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  doubleClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  rightClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  moveMouse(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  drag(to: [number, number], from?: [number, number], targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  type(text: string, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  key(combo: string, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  scroll(x: number, y: number, direction: 'up' | 'down' | 'left' | 'right', amount?: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   readClipboard(): Promise<ToolResult>
   writeClipboard(text: string): Promise<ToolResult>
   openApp(bundleId: string): Promise<ToolResult>
+  getFrontmostApp(): Promise<ToolResult>
+  listWindows(bundleId?: string): Promise<ToolResult>
   cursorPosition(): Promise<ToolResult>
   wait(seconds: number): Promise<ToolResult>
   listRunningApps(): Promise<ToolResult>
@@ -39,6 +69,39 @@ export interface ComputerUseClient {
   unhideApp(bundleId: string): Promise<ToolResult>
   getDisplaySize(displayId?: number): Promise<ToolResult>
   listDisplays(): Promise<ToolResult>
+  // v4 methods
+  getWindow(windowId: number): Promise<ToolResult>
+  getCursorWindow(): Promise<ToolResult>
+  activateApp(bundleId: string, timeoutMs?: number): Promise<ToolResult>
+  activateWindow(windowId: number, timeoutMs?: number): Promise<ToolResult>
+
+  // ── v5: Accessibility observation ─────────────────────────────────────
+  getUiTree(windowId: number, maxDepth?: number): Promise<ToolResult>
+  getFocusedElement(): Promise<ToolResult>
+  findElement(windowId: number, criteria: FindElementCriteria): Promise<ToolResult>
+
+  // ── v5: Semantic actions ──────────────────────────────────────────────
+  clickElement(windowId: number, role: string, label: string, opts?: SemanticOpts): Promise<ToolResult>
+  setValue(windowId: number, role: string, label: string, value: string, opts?: SemanticOpts): Promise<ToolResult>
+  pressButton(windowId: number, label: string, opts?: SemanticOpts): Promise<ToolResult>
+  selectMenuItem(bundleId: string, menu: string, item: string, submenu?: string): Promise<ToolResult>
+  fillForm(windowId: number, fields: FillFormField[], opts?: SemanticOpts): Promise<ToolResult>
+
+  // ── v5: Scripting bridge ──────────────────────────────────────────────
+  runScript(language: 'applescript' | 'javascript', script: string, timeoutMs?: number): Promise<ToolResult>
+  getAppDictionary(bundleId: string, suite?: string): Promise<ToolResult>
+
+  // ── v5: Strategy advisor + capabilities ───────────────────────────────
+  getToolGuide(taskDescription: string): Promise<ToolResult>
+  getAppCapabilities(bundleId: string): Promise<ToolResult>
+
+  // ── v5: Spaces (best effort) ──────────────────────────────────────────
+  listSpaces(): Promise<ToolResult>
+  getActiveSpace(): Promise<ToolResult>
+  createAgentSpace(): Promise<ToolResult>
+  moveWindowToSpace(windowId: number, spaceId: number): Promise<ToolResult>
+  removeWindowFromSpace(windowId: number, spaceId: number): Promise<ToolResult>
+  destroySpace(spaceId: number): Promise<ToolResult>
 }
 
 export async function connectStdio(command: string, args: string[], cwd?: string): Promise<ComputerUseClient> {
@@ -56,6 +119,14 @@ export async function connectInProcess(server: McpServer): Promise<ComputerUseCl
   return wrap(client, async () => { await client.close(); await server.close() })
 }
 
+function targetArgs(app?: string, opts?: WindowTargetOpts): Record<string, unknown> {
+  return {
+    ...(app ? { target_app: app } : {}),
+    ...(opts?.targetWindowId !== undefined ? { target_window_id: opts.targetWindowId } : {}),
+    ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
+  }
+}
+
 function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
   const call = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> =>
     (await client.callTool({ name, arguments: args })) as ToolResult
@@ -65,17 +136,19 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     callTool: call,
     close: closeFn,
     screenshot: (args?) => call('screenshot', args ?? {}),
-    click: (x, y) => call('left_click', { coordinate: [x, y] }),
-    doubleClick: (x, y) => call('double_click', { coordinate: [x, y] }),
-    rightClick: (x, y) => call('right_click', { coordinate: [x, y] }),
-    moveMouse: (x, y) => call('mouse_move', { coordinate: [x, y] }),
-    drag: (to, from) => call('left_click_drag', { coordinate: to, ...(from ? { start_coordinate: from } : {}) }),
-    type: (text, app) => call('type', { text, ...(app ? { target_app: app } : {}) }),
-    key: (combo, app) => call('key', { text: combo, ...(app ? { target_app: app } : {}) }),
-    scroll: (x, y, dir, amt = 3) => call('scroll', { coordinate: [x, y], direction: dir, amount: amt }),
+    click: (x, y, app?, opts?) => call('left_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    doubleClick: (x, y, app?, opts?) => call('double_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    rightClick: (x, y, app?, opts?) => call('right_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    moveMouse: (x, y, app?, opts?) => call('mouse_move', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    drag: (to, from?, app?, opts?) => call('left_click_drag', { coordinate: to, ...(from ? { start_coordinate: from } : {}), ...targetArgs(app, opts) }),
+    type: (text, app?, opts?) => call('type', { text, ...targetArgs(app, opts) }),
+    key: (combo, app?, opts?) => call('key', { text: combo, ...targetArgs(app, opts) }),
+    scroll: (x, y, dir, amt = 3, app?, opts?) => call('scroll', { coordinate: [x, y], direction: dir, amount: amt, ...targetArgs(app, opts) }),
     readClipboard: () => call('read_clipboard'),
     writeClipboard: (text) => call('write_clipboard', { text }),
     openApp: (id) => call('open_application', { bundle_id: id }),
+    getFrontmostApp: () => call('get_frontmost_app'),
+    listWindows: (bundleId) => call('list_windows', bundleId ? { bundle_id: bundleId } : {}),
     cursorPosition: () => call('cursor_position'),
     wait: (s) => call('wait', { duration: s }),
     listRunningApps: () => call('list_running_apps'),
@@ -83,5 +156,72 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     unhideApp: (id) => call('unhide_app', { bundle_id: id }),
     getDisplaySize: (id) => call('get_display_size', id !== undefined ? { display_id: id } : {}),
     listDisplays: () => call('list_displays'),
+    // v4 methods
+    getWindow: (windowId) => call('get_window', { window_id: windowId }),
+    getCursorWindow: () => call('get_cursor_window'),
+    activateApp: (bundleId, timeoutMs?) => call('activate_app', { bundle_id: bundleId, ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}) }),
+    activateWindow: (windowId, timeoutMs?) => call('activate_window', { window_id: windowId, ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}) }),
+
+    // v5: Accessibility observation
+    getUiTree: (windowId, maxDepth?) => call('get_ui_tree', {
+      window_id: windowId,
+      ...(maxDepth !== undefined ? { max_depth: maxDepth } : {}),
+    }),
+    getFocusedElement: () => call('get_focused_element'),
+    findElement: (windowId, criteria) => call('find_element', {
+      window_id: windowId,
+      ...(criteria.role !== undefined ? { role: criteria.role } : {}),
+      ...(criteria.label !== undefined ? { label: criteria.label } : {}),
+      ...(criteria.value !== undefined ? { value: criteria.value } : {}),
+      ...(criteria.maxResults !== undefined ? { max_results: criteria.maxResults } : {}),
+    }),
+
+    // v5: Semantic actions
+    clickElement: (windowId, role, label, opts?) => call('click_element', {
+      window_id: windowId, role, label,
+      ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
+    }),
+    setValue: (windowId, role, label, value, opts?) => call('set_value', {
+      window_id: windowId, role, label, value,
+      ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
+    }),
+    pressButton: (windowId, label, opts?) => call('press_button', {
+      window_id: windowId, label,
+      ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
+    }),
+    selectMenuItem: (bundleId, menu, item, submenu?) => call('select_menu_item', {
+      bundle_id: bundleId, menu, item,
+      ...(submenu !== undefined ? { submenu } : {}),
+    }),
+    fillForm: (windowId, fields, opts?) => call('fill_form', {
+      window_id: windowId, fields,
+      ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
+    }),
+
+    // v5: Scripting bridge
+    runScript: (language, script, timeoutMs?) => call('run_script', {
+      language, script,
+      ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
+    }),
+    getAppDictionary: (bundleId, suite?) => call('get_app_dictionary', {
+      bundle_id: bundleId,
+      ...(suite !== undefined ? { suite } : {}),
+    }),
+
+    // v5: Strategy advisor
+    getToolGuide: (taskDescription) => call('get_tool_guide', { task_description: taskDescription }),
+    getAppCapabilities: (bundleId) => call('get_app_capabilities', { bundle_id: bundleId }),
+
+    // v5: Spaces
+    listSpaces: () => call('list_spaces'),
+    getActiveSpace: () => call('get_active_space'),
+    createAgentSpace: () => call('create_agent_space'),
+    moveWindowToSpace: (windowId, spaceId) => call('move_window_to_space', {
+      window_id: windowId, space_id: spaceId,
+    }),
+    removeWindowFromSpace: (windowId, spaceId) => call('remove_window_from_space', {
+      window_id: windowId, space_id: spaceId,
+    }),
+    destroySpace: (spaceId) => call('destroy_space', { space_id: spaceId }),
   }
 }

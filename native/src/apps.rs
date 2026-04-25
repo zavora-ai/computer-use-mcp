@@ -1,7 +1,7 @@
 use napi_derive::napi;
 use objc::runtime::{Class, Object, BOOL, YES};
 use objc::{msg_send, sel, sel_impl};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 
 fn nsstring_to_string(nsstr: *mut Object) -> Option<String> {
     if nsstr.is_null() {
@@ -67,6 +67,9 @@ pub fn activate_app(bundle_id: String, timeout_ms: Option<i32>) -> napi::Result<
         if target.is_null() {
             // Not running — try to open it
             let bid_nsstr = nsstring_from_str(&bundle_id);
+            if bid_nsstr.is_null() {
+                return Err(napi::Error::from_reason("Invalid bundle_id"));
+            }
             let url: *mut Object = msg_send![ws, URLForApplicationWithBundleIdentifier: bid_nsstr];
             if !url.is_null() {
                 let config_cls = Class::get("NSWorkspaceOpenConfiguration").unwrap();
@@ -174,6 +177,9 @@ pub fn unhide_app(bundle_id: String) -> napi::Result<bool> {
 fn nsstring_from_str(s: &str) -> *mut Object {
     unsafe {
         let cls = Class::get("NSString").unwrap();
-        msg_send![cls, stringWithUTF8String: s.as_ptr() as *const i8]
+        let Ok(cstr) = CString::new(s) else {
+            return std::ptr::null_mut();
+        };
+        msg_send![cls, stringWithUTF8String: cstr.as_ptr()]
     }
 }
