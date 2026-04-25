@@ -992,17 +992,68 @@ pub fn set_element_value(
 // Menu bar
 // ---------------------------------------------------------------------------
 
+/// Copy an integer attribute (used for AXMenuItemCmdModifiers, AXMenuItemCmdVirtualKey).
+fn ax_copy_i64(elem: AXUIElementRef, attr: &str) -> Option<i64> {
+    let key = CFString::new(attr);
+    let mut val: RawCFTypeRef = std::ptr::null();
+    let err = unsafe { AXUIElementCopyAttributeValue(elem, key.as_concrete_TypeRef(), &mut val) };
+    if err != K_AX_ERROR_SUCCESS || val.is_null() {
+        return None;
+    }
+    let tid = unsafe { CFGetTypeID(val) };
+    if tid != unsafe { CFNumberGetTypeID() } {
+        unsafe { CFRelease(val) };
+        return None;
+    }
+    let n: CFNumber = unsafe { TCFType::wrap_under_create_rule(val as *const _) };
+    n.to_i64()
+}
+
+/// Render `AXMenuItemCmdChar` + `AXMenuItemCmdModifiers` as a single shortcut
+/// string like "cmd+shift+n". Returns `None` if the item has no shortcut.
+///
+/// Modifiers bitmask (per AppKit docs):
+///   bit 0 (1) = Shift
+///   bit 1 (2) = Option / Alt
+///   bit 2 (4) = Control
+///   bit 3 (8) = NO Command prefix (default is Command included)
+fn menu_shortcut_string(item: AXUIElementRef) -> Option<String> {
+    let key = ax_copy_string(item, "AXMenuItemCmdChar")?;
+    if key.is_empty() {
+        return None;
+    }
+    let mods = ax_copy_i64(item, "AXMenuItemCmdModifiers").unwrap_or(0);
+    let mut parts: Vec<&str> = Vec::with_capacity(5);
+    if (mods & 8) == 0 {
+        parts.push("cmd");
+    }
+    if (mods & 4) != 0 {
+        parts.push("control");
+    }
+    if (mods & 2) != 0 {
+        parts.push("option");
+    }
+    if (mods & 1) != 0 {
+        parts.push("shift");
+    }
+    let mut out = parts.join("+");
+    if !out.is_empty() {
+        out.push('+');
+    }
+    out.push_str(&key.to_lowercase());
+    Some(out)
+}
+
 fn menu_item_to_json(item: AXUIElementRef, depth: i32) -> serde_json::Value {
     let title = ax_copy_string(item, "AXTitle").unwrap_or_default();
     let enabled = ax_copy_bool(item, "AXEnabled").unwrap_or(true);
-    let cmd_char = ax_copy_string(item, "AXMenuItemCmdChar");
 
     let mut j = serde_json::json!({
         "title": title,
         "enabled": enabled,
     });
-    if let Some(c) = cmd_char {
-        j["shortcut"] = serde_json::Value::String(c);
+    if let Some(s) = menu_shortcut_string(item) {
+        j["shortcut"] = serde_json::Value::String(s);
     }
 
     if depth < 4 {

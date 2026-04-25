@@ -191,6 +191,11 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     suite: z.string().optional().describe('Limit to a specific suite; omit for a summary'),
   })
 
+  // ── v5.1: Menu bar introspection ────────────────────────────────────────
+  tool('list_menu_bar', 'List an app\'s full menu bar structure with keyboard shortcuts. Use this BEFORE select_menu_item to see what menus / items / shortcuts exist — agents can then press the shortcut directly (faster than walking the menu) or pass the exact item title to select_menu_item.', {
+    bundle_id: z.string().describe('Bundle ID of the app whose menu bar to read'),
+  })
+
   // ── v5: Strategy advisor ────────────────────────────────────────────────
   tool('get_tool_guide', 'Recommend the best automation approach for a task. Call this BEFORE committing to screenshot-and-click — it suggests scripting or accessibility paths when they exist.', {
     task_description: z.string().describe('Natural-language description of the task to automate'),

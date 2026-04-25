@@ -85,6 +85,7 @@ export interface ComputerUseClient {
   setValue(windowId: number, role: string, label: string, value: string, opts?: SemanticOpts): Promise<ToolResult>
   pressButton(windowId: number, label: string, opts?: SemanticOpts): Promise<ToolResult>
   selectMenuItem(bundleId: string, menu: string, item: string, submenu?: string): Promise<ToolResult>
+  listMenuBar(bundleId: string): Promise<ToolResult>
   fillForm(windowId: number, fields: FillFormField[], opts?: SemanticOpts): Promise<ToolResult>
 
   // ── v5: Scripting bridge ──────────────────────────────────────────────
@@ -193,6 +194,7 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
       bundle_id: bundleId, menu, item,
       ...(submenu !== undefined ? { submenu } : {}),
     }),
+    listMenuBar: (bundleId) => call('list_menu_bar', { bundle_id: bundleId }),
     fillForm: (windowId, fields, opts?) => call('fill_form', {
       window_id: windowId, fields,
       ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),

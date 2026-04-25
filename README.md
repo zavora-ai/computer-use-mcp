@@ -86,7 +86,7 @@ Your AI client (Claude, Cursor, etc.)
         │  MCP protocol (JSON-RPC over stdio or in-memory)
         ▼
   MCP Server  (src/server.ts)
-  ├── Registers 44 tools with Zod schemas
+  ├── Registers 45 tools with Zod schemas
   ├── Validates all inputs at the boundary
   └── Delegates to Session
         │
@@ -589,6 +589,7 @@ These return structured before/after state so you can verify activation succeede
 | `click_element` | Click a UI element by role + label. Falls back to coordinate click if AXPress is unsupported. | `role`, `label`, `target_app?`, `target_window_id?`, `focus_strategy?` |
 | `set_value` | Set a UI element's value directly (e.g. text field content). Defaults to `strict` focus. | `role`, `label`, `value`, `target_app?`, `target_window_id?`, `focus_strategy?` |
 | `press_button` | Shortcut for a button press (`role=AXButton`). | `label`, `target_app?`, `target_window_id?`, `focus_strategy?` |
+| `list_menu_bar` | Full menu bar for any app, with per-item keyboard shortcuts (`cmd+shift+n` style). Call this BEFORE `select_menu_item` — pressing the shortcut is one keystroke vs. a menu walk. | `bundle_id: string` |
 | `select_menu_item` | Walk AXMenuBar and select by path. Returns `availableMenus` on miss. | `menu_path: string[]`, `target_app?`, `focus_strategy?` |
 | `fill_form` | Set multiple values in one call; per-field results, no abort on partial failure. | `fields: Array<{ role, label, value }>`, `target_app?`, `target_window_id?`, `focus_strategy?` |
 
@@ -673,7 +674,7 @@ The `suggestedRecovery` field tells you what to do next:
 
 ### `createComputerUseServer(): McpServer`
 
-Creates an MCP server instance with all 44 tools registered. The server is not started until you connect a transport.
+Creates an MCP server instance with all 45 tools registered. The server is not started until you connect a transport.
 
 ```typescript
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'

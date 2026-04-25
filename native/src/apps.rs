@@ -23,8 +23,36 @@ fn shared_workspace() -> *mut Object {
     }
 }
 
+// NSWorkspace.runningApplications is KVO-observed; its contents only refresh
+// when the main run loop pumps notifications. In a long-lived Node host that
+// never spins the run loop, the array is frozen at whatever apps existed at
+// process start. Draining pending sources + timers in default mode (zero
+// timeout, return after the first source fires) refreshes the observed
+// collection without introducing unbounded dispatch side effects.
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, returnAfterSourceHandled: bool) -> i32;
+    static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+}
+
+fn drain_runloop() {
+    unsafe {
+        // Up to ~4 drain cycles — each pump may queue follow-up notifications.
+        // Stops early when no source fires.
+        for _ in 0..4 {
+            let result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, true);
+            // 1 = kCFRunLoopRunHandledSource (something fired)
+            // 2 = kCFRunLoopRunStopped, 3 = kCFRunLoopRunTimedOut, 4 = kCFRunLoopRunFinished
+            if result != 1 {
+                break;
+            }
+        }
+    }
+}
+
 #[napi]
 pub fn get_frontmost_app() -> napi::Result<serde_json::Value> {
+    drain_runloop();
     unsafe {
         let ws = shared_workspace();
         let app: *mut Object = msg_send![ws, frontmostApplication];
@@ -47,6 +75,7 @@ pub fn get_frontmost_app() -> napi::Result<serde_json::Value> {
 #[napi]
 pub fn activate_app(bundle_id: String, timeout_ms: Option<i32>) -> napi::Result<serde_json::Value> {
     let timeout = timeout_ms.unwrap_or(2000) as u64;
+    drain_runloop();
     unsafe {
         let ws = shared_workspace();
         let apps: *mut Object = msg_send![ws, runningApplications];
@@ -109,6 +138,7 @@ pub fn activate_app(bundle_id: String, timeout_ms: Option<i32>) -> napi::Result<
 
 #[napi]
 pub fn list_running_apps() -> napi::Result<serde_json::Value> {
+    drain_runloop();
     unsafe {
         let ws = shared_workspace();
         let apps: *mut Object = msg_send![ws, runningApplications];

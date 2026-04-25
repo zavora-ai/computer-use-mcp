@@ -1,5 +1,23 @@
 # Changelog
 
+## v5.1.0 (2026-04-25)
+
+v5.1 fixes a latent bug that made `list_running_apps` / `activate_app` return stale data after the server had been running a while, and adds a new `list_menu_bar` tool that exposes every menu item's keyboard shortcut — letting agents skip menu traversal and press `cmd+X` directly.
+
+### Bug fixes
+- **NSWorkspace staleness** — `NSWorkspace.runningApplications` is KVO-observed; its contents only refresh when the main run loop pumps notifications. Long-lived Node hosts never spin the run loop, so the array was frozen at process-start state — apps launched afterward were invisible to `list_running_apps`, and `activate_app` returned `not_running` for them. Fix: drain pending sources via `CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, true)` before each read. Affects `list_running_apps`, `activate_app`, `get_frontmost_app`, and (transitively) `ensureFocusV4` / focus recovery.
+
+### New tools
+- **`list_menu_bar`** — Full menu bar for any app, with per-item keyboard shortcuts. Renders `AXMenuItemCmdChar` + `AXMenuItemCmdModifiers` as `"cmd+shift+n"` style strings. Call this BEFORE `select_menu_item` to see what exists — agents can then press the shortcut directly (one keystroke) instead of walking the menu bar.
+
+### Enhancements
+- **Complete shortcut extraction** — `get_menu_bar` (native) / `list_menu_bar` (MCP) now honour the modifier bitmask (Shift=1, Option=2, Control=4, "no Cmd"=8) instead of just the character. Previously only the raw key was returned, losing modifier information.
+
+### Tests
+- 61/61 tests pass. 12/12 smoke probes pass (tool count expanded to 45).
+
+---
+
 ## v5.0.0 (2026-04-25)
 
 v5 adds a **semantic accessibility layer** and a **scripting bridge** on top of the coordinate-based v4 surface. Agents now have three ordered approaches to automate macOS — scripting first, accessibility second, coordinates last — with two new discovery tools (`get_tool_guide`, `get_app_capabilities`) that help the agent pick correctly before it ever takes a screenshot.

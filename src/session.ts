@@ -1141,6 +1141,12 @@ export function createSession(opts: SessionOptions = {}): Session {
           }
         }
 
+        case 'list_menu_bar': {
+          const bundleId = str('bundle_id')
+          const bar = n.getMenuBar(bundleId)
+          return ok(JSON.stringify(bar))
+        }
+
         case 'fill_form': {
           const target = resolveTarget({ window_id: args.window_id })
           if (target.windowId == null) throw new Error('fill_form requires window_id')
