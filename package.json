@@ -46,6 +46,7 @@
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
     "test": "npm run build:ts && node --test test/*.test.mjs",
+    "smoke": "npm run build && node test-v5-smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",
     "demo": "tsx src/demo.ts"
