@@ -12,7 +12,7 @@
     "darwin"
   ],
   "bin": {
-    "computer-use-mcp": "./dist/server.js"
+    "computer-use-mcp": "dist/server.js"
   },
   "exports": {
     ".": {
