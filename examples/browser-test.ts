@@ -1,9 +1,12 @@
 /**
- * Browser test v2: use clipboard paste for URL entry (reliable with address bars).
+ * Browser test: open Safari, navigate to example.com and github.com,
+ * copy page text, take screenshots at each step.
+ *
+ * Run: npx tsx examples/browser-test.ts
  */
 
-import { createComputerUseServer } from './server.js'
-import { connectInProcess, type ToolResult } from './client.js'
+import { createComputerUseServer } from '../src/server.js'
+import { connectInProcess, type ToolResult } from '../src/client.js'
 import { writeFile } from 'fs/promises'
 
 const safari = 'com.apple.Safari'
@@ -24,13 +27,13 @@ async function main() {
 
   // 3. Navigate via clipboard paste (reliable with address bars)
   console.log('3. Navigating to example.com...')
-  await client.key('command+l', safari)       // focus address bar
+  await client.key('command+l', safari)
   await client.wait(0.3)
   await client.writeClipboard('https://example.com')
-  await client.key('command+v', safari)       // paste URL
+  await client.key('command+v', safari)
   await client.wait(0.3)
-  await client.key('return', safari)          // go
-  await client.wait(2.5)                      // let page load
+  await client.key('return', safari)
+  await client.wait(2.5)
 
   // 4. Screenshot
   console.log('4. Screenshot (example.com)...')

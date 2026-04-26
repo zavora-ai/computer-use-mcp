@@ -1,9 +1,11 @@
 /**
- * Fetch top 10 crypto prices from CoinGecko and analyse in Numbers.
+ * Fetch top 10 crypto prices from CoinGecko and paste into Numbers.
+ *
+ * Run: npx tsx examples/crypto-numbers.ts
  */
 
-import { createComputerUseServer } from './server.js'
-import { connectInProcess, type ToolResult } from './client.js'
+import { createComputerUseServer } from '../src/server.js'
+import { connectInProcess, type ToolResult } from '../src/client.js'
 import { writeFile } from 'fs/promises'
 
 const numbers = 'com.apple.iWork.Numbers'

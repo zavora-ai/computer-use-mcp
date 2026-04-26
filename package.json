@@ -46,10 +46,10 @@
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
     "test": "npm run build:ts && node --test test/*.test.mjs",
-    "smoke": "npm run build && node test-v5-smoke.mjs",
+    "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",
-    "demo": "tsx src/demo.ts"
+    "demo": "tsx examples/demo.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -11,11 +11,11 @@
  *   - screenshot of a specific window by ID
  *   - FocusFailure recovery pattern
  *
- * All in-process via Rust NAPI — no focus stealing.
+ * Run: npx tsx examples/demo-v4.ts
  */
 
-import { createComputerUseServer } from './server.js'
-import { connectInProcess, type ToolResult } from './client.js'
+import { createComputerUseServer } from '../src/server.js'
+import { connectInProcess, type ToolResult } from '../src/client.js'
 import { writeFile } from 'fs/promises'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -136,10 +136,9 @@ async function main() {
   if (teWin) {
     console.log(`\n7. Typing into TextEdit window [${teWin.windowId}] using target_window_id + strict focus...`)
 
-    // Use the v4 window-targeting API with strict focus strategy
     await client.type(
       'Hello from computer-use-mcp v4!\n\n',
-      undefined, // no target_app — using window ID instead
+      undefined,
       { targetWindowId: teWin.windowId, focusStrategy: 'strict' },
     )
     await client.wait(0.2)
@@ -200,7 +199,6 @@ async function main() {
   // ── Step 10: Demonstrate focus_strategy: none ───────────────────────────
 
   console.log('\n10. Demonstrating focus_strategy: "none" (skip activation)...')
-  // With "none", the click goes to whatever is currently frontmost — no activation attempt
   const frontBefore = json(await client.getFrontmostApp()) as { bundleId: string }
   console.log(`    Frontmost app: ${frontBefore.bundleId}`)
   console.log('    Clicking at (400, 400) with focus_strategy: none — no app switching...')
@@ -217,7 +215,6 @@ async function main() {
   // ── Step 12: FocusFailure recovery demo ─────────────────────────────────
 
   console.log('\n12. Demonstrating FocusFailure recovery pattern...')
-  // Hide TextEdit, then try to type into it with strict focus — should fail
   if (teWin) {
     await client.hideApp('com.apple.TextEdit')
     await client.wait(0.3)
@@ -236,14 +233,12 @@ async function main() {
       console.log(`      targetHidden:        ${failure.targetHidden}`)
       console.log(`      suggestedRecovery:   ${failure.suggestedRecovery}`)
 
-      // Follow the recovery suggestion
       console.log(`    Following suggestedRecovery: "${failure.suggestedRecovery}"...`)
       if (failure.suggestedRecovery === 'unhide_app') {
         await client.unhideApp('com.apple.TextEdit')
         await client.wait(0.5)
         await client.activateWindow(teWin.windowId)
         await client.wait(0.3)
-        // Retry
         await client.key('a', undefined, {
           targetWindowId: teWin.windowId,
           focusStrategy: 'strict',
@@ -258,12 +253,10 @@ async function main() {
   // ── Cleanup ─────────────────────────────────────────────────────────────
 
   console.log('\n13. Cleaning up...')
-  // Close TextEdit without saving
   await client.activateApp('com.apple.TextEdit')
   await client.wait(0.3)
   await client.key('command+w', 'com.apple.TextEdit')
   await client.wait(0.5)
-  // Press "Don't Save" — it's the third button, use Command+D
   await client.key('command+d', 'com.apple.TextEdit')
   await client.wait(0.3)
 
