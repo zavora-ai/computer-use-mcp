@@ -15,9 +15,13 @@ npm run demo  # verify everything works
 ## Project structure
 
 ```
-src/           TypeScript source (server, session, client, native loader)
-native/src/    Rust NAPI module (mouse, keyboard, apps, display, screenshot)
-dist/          Compiled TypeScript output (generated, not committed)
+src/              Core library (server, session, client, native loader)
+native/src/       Rust NAPI module (mouse, keyboard, apps, display, screenshot, accessibility, spaces)
+test/             Automated test suite (node:test + fast-check property tests)
+examples/         Runnable demos (Calculator, Safari, Numbers, window targeting)
+scripts/          Ad-hoc development scripts (not part of CI)
+docs/specs/       Historical design specs (v3, v4)
+dist/             Compiled TypeScript output (generated, not committed)
 ```
 
 ## Making changes
@@ -26,14 +30,14 @@ dist/          Compiled TypeScript output (generated, not committed)
 Edit files in `src/`, then:
 ```bash
 npm run build:ts
-npm run demo
+npm test
 ```
 
 ### Rust changes
 Edit files in `native/src/`, then:
 ```bash
 npm run build:native
-npm run demo
+npm test
 ```
 
 ### Full rebuild
@@ -50,19 +54,33 @@ npm run build
 
 ## Testing
 
-There is no automated test suite. Verify changes manually:
+Run the automated test suite:
 
 ```bash
-npm run demo          # Calculator: open, compute 42+58, clipboard, close
-npx tsx src/browser-test.ts  # Safari: navigate to example.com and github.com
+npm test
 ```
 
-Both must pass cleanly before submitting a PR.
+This builds TypeScript and runs all tests in `test/`. The suite includes property-based tests (via fast-check) covering session semantics, focus strategies, target resolution, and tool schemas.
+
+For a quick post-build smoke test against live macOS:
+
+```bash
+npm run smoke
+```
+
+For interactive verification with real apps:
+
+```bash
+npm run demo                          # Calculator demo
+npx tsx examples/browser-test.ts      # Safari navigation
+npx tsx examples/demo-v4.ts           # Window targeting
+```
 
 ## Pull requests
 
 - Keep PRs focused — one feature or fix per PR
 - Update the README if you add or change a tool
+- Run `npm test` and confirm all tests pass
 - Bump the version in `package.json` following semver if you change public API
 
 ## Reporting bugs

@@ -4,7 +4,10 @@
 
 | Version | Supported |
 |---------|-----------|
-| 2.x     | ✅ Yes    |
+| 5.x     | ✅ Yes    |
+| 4.x     | ✅ Yes    |
+| 3.x     | ✅ Yes    |
+| 2.x     | ⚠️ Security fixes only |
 | < 2.0   | ❌ No     |
 
 ## Reporting a vulnerability
@@ -30,6 +33,8 @@ This package has **full control of your Mac** when Accessibility permission is g
 - Shell injection via clipboard or text inputs
 - Bypassing input validation to crash the server
 - Memory safety issues in the Rust native module
+- Cross-process session lock bypass or race conditions
+- AppleScript/JXA injection via `run_script` inputs
 
 ## Out of scope
 
@@ -43,6 +48,8 @@ This package has **full control of your Mac** when Accessibility permission is g
 - No shell string interpolation — all subprocess calls use argument arrays
 - Screenshot temp files use `O_EXCL` exclusive creation with a monotonic counter to prevent symlink attacks
 - The `wait` tool is capped at 300 seconds
+- The `run_script` tool is bounded by `timeout_ms` (default 30s, max 120s) to prevent runaway scripts
+- Cross-process session lock (`/tmp/.computer-use-mcp.lock`) prevents concurrent mutating tool calls from multiple server instances
 - The server has no network listener — it communicates only over stdio
 
 ## Disclosure policy

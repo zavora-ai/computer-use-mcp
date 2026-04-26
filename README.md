@@ -727,7 +727,7 @@ You need:
 
 ```bash
 # Clone
-git clone https://github.com/your-org/computer-use-mcp
+git clone https://github.com/zavora-ai/computer-use-mcp
 cd computer-use-mcp
 
 # Install Node dependencies
@@ -747,6 +747,8 @@ npm run demo
 | `npm run build` | Build Rust + TypeScript |
 | `npm run build:native` | Build only the Rust `.node` binary |
 | `npm run build:ts` | Compile TypeScript to `dist/` |
+| `npm test` | Build TypeScript + run automated test suite |
+| `npm run smoke` | Build all + run live macOS smoke test |
 | `npm run demo` | Run the Calculator demo |
 | `npm run server` | Start the MCP server on stdio |
 
