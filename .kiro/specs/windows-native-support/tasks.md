@@ -27,8 +27,10 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Update `files` array to include all platform-specific `.node` binaries
     - _Requirements: 15.2, 15.3, 16.1, 16.3_
 
-- [ ] 2. Platform detection and native module loading (`src/native.ts`)
-  - [ ] 2.1 Refactor `native.ts` for cross-platform binary loading
+- [x] 2. Platform detection and native module loading (`src/native.ts`)
+
+  - [x] 2.1 Refactor `native.ts` for cross-platform binary loading
+
     - Remove the `if (process.platform !== 'darwin') throw` guard
     - Implement platform-specific binary path resolution: `computer-use-napi.${process.platform}-${process.arch}.node`
     - Map `process.platform` + `process.arch` to binary names: `darwin`+`arm64` → `darwin-arm64`, `darwin`+`x64` → `darwin-x64`, `win32`+`x64` → `win32-x64`
@@ -36,18 +38,22 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Keep the `NativeModule` TypeScript interface unchanged — same function signatures on both platforms
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-  - [ ] 2.2 Add Windows-specific `NativeModule` extensions to the interface
+  - [x] 2.2 Add Windows-specific `NativeModule` extensions to the interface
+
     - Add `clipboard.rs` exports to the interface: `readClipboard(): string`, `writeClipboard(text: string): void` (on macOS these are handled in session layer via pbcopy/pbpaste; on Windows they go through native)
     - Ensure all existing interface methods remain unchanged for macOS backward compatibility
     - _Requirements: 5.1, 5.2, 14.4_
 
-- [ ] 3. Checkpoint — Verify build system compiles on both platforms
+- [x] 3. Checkpoint — Verify build system compiles on both platforms
+
   - Ensure `cargo build --release` succeeds on macOS (existing behavior preserved)
   - Ensure `cargo build --release --target x86_64-pc-windows-msvc` cross-compiles or compiles on Windows
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Implement Rust native module: `mouse.rs` — Mouse input on Windows
-  - [ ] 4.1 Add Windows mouse input implementation with `#[cfg(target_os = "windows")]`
+- [x] 4. Implement Rust native module: `mouse.rs` — Mouse input on Windows
+
+  - [x] 4.1 Add Windows mouse input implementation with `#[cfg(target_os = "windows")]`
+
     - Implement `mouse_click(x, y, button, count)` using `SendInput` with `MOUSEINPUT` structures
     - Implement coordinate normalization: `(x * 65535) / screen_width` for `MOUSEEVENTF_ABSOLUTE`
     - Implement move-and-settle pattern: move cursor first, sleep 10ms, then click
@@ -62,7 +68,8 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
 
 
 - [ ] 5. Implement Rust native module: `keyboard.rs` — Keyboard input on Windows
-  - [ ] 5.1 Add Windows keyboard input implementation with `#[cfg(target_os = "windows")]`
+  - [x] 5.1 Add Windows keyboard input implementation with `#[cfg(target_os = "windows")]`
+
     - Implement `type_text(text)` using `SendInput` with `KEYBDINPUT` and `KEYEVENTF_UNICODE` for each UTF-16 code unit
     - Implement long text optimization: for strings >100 chars, use clipboard paste (`WriteClipboard` + synthesize Ctrl+V) to avoid per-character overhead
     - Implement `key_press(combo, repeat)` — parse combo string by splitting on "+", map modifier names to Windows VK codes
@@ -80,7 +87,8 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - **Validates: Requirements 3.2, 3.5**
 
 - [ ] 6. Implement Rust native module: `screenshot.rs` — Screenshot capture on Windows
-  - [ ] 6.1 Add Windows screenshot implementation with `#[cfg(target_os = "windows")]`
+  - [x] 6.1 Add Windows screenshot implementation with `#[cfg(target_os = "windows")]`
+
     - Implement primary path: DXGI Desktop Duplication via `IDXGIOutputDuplication::AcquireNextFrame` → `ID3D11Texture2D` → map to CPU memory → JPEG encode with `image` crate
     - Implement GDI BitBlt fallback: `CreateCompatibleDC` → `CreateCompatibleBitmap` → `BitBlt` → read DIB bits; triggered when DXGI returns `DXGI_ERROR_NOT_CURRENTLY_AVAILABLE` or `DXGI_ERROR_UNSUPPORTED`
     - Implement per-window capture using `PrintWindow` API when `window_id` (HWND) is specified
@@ -102,7 +110,8 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - **Validates: Requirements 4.6**
 
 - [ ] 7. Implement Rust native module: `clipboard.rs` — Clipboard operations on Windows
-  - [ ] 7.1 Create `native/src/clipboard.rs` with Windows clipboard implementation
+  - [x] 7.1 Create `native/src/clipboard.rs` with Windows clipboard implementation
+
     - Implement `read_clipboard()`: `OpenClipboard(NULL)` → `GetClipboardData(CF_UNICODETEXT)` → `GlobalLock` → read UTF-16 → `GlobalUnlock` → `CloseClipboard` → convert to UTF-8 string
     - Implement `write_clipboard(text)`: `OpenClipboard(NULL)` → `EmptyClipboard` → `GlobalAlloc(GMEM_MOVEABLE)` → `GlobalLock` → write UTF-16 → `GlobalUnlock` → `SetClipboardData(CF_UNICODETEXT)` → `CloseClipboard`
     - Implement retry logic: if `OpenClipboard` fails, retry up to 3 times with 50ms delay; return error if all retries fail
@@ -115,8 +124,10 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Generate random Unicode strings (excluding null characters), write to clipboard, read back, verify equality
     - **Validates: Requirements 5.1, 5.2**
 
-- [ ] 8. Implement Rust native module: `windows.rs` — Window enumeration and management on Windows
-  - [ ] 8.1 Add Windows window management implementation with `#[cfg(target_os = "windows")]`
+- [x] 8. Implement Rust native module: `windows.rs` — Window enumeration and management on Windows
+
+  - [x] 8.1 Add Windows window management implementation with `#[cfg(target_os = "windows")]`
+
     - Implement `list_windows(process_name?)`: `EnumWindows` callback collecting HWND, filter by `IsWindowVisible` and `GetWindowLong(GWL_EXSTYLE)` to exclude tool windows; get title via `GetWindowText`, PID via `GetWindowThreadProcessId`, bounds via `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` with `GetWindowRect` fallback, process name via `OpenProcess` + `QueryFullProcessImageName`
     - Implement `get_window(hwnd)`: return WindowRecord for specific HWND with all fields populated
     - Implement `get_cursor_window()`: `GetCursorPos` → `WindowFromPoint` → return WindowRecord
@@ -127,8 +138,10 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Return descriptive error for invalid/stale HWND
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9_
 
-- [ ] 9. Implement Rust native module: `apps.rs` — Application lifecycle on Windows
-  - [ ] 9.1 Add Windows application lifecycle implementation with `#[cfg(target_os = "windows")]`
+- [x] 9. Implement Rust native module: `apps.rs` — Application lifecycle on Windows
+
+  - [x] 9.1 Add Windows application lifecycle implementation with `#[cfg(target_os = "windows")]`
+
     - Implement `list_running_apps()`: `CreateToolhelp32Snapshot` + `Process32First`/`Process32Next`, filter to processes with visible windows via `EnumWindows`, return process name, PID, executable path, isHidden (all windows minimized)
     - Filter out system processes without user-visible windows (svchost, csrss, etc.)
     - Implement `open_application(name)`: search Start Menu shortcuts and `shell:AppsFolder` for matching app, launch via `ShellExecute` or `CreateProcess`; return PID; return error if app not found
@@ -139,8 +152,11 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Implement window resize: `MoveWindow` or `SetWindowPos` with specified dimensions and/or position
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 12.4, 24.1, 24.2, 24.3_
 
-- [ ] 10. Implement Rust native module: `accessibility.rs` — UI Automation on Windows
-  - [ ] 10.1 Add Windows UI Automation implementation with `#[cfg(target_os = "windows")]`
+- [x] 10. Implement Rust native module: `accessibility.rs` — UI Automation on Windows
+
+  - [x] 10.1 Add Windows UI Automation implementation with `#[cfg(target_os = "windows")]`
+
+
     - Initialize COM: `CoInitializeEx(COINIT_MULTITHREADED)` at module load via `OnceLock`
     - Create singleton `IUIAutomation` instance via `CoCreateInstance` cached in `OnceLock`
     - Implement `get_ui_tree(hwnd, max_depth?)`: `IUIAutomation::ElementFromHandle(hwnd)` → walk tree with `IUIAutomationTreeWalker::GetFirstChildElement`/`GetNextSiblingElement`, depth limit (default 10, max 20), 500-node cap, set truncated flag when cap reached
@@ -157,14 +173,19 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Convert all HRESULT/COM errors to descriptive strings using `windows-rs` `Error::message()`
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 22.2, 22.4_
 
-- [ ] 11. Implement Rust native module: `display.rs` — Display information on Windows
-  - [ ] 11.1 Add Windows display information implementation with `#[cfg(target_os = "windows")]`
+- [x] 11. Implement Rust native module: `display.rs` — Display information on Windows
+
+  - [x] 11.1 Add Windows display information implementation with `#[cfg(target_os = "windows")]`
+
     - Implement `get_display_size(display_id?)`: `MonitorFromPoint(POINT{0,0}, MONITOR_DEFAULTTOPRIMARY)` for primary, `GetMonitorInfo` for dimensions, `GetDpiForMonitor` for scale factor; compute pixelWidth/pixelHeight from DPI (scale = DPI / 96.0)
     - Implement `list_displays()`: `EnumDisplayMonitors` callback + `GetMonitorInfo` + `GetDpiForMonitor` for each monitor; return dimensions, scale factors, display IDs
     - _Requirements: 10.1, 10.2, 10.3_
 
-- [ ] 12. Implement Rust native module: `spaces.rs` — Virtual desktop support on Windows
-  - [ ] 12.1 Add Windows virtual desktop implementation with `#[cfg(target_os = "windows")]`
+- [x] 12. Implement Rust native module: `spaces.rs` — Virtual desktop support on Windows
+
+
+  - [x] 12.1 Add Windows virtual desktop implementation with `#[cfg(target_os = "windows")]`
+
     - Implement `list_spaces()`: use `IVirtualDesktopManager` COM interface (public API) + `IVirtualDesktopManagerInternal` (undocumented, build-dependent GUIDs) for `GetDesktops`, `GetCurrentDesktop`
     - Handle build-dependent GUIDs for Windows 10 (19041+), Windows 11 22H2 (22621+), Windows 11 24H2 (26100+)
     - Read desktop names from registry `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops\{GUID}\Name`
@@ -173,7 +194,8 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - _Requirements: 11.1, 11.2, 11.3_
 
 - [ ] 13. Update Rust module root: `lib.rs`
-  - [ ] 13.1 Update `native/src/lib.rs` to include `clipboard` module and ensure all modules compile on both platforms
+  - [x] 13.1 Update `native/src/lib.rs` to include `clipboard` module and ensure all modules compile on both platforms
+
     - Add `mod clipboard;` declaration
     - Ensure all module declarations work with `#[cfg]` conditional compilation — each module file contains both macOS and Windows implementations gated by `#[cfg(target_os)]`
     - Verify all NAPI exports are present on both platforms (same function names)
@@ -185,10 +207,12 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Verify the same set of function names is available on both platforms
     - **Validates: Requirements 1.4, 14.4**
 
+
 - [ ] 14. Checkpoint — Verify all Rust native modules compile and export correctly
   - Ensure `cargo build --release` succeeds on both platforms
   - Ensure all NAPI function exports match the NativeModule TypeScript interface
   - Ensure all tests pass, ask the user if questions arise.
+
 
 - [ ] 15. Session layer platform adaptations (`src/session.ts`)
   - [ ] 15.1 Add platform detection constants and adapt session initialization
@@ -196,6 +220,7 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Adapt session lock path: use `%TEMP%\.computer-use-mcp.lock` on Windows, `/tmp/.computer-use-mcp.lock` on macOS
     - Skip CFRunLoop drain pump on Windows (don't start the 1ms `drainRunloop()` interval when `IS_WINDOWS`)
     - Adapt clipboard operations: on Windows, delegate to native `readClipboard()`/`writeClipboard()` instead of pbcopy/pbpaste
+
     - _Requirements: 12.1, 12.3, 12.4, 23.1, 23.2, 23.3, 23.4_
 
   - [ ] 15.2 Adapt focus management for Windows
@@ -205,13 +230,15 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Adapt `resolveKeepVisibleBundles` for Windows: use process name of terminal host instead of bundle ID
     - _Requirements: 12.2, 12.5, 19.1, 19.2, 19.3, 19.4, 19.5, 19.6_
 
-  - [ ] 15.3 Adapt identifier mapping in session layer
+  - [x] 15.3 Adapt identifier mapping in session layer
+
     - Normalize `target_app` parameter: treat as bundle ID on macOS, process name on Windows
     - Normalize `window_id` / `target_window_id`: CGWindowID on macOS, HWND (as number) on Windows
     - Update `resolveTarget` to handle both identifier types transparently
     - _Requirements: 12.6, 18.1, 18.2, 18.3, 18.4_
 
-  - [ ] 15.4 Implement PowerShell scripting bridge for Windows
+  - [x] 15.4 Implement PowerShell scripting bridge for Windows
+
     - Handle `run_script` on Windows: accept `language: "powershell"`, reject "applescript"/"javascript" with platform error and PowerShell suggestion
     - Encode PowerShell commands as Base64 UTF-16LE, spawn via `-EncodedCommand` parameter
     - Try `pwsh` (PowerShell 7) first, fall back to `powershell` (5.1)
@@ -225,7 +252,9 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Generate random PowerShell command strings, encode as Base64 UTF-16LE, decode back, verify equality
     - **Validates: Requirements 13.3**
 
-  - [ ] 15.6 Adapt `type` tool for Windows-specific parameters
+  - [x] 15.6 Adapt `type` tool for Windows-specific parameters
+
+
     - Implement `clear` parameter: select all + delete before typing on Windows (Ctrl+A, Delete)
     - Implement `press_enter` parameter: synthesize Return key after typing
     - Implement `caret_position` parameter: move caret to start (Home), end (End), or leave idle before typing
@@ -237,13 +266,15 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Implement `width_reference_line` / `height_reference_line` parameters: overlay grid reference lines
     - _Requirements: 4.8, 4.9, 4.10_
 
-- [ ] 16. Checkpoint — Verify session layer works on both platforms
+- [x] 16. Checkpoint — Verify session layer works on both platforms
+
   - Ensure session initialization succeeds on both macOS and Windows
   - Ensure focus management, session lock, and scripting bridge work correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 17. Implement new MCP tools in server layer (`src/server.ts`)
-  - [ ] 17.1 Implement FileSystem tool (Windows-only, TypeScript)
+  - [x] 17.1 Implement FileSystem tool (Windows-only, TypeScript)
+
     - Register `filesystem` tool in server.ts with Zod schema for operations: read, write, copy, move, delete, list, search, info
     - Implement using Node.js `fs` and `path` modules — no Rust needed
     - Support parameters: `mode` (read/write/copy/move/delete/list/search/info), `path`, `content`, `encoding` (default UTF-8), `offset`, `limit`, `append`, `overwrite`, `recursive`, `pattern`, `show_hidden`
@@ -256,7 +287,8 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Generate random UTF-8 strings and file paths, write via FileSystem tool, read back, verify equality
     - **Validates: Requirements 25.1, 25.3**
 
-  - [ ] 17.3 Implement Registry tool (Windows-only, PowerShell)
+  - [x] 17.3 Implement Registry tool (Windows-only, PowerShell)
+
     - Register `registry` tool in server.ts with Zod schema for operations: get, set, delete, list
     - Implement via PowerShell commands dispatched through session's `spawnBounded`: `Get-ItemProperty` for reads, `Set-ItemProperty`/`New-ItemProperty` for writes, `Remove-ItemProperty`/`Remove-Item` for deletes, `Get-ChildItem` for listing
     - Accept PowerShell-format paths (e.g., `HKCU:\Software\MyApp`)
@@ -265,6 +297,9 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - On macOS, return error indicating tool is Windows-only with suggestion to use `defaults` commands
     - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 26.8, 17.8_
 
+
+
+
   - [ ] 17.4 Implement Notification tool (Windows-only, PowerShell)
     - Register `notification` tool in server.ts with Zod schema for title, message, and optional app_id
     - Implement via PowerShell using Windows toast notification API (`ToastNotificationManager`)
@@ -272,6 +307,7 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Return descriptive error when notifications are disabled
     - On macOS, return error indicating tool is Windows-only with suggestion to use osascript
     - _Requirements: 27.1, 27.2, 27.3, 27.4, 17.8_
+
 
   - [ ] 17.5 Implement Scrape tool (cross-platform, Node.js)
     - Register `scrape` tool in server.ts with Zod schema for url, query, use_dom, use_sampling
@@ -282,21 +318,24 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Return descriptive errors for network failures, 404 responses, missing browser tabs
     - _Requirements: 28.1, 28.2, 28.3, 28.4, 28.5, 28.6, 28.7_
 
-  - [ ] 17.6 Implement MultiSelect tool (cross-platform, session-layer orchestration)
+  - [x] 17.6 Implement MultiSelect tool (cross-platform, session-layer orchestration)
+
     - Register `multi_select` tool in server.ts with Zod schema for locs (coordinates), labels, press_ctrl
     - Implement by composing existing primitives: loop over coordinates, hold Ctrl if `press_ctrl`, click each
     - Support label-based selection: resolve labels to coordinates using UI tree snapshot
     - Return error for unresolvable labels or missing snapshot
     - _Requirements: 29.1, 29.2, 29.3, 29.4, 29.5, 29.6_
 
-  - [ ] 17.7 Implement MultiEdit tool (cross-platform, session-layer orchestration)
+  - [x] 17.7 Implement MultiEdit tool (cross-platform, session-layer orchestration)
+
     - Register `multi_edit` tool in server.ts with Zod schema for locs (coordinate-text tuples), labels (label-text tuples)
     - Implement by composing existing primitives: loop over coordinate-text pairs, click then type each
     - Support label-based input: resolve labels to coordinates using UI tree snapshot
     - Return error for unresolvable labels or missing snapshot
     - _Requirements: 30.1, 30.2, 30.3, 30.4, 30.5_
 
-  - [ ] 17.8 Implement process_kill tool (cross-platform)
+  - [x] 17.8 Implement process_kill tool (cross-platform)
+
     - Register `process_kill` tool in server.ts with Zod schema for process_name, pid, force
     - On Windows: terminate by name or PID using `TerminateProcess`; when `force` is false, send `WM_CLOSE` first
     - On macOS: use `kill` signal mechanism
@@ -304,31 +343,42 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - _Requirements: 24.4, 24.5, 24.6, 24.7, 17.9_
 
 - [ ] 18. Update server layer tool registrations and platform guards (`src/server.ts`)
-  - [ ] 18.1 Add platform guards for macOS-only and Windows-only tools
+  - [x] 18.1 Add platform guards for macOS-only and Windows-only tools
+
+
+
+
     - `get_app_dictionary`: on Windows, return `platform_unsupported` error with suggestion to use `get_ui_tree`
     - `list_menu_bar`: on Windows, return `platform_unsupported` error with suggestion to use `get_ui_tree` for menu discovery
     - `filesystem`, `registry`, `notification`: on macOS, return `platform_unsupported` error with macOS alternative suggestions
     - _Requirements: 17.3, 17.4, 17.8, 22.1_
 
-  - [ ] 18.2 Update `run_script` tool schema for cross-platform language support
+  - [x] 18.2 Update `run_script` tool schema for cross-platform language support
+
+
     - On macOS: accept "applescript" and "javascript" languages (existing behavior)
     - On Windows: accept "powershell" language
     - Update Zod schema to use platform-conditional enum or accept all three and validate in handler
     - _Requirements: 17.2_
 
-  - [ ] 18.3 Adapt `get_tool_metadata` for Windows
+  - [x] 18.3 Adapt `get_tool_metadata` for Windows
+
     - Return accurate `focusRequired` values: use same labels ('cgevent', 'ax', 'scripting', 'none') on both platforms for consistency
     - Document that 'cgevent' maps to SendInput on Windows, 'ax' maps to IUIAutomation, 'scripting' maps to PowerShell
     - _Requirements: 17.5_
 
-  - [ ] 18.4 Adapt `get_tool_guide` for Windows
+  - [x] 18.4 Adapt `get_tool_guide` for Windows
+
+
     - Return Windows-appropriate recommendations: suggest PowerShell instead of AppleScript, process names instead of bundle IDs
     - Update `TOOL_GUIDE_TABLE` patterns with Windows-specific entries
     - _Requirements: 17.6_
 
-  - [ ] 18.5 Adapt `get_app_capabilities` for Windows
+  - [x] 18.5 Adapt `get_app_capabilities` for Windows
+
     - Report whether application window supports UI Automation, whether it is running, whether it is minimized
     - _Requirements: 17.7_
+
 
   - [ ] 18.6 Register all cross-platform tools with identical schemas
     - Verify all tools listed in Requirement 17.1 are registered on both platforms with identical Zod schemas
@@ -338,7 +388,9 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - **Property 7: MCP Tool Surface Parity**
     - Enumerate all tool names from the cross-platform tool set (Requirement 17.1)
     - Verify each tool is registered on both platforms with identical schema
+
     - **Validates: Requirements 17.1**
+
 
 - [ ] 19. Update client API (`src/client.ts`)
   - [ ] 19.1 Add typed methods for new tools to `ComputerUseClient` interface
@@ -353,13 +405,16 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
     - Add all new methods to the `wrap()` function implementation
     - _Requirements: 17.1, 17.2, 17.8, 17.9_
 
-- [ ] 20. Checkpoint — Verify all tools register and dispatch correctly on both platforms
+- [x] 20. Checkpoint — Verify all tools register and dispatch correctly on both platforms
+
   - Ensure MCP server starts on both platforms and lists all expected tools
   - Ensure platform-specific tools return appropriate errors on the wrong platform
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 21. Error handling and graceful degradation
-  - [ ] 21.1 Implement platform-specific error handling patterns
+- [x] 21. Error handling and graceful degradation
+
+  - [x] 21.1 Implement platform-specific error handling patterns
+
     - Implement Tier 1 errors: platform unavailability — macOS-only tools on Windows return `platform_unsupported` with suggestion; Windows-only tools on macOS return equivalent
     - Implement Tier 2 errors: UIPI permission errors with descriptive message and remediation hint; COM HRESULT errors converted to descriptive strings via `windows-rs` `Error::message()`
     - Implement Tier 3 errors: stale HWND → `window_not_found`; clipboard lock after 3 retries → `clipboard_locked`; focus race → `FocusFailure` payload with `suggestedRecovery`
@@ -411,19 +466,29 @@ All Rust native modules use `#[cfg(target_os)]` conditional compilation within t
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 25. Documentation updates
-  - [ ] 25.1 Update README.md for cross-platform support
+  - [x] 25.1 Update README.md for cross-platform support
+
+
+
+
+
     - Remove "macOS only" designation, list both macOS and Windows as supported platforms
+
     - Add Windows-specific permissions section (no special permissions for most operations; UI Automation may require non-restricted user)
     - Add Windows-specific MCP client configuration examples (Claude Desktop on Windows, Cursor on Windows)
     - Add platform compatibility table listing each tool and its support status on macOS and Windows
     - Document Windows-specific `run_script` language ("powershell") with usage examples
+
     - Document new tools: filesystem, registry, notification, scrape, multi_select, multi_edit, process_kill
+
     - _Requirements: 21.1, 21.2, 21.3, 21.4, 21.6_
 
   - [ ] 25.2 Update CHANGELOG.md
     - Add version entry documenting addition of Windows support
     - List all new capabilities: Windows native modules, new tools, cross-platform session layer
     - Document behavioral differences from macOS (process names vs bundle IDs, PowerShell vs AppleScript, etc.)
+
+
     - _Requirements: 21.5_
 
   - [ ] 25.3 Update CONTRIBUTING.md

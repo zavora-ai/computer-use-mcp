@@ -1,8 +1,8 @@
 # computer-use-mcp
 
-> MCP server + client for macOS computer control. Screenshot, mouse, keyboard, clipboard, app management, and window-level targeting — all in-process via Rust NAPI. No subprocesses. No focus stealing.
+> Computer Use MCP is an open source high performance MCP server + client for controlling your desktop computer with AI Agents. Tools include screenshot, mouse, keyboard, clipboard, app management, and window-level targeting — all in-process via Rust NAPI. Easy to install via npm and works with Claude Code, Claude DEsktop, Codex CLi, Codex Desktop, Gemnini Cli, Kiro CLi, Kiro VS Code Extension, Github Copilot, Cursor, OpenCode, OpenClaw, Hermes Agent and any other provider that supports Model Context Protocol.
 
-**macOS only** · Node.js 18+ · MIT License
+**macOS + Windows** · Node.js 18+ · MIT License
 
 ---
 
@@ -35,7 +35,9 @@
 
 ## What is this?
 
-`computer-use-mcp` lets an AI model (or any program) control your Mac — take screenshots, move the mouse, type text, press keys, read/write the clipboard, open and manage apps, target specific windows, and query display information.
+`computer-use-mcp` lets an AI model (or any program) control your computer — take screenshots, move the mouse, type text, press keys, read/write the clipboard, open and manage apps, target specific windows, and query display information.
+
+It works on both **macOS** and **Windows**, with platform-specific native implementations backed by a Rust NAPI module. On macOS it uses CoreGraphics/AppKit/AXUIElement; on Windows it uses SendInput/EnumWindows/IUIAutomation/DXGI — all direct Win32 API calls through Rust, no Python dependencies.
 
 It implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), which means any MCP-compatible AI client (Claude Desktop, Cursor, Windsurf, etc.) can use it as a tool server with zero extra code.
 
@@ -62,7 +64,9 @@ Desktop control is the broadest and slowest fallback. It works for anything on s
 
 Most computer-use tools work by spawning shell commands (`xdotool`, `osascript`, `cliclick`) for every action. This is slow, unreliable, and causes focus-stealing — your terminal window keeps jumping to the front.
 
-This package takes a different approach: a **Rust native module** (`.node` addon) that calls macOS APIs directly in-process:
+This package takes a different approach: a **Rust native module** (`.node` addon) that calls OS APIs directly in-process:
+
+**macOS:**
 
 | What | How |
 |---|---|
@@ -74,7 +78,78 @@ This package takes a different approach: a **Rust native module** (`.node` addon
 | Screenshots | `screencapture` CLI (fastest reliable method on macOS) |
 | Clipboard | `pbcopy` / `pbpaste` |
 
+**Windows:**
+
+| What | How |
+|---|---|
+| Mouse & keyboard | `SendInput` (Win32) — direct input synthesis |
+| App management | `EnumWindows` + `CreateToolhelp32Snapshot` |
+| Window enumeration | `EnumWindows` + `GetWindowText` + `GetWindowRect` |
+| Window activation | `AttachThreadInput` + `SetForegroundWindow` |
+| Display info | `EnumDisplayMonitors` + `GetDpiForMonitor` |
+| Screenshots | DXGI Desktop Duplication (GPU framebuffer) with GDI BitBlt fallback |
+| Clipboard | `OpenClipboard` / `SetClipboardData` (native Win32) |
+| UI Automation | `IUIAutomation` COM (direct vtable calls from Rust) |
+
 Mouse, keyboard, focus, window enumeration, and display operations run in-process via the native module. Screenshots and clipboard access still rely on the system utilities that are most reliable on macOS, but the control path avoids per-action shell hops.
+
+---
+
+## Comparison with alternatives
+
+### Feature matrix
+
+| Feature | computer-use-mcp (ours) | CursorTouch/Windows-MCP | sinmb79/windows-computer-mcp | Claude Computer Use | OpenAI CUA |
+|---|---|---|---|---|---|
+| **Platform** | macOS + Windows | Windows only | Windows only | Linux (Docker) | Linux (Docker) |
+| **Language** | Rust NAPI + TypeScript | Python | Python | Python (reference) | Python (reference) |
+| **Protocol** | MCP (stdio + in-process) | MCP (stdio) | MCP (stdio) | Claude API built-in | OpenAI API built-in |
+| **Tools** | 58 | 14 | 10 | 3 (computer, bash, editor) | 1 (computer) |
+| **Screenshot** | DXGI + GDI + PNG/JPEG | dxcam + PIL | mss + PIL | Xvfb screenshot | Xvfb screenshot |
+| **Mouse input** | SendInput (Rust) | ctypes→SendInput | pyautogui | xdotool | xdotool |
+| **Keyboard** | SendInput Unicode (Rust) | SendKeys wrapper | pyautogui.write | xdotool | xdotool |
+| **UI Automation** | IUIAutomation COM (Rust) | comtypes COM | ❌ | ❌ | ❌ |
+| **Clipboard** | Native Win32 (Rust) | pywin32 | ❌ | ❌ | ❌ |
+| **Window targeting** | HWND + focus strategies | ❌ | title match | ❌ | ❌ |
+| **Virtual desktops** | Registry + keyboard | comtypes COM (fragile) | ❌ | ❌ | ❌ |
+| **File system tool** | ✅ (Node.js fs) | ✅ (Python os) | ❌ | ✅ (bash) | ❌ |
+| **Registry** | ✅ (PowerShell) | ✅ (PowerShell) | ❌ | ❌ | ❌ |
+| **Scripting** | PowerShell + AppleScript | PowerShell | ❌ | bash | ❌ |
+| **Zoom (region inspect)** | ✅ (full-res crop) | ❌ | ❌ | ✅ (20251124) | ❌ |
+| **Annotation overlay** | ✅ (Rust pixel drawing) | ✅ (PIL drawing) | ❌ | ❌ | ❌ |
+| **Grid reference lines** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Snapshot (combined)** | ✅ (screenshot+UI tree+windows) | ✅ (screenshot+elements) | ❌ | ❌ | ❌ |
+| **Multi-select/edit** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Process management** | ✅ | ✅ | ❌ | ✅ (bash) | ❌ |
+| **Notifications** | ✅ (toast) | ✅ (toast) | ❌ | ❌ | ❌ |
+| **Scrape (web fetch)** | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Tool guide/discovery** | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Focus strategies** | strict/best_effort/none/prepare_display | ❌ | ❌ | ❌ | ❌ |
+| **Coordinate validation** | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **PNG format option** | ✅ (quality=0) | ❌ (JPEG only) | ✅ (PNG only) | ❌ | ❌ |
+| **No Python required** | ✅ | ❌ (Python 3.13) | ❌ (Python 3.11) | ❌ | ❌ |
+| **Memory footprint** | ~120MB | ~180MB | ~150MB | ~200MB+ | ~200MB+ |
+
+### Performance benchmark
+
+Measured on Windows Server 2022 (2560×1080, single monitor). All times are median of 15 runs.
+
+| Operation | computer-use-mcp | CursorTouch/Windows-MCP | sinmb79/windows-computer-mcp | Speedup vs CT |
+|---|---|---|---|---|
+| Screenshot (800px JPEG) | **17ms** | 31ms | - | 1.8× |
+| Screenshot (800px PNG) | **10ms** | - | - | - |
+| Screenshot (full-res PNG) | **12ms** | - | 94ms | 7.6× vs sinmb79 |
+| Clipboard round-trip | **0.7ms** | 22ms | - | 31× |
+| List windows | **1.3ms** | 127ms | 0.6ms | 98× |
+| Get frontmost app | **0.1ms** | 129ms | - | 939× |
+| List running apps | **0.4ms** | 13ms | - | 35× |
+| Scrape (example.com) | **7ms** | 179ms | - | 25× |
+| PowerShell execution | 213ms | **171ms** | - | 0.8× |
+| Registry list | 244ms | **212ms** | - | 0.9× |
+| Virtual desktops list | **0.2ms** | 0.0ms | - | ~same |
+| Cursor position | **0.1ms** | 0.0ms | 0.0ms | ~same |
+
+> PowerShell and registry operations are bottlenecked by subprocess spawn time (~200ms), not our code. Both implementations pay the same cost. All other operations are 2–939× faster due to direct Rust→Win32 API calls vs Python→ctypes/comtypes marshaling.
 
 ---
 
@@ -166,6 +241,8 @@ npm run build
 
 ## Permissions setup
 
+### macOS
+
 macOS requires explicit permission for apps that control the computer. You need to grant **Accessibility** access to your terminal.
 
 ### Step-by-step
@@ -183,7 +260,7 @@ macOS requires explicit permission for apps that control the computer. You need 
 
 > **Why is this needed?** macOS sandboxes apps from controlling other apps by default. The Accessibility permission grants the ability to send synthetic mouse and keyboard events via `CGEvent`.
 
-### Verifying permissions work
+### Verifying permissions work (macOS)
 
 Run the built-in demo:
 
@@ -192,6 +269,14 @@ npx @zavora-ai/computer-use-mcp demo
 ```
 
 If permissions are correct, you'll see Calculator open, compute 42+58, and close. If you see an error about permissions, revisit the steps above.
+
+### Windows
+
+No special permissions are required for most operations on Windows. The native module uses standard Win32 APIs (`SendInput`, `EnumWindows`, DXGI) that work without elevation.
+
+**Notes:**
+- UI Automation access may be blocked by UIPI (User Interface Privilege Isolation) when targeting elevated processes. Run your terminal as Administrator if you need to automate elevated apps.
+- No Python, pywin32, or any Python dependencies are required — everything is implemented in Rust.
 
 ---
 
@@ -477,7 +562,8 @@ await client.fillForm({
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `screenshot` | Capture the screen or a specific app/window | `width?: number` (default 1024), `quality?: number`, `provider?: string`, `target_app?: string` (bundle ID), `target_window_id?: number` (CGWindowID — takes precedence over `target_app`) |
+| `screenshot` | Capture the screen or a specific app/window | `width?: number` (default 1024), `quality?: number` (0=PNG, 1-100=JPEG, default 80), `provider?: string`, `target_app?: string`, `target_window_id?: number` |
+| `zoom` | View a specific screen region at full resolution. Best for reading small text or inspecting UI details. | `region: [x1, y1, x2, y2]`, `quality?: number` (0=PNG default, 1-100=JPEG) |
 
 ### Mouse
 
@@ -499,7 +585,7 @@ await client.fillForm({
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `type` | Type text (Unicode, all characters) | `text: string`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
+| `type` | Type text (Unicode, all characters) | `text: string`, `clear?: bool`, `press_enter?: bool`, `caret_position?: "start"\|"end"\|"idle"`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
 | `key` | Press a key or combo | `text: string` (e.g. `"command+c"`), `repeat?: number`, `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
 | `hold_key` | Hold keys for a duration | `keys: string[]`, `duration: number` (seconds), `target_app?: string`, `target_window_id?: number`, `focus_strategy?: string` |
 
@@ -597,7 +683,7 @@ These return structured before/after state so you can verify activation succeede
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `run_script` | Execute AppleScript or JXA via bounded `osascript`. Fastest path for scriptable apps. | `language: "applescript"\|"jxa"`, `script: string`, `timeout_ms?: number` |
+| `run_script` | Execute scripts: AppleScript/JXA on macOS, PowerShell on Windows. | `language: "applescript"\|"javascript"\|"powershell"`, `script: string`, `timeout_ms?: number` |
 | `get_app_dictionary` | Inspect a scriptable app's dictionary (suites/commands/classes). Cached per PID. | `bundle_id: string`, `suite?: string` |
 
 ### Discovery (v5)
@@ -607,14 +693,35 @@ These return structured before/after state so you can verify activation succeede
 | `get_tool_guide` | Recommend the best approach for a task. Call BEFORE screenshot + click. | `task_description: string` |
 | `get_app_capabilities` | Probe: scriptable? accessible? running? hidden? | `bundle_id: string` |
 
-### Spaces — read-only (v5)
+### Spaces (v5 + v6)
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `list_spaces` | List user Spaces grouped by display. Pure read via CGS. | — |
-| `get_active_space` | Currently active Space ID. | — |
+| `list_spaces` | List virtual desktops/Spaces grouped by display. | — |
+| `get_active_space` | Currently active Space/desktop ID. | — |
+| `create_agent_space` | Create a new virtual desktop. On Windows: Ctrl+Win+D. | — |
+| `destroy_space` | Close current virtual desktop. On Windows: Ctrl+Win+F4. | `space_id?: number` |
 
-> **Note:** Space *mutation* tools (create / move / destroy) are not exposed. CGS-created Spaces are orphaned on SIP-enabled Macs (not visible in Mission Control) and window moves silently no-op without elevated entitlements. See [CHANGELOG](CHANGELOG.md) for details.
+### Cross-platform tools (v6)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `snapshot` | Combined screenshot + UI tree + windows + desktops in one call. | `use_vision?: bool`, `use_annotation?: bool`, `grid_lines?: [cols, rows]`, `width?: number` |
+| `filesystem` | File operations: read, write, copy, move, delete, list, search, info. | `mode`, `path`, `content?`, `destination?`, `pattern?`, `recursive?`, `append?` |
+| `process_kill` | List or kill processes by name or PID. | `mode: list\|kill`, `name?`, `pid?`, `force?`, `sort_by?` |
+| `multi_select` | Batch click at coordinates or UI element labels. | `locs?`, `labels?`, `press_ctrl?`, `target_app?` |
+| `multi_edit` | Batch click+type at coordinates or labels. | `locs?`, `labels?`, `target_app?` |
+| `scrape` | Fetch and extract text content from a URL. | `url`, `query?`, `use_dom?` |
+| `resize_window` | Resize and/or move a window. | `window_name?`, `window_id?`, `window_size?`, `window_loc?` |
+
+### Windows-only tools (v6)
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `registry` | Windows Registry get/set/delete/list. | `mode`, `path`, `name?`, `value?`, `type?` |
+| `notification` | Send a Windows toast notification. | `title`, `message`, `app_id?` |
+
+> **Note on macOS Spaces:** Space *mutation* tools use keyboard shortcuts on Windows. On macOS, CGS-created Spaces are orphaned on SIP-enabled Macs. See [CHANGELOG](CHANGELOG.md) for details.
 
 ---
 
@@ -720,36 +827,72 @@ interface ToolResult {
 
 ## Building from source
 
+### macOS
+
 You need:
 - [Rust](https://rustup.rs) (stable, 1.70+)
 - [Node.js](https://nodejs.org) 18+
 - macOS 10.15+ (Catalina or later)
 
 ```bash
-# Clone
 git clone https://github.com/zavora-ai/computer-use-mcp
 cd computer-use-mcp
-
-# Install Node dependencies
 npm install
-
-# Build Rust native module + TypeScript
 npm run build
+npm run demo  # verify
+```
 
-# Run the demo to verify
-npm run demo
+### Windows
+
+You need:
+- [Rust](https://rustup.rs) (stable, 1.70+) with MSVC toolchain
+- [Node.js](https://nodejs.org) 18+
+- Visual Studio Build Tools (C++ workload) or Visual Studio with C++ support
+- Windows 10/11 or Windows Server 2022+
+
+```bash
+git clone https://github.com/zavora-ai/computer-use-mcp
+cd computer-use-mcp
+npm install
+npm run build:native:win   # builds Rust native module (.dll -> .node)
+npm run build:ts            # compiles TypeScript
+node test/smoke-windows.mjs # verify
+```
+
+### Try the examples
+
+**Windows:**
+```bash
+node examples/windows/notepad.mjs              # Full demo: type, save, zoom, snapshot
+node examples/windows/browser.mjs              # Browser navigation + scraping
+node examples/windows/sysadmin.mjs             # System health report (no GUI needed)
+node examples/windows/cross-app-workflow.mjs   # Web scrape -> file -> Notepad -> verify
+node examples/windows/data-entry.mjs           # Structured data entry + CSV report
+node examples/windows/virtual-desktops.mjs     # Virtual desktop lifecycle
+node examples/windows/ui-automation.mjs        # UI tree + element interaction
+node examples/windows/zoom.mjs                 # Region inspection at native resolution
+node examples/windows/system-info.mjs          # System introspection
+```
+
+**macOS:**
+```bash
+node examples/macos/calculator.mjs
+node examples/macos/window-targeting.mjs
+node examples/macos/browser.mjs
+node examples/macos/crypto-spreadsheet.mjs
 ```
 
 ### Build scripts
 
 | Script | What it does |
 |---|---|
-| `npm run build` | Build Rust + TypeScript |
-| `npm run build:native` | Build only the Rust `.node` binary |
+| `npm run build` | Build Rust (macOS) + TypeScript |
+| `npm run build:native` | Build Rust `.node` binary (macOS) |
+| `npm run build:native:win` | Build Rust `.node` binary (Windows) |
 | `npm run build:ts` | Compile TypeScript to `dist/` |
 | `npm test` | Build TypeScript + run automated test suite |
 | `npm run smoke` | Build all + run live macOS smoke test |
-| `npm run demo` | Run the Calculator demo |
+| `npm run demo` | Run the Calculator demo (macOS) |
 | `npm run server` | Start the MCP server on stdio |
 
 ---
@@ -758,7 +901,7 @@ npm run demo
 
 ### What this package can do
 
-This package has **full control of your Mac** when Accessibility permission is granted. It can:
+This package has **full control of your computer** when permissions are granted. It can:
 - See everything on your screen
 - Type into any application
 - Click anything
@@ -796,8 +939,9 @@ This package has **full control of your Mac** when Accessibility permission is g
 - The prebuilt `.node` binary is compiled for the architecture of the machine it was built on (arm64 for Apple Silicon, x86_64 for Intel). If you're on a different architecture, build from source.
 
 ### Screenshots
-- Screenshots are JPEG (not PNG) for size. Quality is high but not lossless.
+- Screenshots default to JPEG (quality 80) for size efficiency. Set `quality: 0` for lossless PNG.
 - Screenshots are resized to 1024px wide by default to reduce context size. Pass `width` to override.
+- Use `zoom` with a `region: [x1, y1, x2, y2]` to inspect a specific area at full native resolution — ideal for reading small text.
 - Use `target_app` (bundle ID) to capture only a specific app window instead of the full screen. Use `target_window_id` (CGWindowID) for even more precise targeting.
 - If the target app or window does not have a visible on-screen window, `screenshot` returns an error instead of falling back to the entire display.
 - Screenshot resolution matches your display's logical resolution (not pixel resolution on Retina displays). Use `get_display_size` to get both.

@@ -1,6 +1,6 @@
 # Using computer-use-mcp with AI Agents
 
-This guide covers how to integrate `computer-use-mcp` into AI agent frameworks and agentic workflows.
+This guide covers how to integrate `computer-use-mcp` into AI agent frameworks and agentic workflows. Works on both **macOS** and **Windows**.
 
 ## Tool priority guidance
 
@@ -43,7 +43,9 @@ codex mcp list
 
 ### Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add to your Claude Desktop config:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -56,12 +58,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. Claude will automatically use the tools when asked to interact with your Mac.
+Restart Claude Desktop. Claude will automatically use the tools when asked to interact with your computer.
 
 **Example prompts:**
 - *"Take a screenshot and tell me what's on my screen"*
-- *"Open Safari, go to github.com, and find the trending repositories"*
-- *"Open TextEdit, write a short poem, and save it to the desktop"*
+- *"Open Notepad, write a short poem, and save it to the desktop"* (Windows)
+- *"Open Safari, go to github.com, and find the trending repositories"* (macOS)
+- *"List all virtual desktops and create a new one"*
 
 ### Claude API (programmatic)
 
@@ -206,33 +209,53 @@ const model = new ChatAnthropic({ model: 'claude-opus-4-5' }).bindTools(tools)
 // Use with LangGraph agent executor as normal
 ```
 
-## v5: pick the right approach first
+## Pick the right approach first
 
-Before screenshot + click, call the two discovery tools. They exist to save context tokens and wall-clock time — a scriptable app can be driven by one `run_script` call that would otherwise take a dozen screenshot / click / verify round-trips.
+Before screenshot + click, call the two discovery tools. They exist to save context tokens and wall-clock time.
 
+### macOS example
 ```typescript
-// 1. Tell the guide what you're trying to do
 const guide = JSON.parse((await client.getToolGuide('rename a file in Finder'))
   .content.find(c => c.type === 'text')!.text)
-// → { recommendedApproach: "scripting", suggestedTools: ["run_script"] }
+// → { approach: "scripting", toolSequence: ["run_script"] }
 
-// 2. Confirm the app supports that approach
 const caps = JSON.parse((await client.getAppCapabilities('com.apple.Finder'))
   .content.find(c => c.type === 'text')!.text)
 // → { scriptable: true, accessible: true, ... }
 
-// 3. Use the suggested tool
-await client.runScript({
-  language: 'applescript',
-  script: 'tell application "Finder" to set name of file "old.txt" of desktop to "new.txt"',
-})
+await client.runScript('applescript',
+  'tell application "Finder" to set name of file "old.txt" of desktop to "new.txt"')
+```
+
+### Windows example
+```typescript
+const guide = JSON.parse((await client.getToolGuide('copy files to desktop'))
+  .content.find(c => c.type === 'text')!.text)
+// → { approach: "scripting", toolSequence: ["filesystem", "run_script"] }
+
+const caps = JSON.parse((await client.getAppCapabilities('notepad.exe'))
+  .content.find(c => c.type === 'text')!.text)
+// → { scriptable: false, powershell: true, accessible: true, running: true }
+
+// Use filesystem tool for file ops
+await client.callTool('filesystem', { mode: 'copy', path: 'report.txt', destination: 'C:\\Users\\Me\\Desktop\\report.txt' })
+
+// Or PowerShell for complex tasks
+await client.runScript('powershell', 'Get-ChildItem C:\\Users\\Me\\Desktop | Sort-Object LastWriteTime')
 ```
 
 ### Approach priority (high → low)
 
+**macOS:**
 1. **Scripting (`run_script`)** — AppleScript / JXA. Best for Mail, Safari, Finder, Numbers, Music, Messages, Notes, Calendar.
-2. **Accessibility (`click_element`, `set_value`, `select_menu_item`, `fill_form`)** — Works for most GUI apps that expose AX. Survives window moves, resolution changes, and retina scaling.
-3. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works. Brittle across layouts.
+2. **Accessibility (`click_element`, `set_value`, `select_menu_item`, `fill_form`)** — Works for most GUI apps that expose AX.
+3. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works.
+
+**Windows:**
+1. **Built-in tools (`filesystem`, `registry`, `process_kill`)** — Direct operations without GUI interaction.
+2. **PowerShell (`run_script`)** — System automation, COM objects, .NET calls.
+3. **Accessibility (`click_element`, `set_value`, `fill_form`)** — UI Automation for GUI apps.
+4. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works.
 
 ### When `find_element` / `click_element` fails
 
@@ -259,9 +282,30 @@ if (r.isError) {
 }
 ```
 
-### Spaces
+### Virtual Desktops / Spaces
 
-`list_spaces` and `get_active_space` are reliable — use them to tell which Space a window is in. Space creation / window moves via CGS are **not exposed**: they silently no-op or orphan Spaces on SIP-enabled Macs. If you need a new Space, ask the user to create one in Mission Control.
+**macOS:** `list_spaces` and `get_active_space` are reliable read-only tools. Space creation via CGS is not exposed (silently no-ops on SIP-enabled Macs).
+
+**Windows:** Full virtual desktop lifecycle is supported:
+```typescript
+// List desktops
+const spaces = await client.listSpaces()
+// → { supported: true, displays: [{ spaces: [{ name: "Desktop 1", uuid: "{...}" }, ...] }] }
+
+// Create a new desktop (Ctrl+Win+D)
+await client.createAgentSpace()
+// → { created: true, name: "Desktop 4", space_id: "{...}" }
+
+// Do work on the new desktop...
+await client.callTool('run_script', { language: 'powershell', script: 'Start-Process notepad' })
+
+// Close the desktop when done (Ctrl+Win+F4)
+await client.callTool('destroy_space', { space_id: 0 })
+
+// Switch between desktops with keyboard shortcuts
+await client.key('ctrl+win+left')   // previous desktop
+await client.key('ctrl+win+right')  // next desktop
+```
 
 ### When to use `focus_strategy: "prepare_display"` (v5.2)
 
@@ -300,8 +344,13 @@ await client.key('command+v', undefined, { targetWindowId: targetId, focusStrate
 Agents should explicitly target the app or window they want to control to avoid sending keystrokes to the wrong place:
 
 ```typescript
+// macOS — use bundle IDs
 await client.type('Hello', 'com.apple.TextEdit')
 await client.key('command+s', 'com.apple.TextEdit')
+
+// Windows — use process names
+await client.type('Hello', 'notepad.exe')
+await client.key('ctrl+s', 'notepad.exe')
 ```
 
 ### Screenshot before acting
@@ -313,12 +362,33 @@ const shot = await client.screenshot()
 // Then decide where to click
 ```
 
+### Use zoom for small text or details
+When you need to read small text, verify a value, or inspect a specific UI element closely, use `zoom` instead of taking a full screenshot:
+
+```typescript
+// Zoom into a 400x300 region at coordinates (500, 200)
+const zoomed = await client.callTool('zoom', { region: [500, 200, 900, 500] })
+// Returns the region at full native resolution (no downscaling)
+// Default format is PNG (lossless) — best for text readability
+```
+
+### Use PNG for pixel-perfect screenshots
+When you need lossless quality (OCR, text reading, pixel comparison), set `quality: 0`:
+
+```typescript
+const shot = await client.screenshot({ quality: 0 })  // PNG, lossless
+const shot2 = await client.screenshot({ quality: 80 }) // JPEG, smaller file
+```
+
 ### Use clipboard for long text
 For typing long content, use clipboard paste instead of `type` — it's faster and more reliable:
 
 ```typescript
 await client.writeClipboard(longText)
+// macOS
 await client.key('command+v', targetApp)
+// Windows
+await client.key('ctrl+v', targetApp)
 ```
 
 ### Use `activate_window` for recovery
@@ -378,3 +448,95 @@ Coordinates are in logical pixels (not physical pixels on Retina displays). Use 
 const size = await client.getDisplaySize()
 // size contains width, height, pixelWidth, pixelHeight, scaleFactor
 ```
+
+
+## Windows-specific tools
+
+These tools are available on Windows and provide direct system access without GUI interaction:
+
+### FileSystem
+```typescript
+// Read a file
+await client.callTool('filesystem', { mode: 'read', path: 'C:\\Users\\Me\\report.txt' })
+
+// Write a file (relative paths resolve from Desktop)
+await client.callTool('filesystem', { mode: 'write', path: 'notes.txt', content: 'Hello' })
+
+// List directory
+await client.callTool('filesystem', { mode: 'list', path: 'C:\\Users\\Me\\Documents' })
+
+// Search for files
+await client.callTool('filesystem', { mode: 'search', path: 'C:\\Users\\Me', pattern: '*.pdf', recursive: true })
+```
+
+### Registry
+```typescript
+// Read a registry value
+await client.callTool('registry', { mode: 'get', path: 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion', name: 'ProgramFilesDir' })
+
+// Set a registry value
+await client.callTool('registry', { mode: 'set', path: 'HKCU:\\Software\\MyApp', name: 'Setting', value: '42', type: 'DWord' })
+
+// List registry keys
+await client.callTool('registry', { mode: 'list', path: 'HKCU:\\Software\\Microsoft' })
+```
+
+### Process management
+```typescript
+// List running processes (sorted by memory)
+await client.callTool('process_kill', { mode: 'list', sort_by: 'memory', limit: 10 })
+
+// Kill a process by name
+await client.callTool('process_kill', { mode: 'kill', name: 'notepad.exe' })
+
+// Force kill by PID
+await client.callTool('process_kill', { mode: 'kill', pid: 1234, force: true })
+```
+
+### Notifications
+```typescript
+await client.callTool('notification', { title: 'Task Complete', message: 'Your automation finished successfully' })
+```
+
+### Window resize/move
+```typescript
+// Resize the foreground window
+await client.callTool('resize_window', { window_size: [800, 600] })
+
+// Move and resize a specific window
+await client.callTool('resize_window', { window_name: 'notepad', window_size: [600, 400], window_loc: [100, 100] })
+```
+
+### Snapshot (combined state capture)
+```typescript
+// Get everything in one call: screenshot + UI tree + windows + desktops
+const snap = await client.callTool('snapshot', { use_vision: true, use_annotation: true, width: 800 })
+// Returns: desktop info text, annotated screenshot image, window annotations
+
+// With grid reference lines for spatial reasoning
+await client.callTool('snapshot', { use_vision: true, grid_lines: [4, 3] })
+```
+
+### Scrape (web content)
+```typescript
+await client.callTool('scrape', { url: 'https://example.com' })
+// Returns clean text extracted from the web page
+```
+
+## Platform compatibility
+
+| Tool | macOS | Windows |
+|---|---|---|
+| screenshot, zoom, click, type, key, scroll, mouse_move ✅ |
+| clipboard (read/write) | ✅ | ✅ |
+| window management (list, activate, hide/unhide) | ✅ | ✅ |
+| UI automation (get_ui_tree, find_element, click_element) | ✅ | ✅ |
+| run_script | AppleScript, JXA | PowerShell |
+| get_app_dictionary, list_menu_bar | ✅ | ❌ (macOS only) |
+| filesystem, registry, notification | ❌ | ✅ (Windows only) |
+| process_kill | ✅ | ✅ |
+| virtual desktops (list, create, destroy) | Read-only | Full lifecycle |
+| snapshot (combined capture) | ✅ | ✅ |
+| scrape | ✅ | ✅ |
+| resize_window | ❌ | ✅ |
+| multi_select, multi_edit | ✅ | ✅ |

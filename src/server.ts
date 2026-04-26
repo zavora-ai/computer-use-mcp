@@ -50,7 +50,7 @@ export interface ServerOptions extends SessionOptions {
 }
 
 export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
-  const server = new McpServer({ name: 'computer-use', version: '5.2.0' })
+  const server = new McpServer({ name: 'computer-use', version: '6.0.0' })
   const session = opts.session ?? createSession({
     vision: opts.vision ?? (process.env.COMPUTER_USE_VISION !== 'false'),
     provider: opts.provider ?? process.env.COMPUTER_USE_PROVIDER,
@@ -96,13 +96,19 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('screenshot', 'Capture the screen or a specific window. BEFORE using this, consider get_ui_tree or find_element to discover UI by role/label — structured queries are cheaper than visual parsing. Auto-targets the active session window when no explicit target is given.', {
     width: z.number().int().positive().optional()
       .describe('Override width in pixels. Omit to use provider-optimal default.'),
-    quality: z.number().int().min(1).max(100).optional()
-      .describe('JPEG quality 1–100. Default: 80. Lower = smaller = fewer tokens.'),
+    quality: z.number().int().min(0).max(100).optional()
+      .describe('Image quality. 1-100 = JPEG quality. 0 = PNG (lossless). Default: 80 (JPEG).'),
     target_app: z.string().optional()
       .describe('Bundle ID of app to capture (window only). Omit for full screen.'),
     target_window_id: targetWindowIdParam,
     provider: z.enum(PROVIDERS).optional()
       .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
+  }, NONE_READ)
+  tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling.', {
+    region: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()])
+      .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect'),
+    quality: z.number().int().min(0).max(100).optional()
+      .describe('Image quality. 0 = PNG (lossless, best for text). 1-100 = JPEG. Default: 0 (PNG).'),
   }, NONE_READ)
   // Pointer / keyboard — CGEvent, target must be frontmost.
   tool('left_click', 'Left-click at coordinates', withTargeting(coord), CG_MUT)
@@ -128,6 +134,9 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   }, CG_MUT)
   tool('type', 'Type text into the focused app. For form fields, prefer set_value or fill_form — accessibility-based writes are more reliable and need no click-to-focus.', {
     text: z.string(),
+    clear: z.boolean().optional().describe('Clear existing text before typing (Ctrl+A, Delete)'),
+    press_enter: z.boolean().optional().describe('Press Enter/Return after typing to submit'),
+    caret_position: z.enum(['start', 'end', 'idle']).optional().describe('Move caret before typing: start (Home), end (End), idle (leave as-is)'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,
@@ -176,7 +185,22 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     window_id: z.number().int().describe('CGWindowID of the window to raise'),
     timeout_ms: z.number().int().positive().optional().describe('Activation polling timeout in ms'),
   }, AX_MUT)
+  tool('resize_window', 'Resize and/or move a window. Omit window_name to target the foreground window.', {
+    window_name: z.string().optional().describe('Window title or process name to target (omit for foreground)'),
+    window_id: z.number().int().optional().describe('Window ID to target (takes precedence over window_name)'),
+    window_size: z.tuple([z.number().int(), z.number().int()]).optional().describe('[width, height] in pixels'),
+    window_loc: z.tuple([z.number().int(), z.number().int()]).optional().describe('[x, y] top-left position'),
+  }, AX_MUT)
   tool('wait', 'Wait for N seconds', { duration: z.number().positive().max(300) }, NONE_READ)
+  tool('snapshot', 'Combined screenshot + UI tree + window list + desktop info in one call. Returns structured text with all desktop state. Set use_vision=true to include screenshot image. Set use_annotation=true to draw bounding boxes on UI elements. Set grid_lines=[cols,rows] to overlay reference grid.', {
+    use_vision: z.boolean().optional().default(false).describe('Include screenshot image in response'),
+    use_annotation: z.boolean().optional().default(false).describe('Draw bounding boxes on detected UI elements'),
+    grid_lines: z.tuple([z.number().int(), z.number().int()]).optional().describe('[columns, rows] for reference grid overlay'),
+    display: z.array(z.number().int()).optional().describe('Monitor indices to capture (omit for all)'),
+    width: z.number().int().positive().optional().describe('Resize screenshot width'),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+  }, NONE_READ)
 
   // ── v5: Accessibility observation ───────────────────────────────────────
   tool('get_ui_tree', 'Get the accessibility tree for a window — discover UI elements by role/label instead of parsing pixels. Returns role, label, value, bounds, actions, children per node. Capped at 500 nodes.', {
@@ -228,8 +252,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   }, AX_MUT)
 
   // ── v5: Scripting bridge ────────────────────────────────────────────────
-  tool('run_script', 'Execute AppleScript or JXA and return the output. Fastest path for scriptable apps (Mail, Safari, Finder, Numbers, Music, Messages, Notes, Calendar). Bounded by timeout_ms.', {
-    language: z.enum(['applescript', 'javascript']).describe('Scripting language'),
+  tool('run_script', 'Execute a script and return the output. On macOS: AppleScript or JXA for scriptable apps. On Windows: PowerShell. Bounded by timeout_ms.', {
+    language: z.enum(['applescript', 'javascript', 'powershell']).describe('Scripting language (applescript/javascript on macOS, powershell on Windows)'),
     script: z.string().describe('Script body to execute'),
     timeout_ms: z.number().int().positive().max(120_000).optional().describe('Hard timeout in ms (default 30000, max 120000)'),
   }, SCRIPTING)
@@ -261,6 +285,10 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   // possible future revival, but they are not exposed via MCP.
   tool('list_spaces', 'List user Spaces grouped by display. Always works — pure read via CGS.', {}, NONE_READ)
   tool('get_active_space', 'Get the currently active Space ID.', {}, NONE_READ)
+  tool('create_agent_space', 'Create a new virtual desktop/Space. On Windows uses Ctrl+Win+D keyboard shortcut. Returns the new desktop info.', {}, AX_MUT)
+  tool('destroy_space', 'Close the current virtual desktop/Space. On Windows uses Ctrl+Win+F4. Windows on the closed desktop move to the adjacent one.', {
+    space_id: z.number().int().optional().describe('Space ID to destroy (ignored on Windows — always closes current)'),
+  }, AX_MUT)
 
   // ── v5.2: Tool metadata introspection ───────────────────────────────────
   //
@@ -289,6 +317,90 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     },
   )
   toolMeta.set('get_tool_metadata', { focusRequired: 'none', mutates: false })
+
+  // ── Windows-parity tools (cross-platform where possible) ────────────────
+
+  // FileSystem tool — Node.js fs, cross-platform
+  tool('filesystem',
+    'File and directory operations: read, write, copy, move, delete, list, search, info. Relative paths resolve from Desktop.',
+    {
+      mode: z.enum(['read', 'write', 'copy', 'move', 'delete', 'list', 'search', 'info']).describe('Operation mode'),
+      path: z.string().describe('File or directory path'),
+      destination: z.string().optional().describe('Destination path for copy/move'),
+      content: z.string().optional().describe('Content for write mode'),
+      pattern: z.string().optional().describe('Glob pattern for list/search'),
+      recursive: z.boolean().optional().default(false).describe('Recursive delete/list/search'),
+      append: z.boolean().optional().default(false).describe('Append instead of overwrite'),
+      overwrite: z.boolean().optional().default(false).describe('Overwrite existing for copy/move'),
+      offset: z.number().int().optional().describe('Line offset for read'),
+      limit: z.number().int().optional().describe('Line limit for read'),
+      encoding: z.string().optional().default('utf-8').describe('File encoding'),
+      show_hidden: z.boolean().optional().default(false).describe('Show hidden files in list'),
+    }, NONE_MUT)
+
+  // Process tool — list and kill processes
+  tool('process_kill',
+    'List and kill running processes. mode=list for process listing, mode=kill to terminate by name or PID.',
+    {
+      mode: z.enum(['list', 'kill']).describe('Operation mode'),
+      name: z.string().optional().describe('Process name to filter/kill'),
+      pid: z.number().int().optional().describe('Process ID to kill'),
+      force: z.boolean().optional().default(false).describe('Force kill without graceful close'),
+      sort_by: z.enum(['memory', 'cpu', 'name']).optional().default('memory').describe('Sort field for list'),
+      limit: z.number().int().optional().default(20).describe('Max processes to list'),
+    }, NONE_MUT)
+
+  // Registry tool — Windows only
+  tool('registry',
+    'Windows Registry operations: get, set, delete, list. Paths use PowerShell format (HKCU:\\Software\\...). Windows only.',
+    {
+      mode: z.enum(['get', 'set', 'delete', 'list']).describe('Operation mode'),
+      path: z.string().describe('Registry path in PowerShell format'),
+      name: z.string().optional().describe('Value name'),
+      value: z.string().optional().describe('Value data for set mode'),
+      type: z.enum(['String', 'DWord', 'QWord', 'Binary', 'MultiString', 'ExpandString']).optional().default('String').describe('Value type for set'),
+    }, NONE_MUT)
+
+  // Notification tool — Windows only
+  tool('notification',
+    'Send a Windows toast notification. Windows only.',
+    {
+      title: z.string().describe('Notification title'),
+      message: z.string().describe('Notification body text'),
+      app_id: z.string().optional().describe('Application User Model ID'),
+    }, NONE_MUT)
+
+  // MultiSelect tool — batch click with optional Ctrl hold
+  tool('multi_select',
+    'Select multiple items by clicking coordinates or UI element labels. Set press_ctrl=true for additive selection.',
+    {
+      locs: z.array(z.tuple([z.number(), z.number()])).optional().describe('List of [x,y] coordinates'),
+      labels: z.array(z.string()).optional().describe('List of UI element labels'),
+      press_ctrl: z.boolean().optional().default(true).describe('Hold Ctrl for additive selection'),
+      target_app: targetAppParam,
+      target_window_id: targetWindowIdParam,
+      focus_strategy: focusStrategyParam,
+    }, CG_MUT)
+
+  // MultiEdit tool — batch click+type
+  tool('multi_edit',
+    'Enter text into multiple fields. Provide locs as [[x,y,text],...] or labels as [[label,text],...].',
+    {
+      locs: z.array(z.tuple([z.number(), z.number(), z.string()])).optional().describe('List of [x,y,text] tuples'),
+      labels: z.array(z.tuple([z.string(), z.string()])).optional().describe('List of [label,text] tuples'),
+      target_app: targetAppParam,
+      target_window_id: targetWindowIdParam,
+      focus_strategy: focusStrategyParam,
+    }, CG_MUT)
+
+  // Scrape tool — fetch web page content
+  tool('scrape',
+    'Fetch and extract content from a URL. Returns clean text from web pages. Set use_dom=true to extract from active browser tab DOM instead of HTTP fetch.',
+    {
+      url: z.string().describe('URL to fetch'),
+      query: z.string().optional().describe('Focus extraction on specific information'),
+      use_dom: z.boolean().optional().default(false).describe('Extract from active browser tab DOM instead of HTTP'),
+    }, NONE_READ)
 
   return server
 }

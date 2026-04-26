@@ -1,5 +1,66 @@
 # Changelog
 
+## v6.0.0 (2026-04-26)
+
+v6.0 adds **native Windows support**, transforming computer-use-mcp from a macOS-only tool into a cross-platform desktop automation server. Every Windows API call goes through Rust via `windows-rs` with zero-overhead NAPI bindings — no Python, no pywin32, no subprocess overhead.
+
+### Windows native modules (Rust)
+- **Mouse** — `SendInput` with `MOUSEINPUT`, absolute coordinate normalization, move-and-settle pattern
+- **Keyboard** — `SendInput` with `KEYBDINPUT` + `KEYEVENTF_UNICODE`, full VK code map with macOS modifier mapping (`command` → `Win`, `option` → `Alt`)
+- **Screenshot** — DXGI Desktop Duplication (cached device/staging texture) with GDI BitBlt fallback. 20ms median, 1.5x faster than Python dxcam
+- **Clipboard** — Native `OpenClipboard`/`SetClipboardData` with retry logic. 31x faster than pywin32
+- **Window management** — `EnumWindows` + `GetWindowText` + `SetForegroundWindow` with `AttachThreadInput`. 80-1000x faster than comtypes
+- **UI Automation** — `IUIAutomation` COM with tree walking, element search, Invoke/Value/Toggle patterns, control type → AX role mapping
+- **Display** — `EnumDisplayMonitors` + `GetDpiForMonitor` for multi-monitor support
+- **Virtual Desktops** — Registry-based enumeration from `VirtualDesktopIDs` binary blob, works on Server 2022 + Win10 + Win11. Create/destroy via keyboard shortcuts
+- **Clipboard** — Native Win32 `OpenClipboard`/`SetClipboardData` with 3-retry logic
+
+### New tools (58 total, up from 46)
+- **`filesystem`** — Read, write, copy, move, delete, list, search, info. Node.js `fs` based, cross-platform
+- **`process_kill`** — List and kill processes by name or PID. `taskkill` on Windows, `kill`/`pkill` on macOS
+- **`registry`** — Windows Registry get/set/delete/list via PowerShell. Accepts `HKCU:\...` paths
+- **`notification`** — Windows toast notifications via `ToastNotificationManager`
+- **`multi_select`** — Batch click with optional Ctrl hold. Resolves labels via `find_element`
+- **`multi_edit`** — Batch click+type for form filling. Resolves labels via `find_element`
+- **`scrape`** — HTTP fetch + HTML-to-text extraction
+- **`resize_window`** — Resize/move windows by name, ID, or foreground
+- **`snapshot`** — Combined screenshot + UI tree + window list + desktop info in one call, with annotation overlay and grid reference lines
+- **`zoom`** — View a specific screen region at full native resolution. Crops without downscaling — ideal for reading small text. Matches Claude's `computer_20251124` zoom action
+- **`create_agent_space`** — Create virtual desktop (Ctrl+Win+D on Windows)
+- **`destroy_space`** — Close current virtual desktop (Ctrl+Win+F4 on Windows)
+
+### Screenshot enhancements
+- **PNG format support** — `quality: 0` produces lossless PNG. 45% faster encoding than JPEG with pixel-perfect quality
+- **Coordinate validation** — clicks/moves to coordinates outside display bounds return a clear error with valid range
+- **Box-filter downscaling** — smoother resize with better quality than nearest-neighbor, also faster
+
+### Session layer cross-platform
+- Platform detection (`IS_WINDOWS`/`IS_MACOS`) at initialization
+- Session lock path: `%TEMP%` on Windows, `/tmp` on macOS
+- CFRunLoop pump skipped on Windows (no-op `drainRunloop`)
+- Clipboard: native Win32 on Windows, `pbcopy`/`pbpaste` on macOS
+- Long-text typing: clipboard + `Ctrl+V` on Windows, clipboard + `Cmd+V` on macOS
+- PowerShell scripting bridge: `run_script` accepts `language: "powershell"` on Windows, Base64 UTF-16LE encoding
+- `get_app_dictionary` and `list_menu_bar` return `platform_unsupported` on Windows
+- `get_tool_guide` returns Windows-specific recommendations (PowerShell, process names, filesystem tool)
+- `get_app_capabilities` reports `powershell: true` on Windows
+- `type` tool gains `clear`, `press_enter`, `caret_position` parameters
+- `prepare_display` minimizes windows on Windows (vs hiding apps on macOS)
+- Identifier mapping: bundle IDs on macOS, process names on Windows — transparent to callers
+
+### Performance vs Windows-MCP (Python reference)
+| Operation | Rust NAPI | Windows-MCP | Speedup |
+|---|---|---|---|
+| Screenshot (800px) | 20ms | 32ms | 1.6x |
+| Clipboard round-trip | 0.7ms | 21ms | 30x |
+| Window listing | 1.7ms | 165ms | 97x |
+| Frontmost app | 0.2ms | 169ms | 845x |
+| Memory (RSS) | 118MB | ~180MB | 1.5x less |
+
+### Breaking changes
+- `run_script` language enum now includes `"powershell"` (additive, not breaking for existing macOS users)
+- `package.json` `os` field changed from `["darwin"]` to `["darwin", "win32"]`
+
 ## v5.2.0 (2026-04-25)
 
 v5.2 adds three reliability primitives — **cross-process session lock**, **main-runloop pump during sessions**, and **`prepare_display` focus strategy** — plus a new **`focusRequired` metadata** surface so agents can reason about which tools actually need the target frontmost.

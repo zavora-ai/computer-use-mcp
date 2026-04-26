@@ -89,7 +89,7 @@ export interface ComputerUseClient {
   fillForm(windowId: number, fields: FillFormField[], opts?: SemanticOpts): Promise<ToolResult>
 
   // ── v5: Scripting bridge ──────────────────────────────────────────────
-  runScript(language: 'applescript' | 'javascript', script: string, timeoutMs?: number): Promise<ToolResult>
+  runScript(language: 'applescript' | 'javascript' | 'powershell', script: string, timeoutMs?: number): Promise<ToolResult>
   getAppDictionary(bundleId: string, suite?: string): Promise<ToolResult>
 
   // ── v5: Strategy advisor + capabilities ───────────────────────────────
@@ -103,6 +103,17 @@ export interface ComputerUseClient {
   moveWindowToSpace(windowId: number, spaceId: number): Promise<ToolResult>
   removeWindowFromSpace(windowId: number, spaceId: number): Promise<ToolResult>
   destroySpace(spaceId: number): Promise<ToolResult>
+
+  // ── Windows-parity tools ──────────────────────────────────────────────
+  filesystem(mode: string, path: string, opts?: Record<string, unknown>): Promise<ToolResult>
+  processKill(mode: 'list' | 'kill', opts?: { name?: string; pid?: number; force?: boolean }): Promise<ToolResult>
+  registry(mode: string, path: string, opts?: { name?: string; value?: string; type?: string }): Promise<ToolResult>
+  notification(title: string, message: string, appId?: string): Promise<ToolResult>
+  multiSelect(locs?: [number, number][], opts?: { labels?: string[]; pressCtrl?: boolean; targetApp?: string }): Promise<ToolResult>
+  multiEdit(locs?: [number, number, string][], opts?: { labels?: [string, string][]; targetApp?: string }): Promise<ToolResult>
+  scrape(url: string, opts?: { query?: string; useDom?: boolean }): Promise<ToolResult>
+  resizeWindow(opts: { windowName?: string; windowId?: number; windowSize?: [number, number]; windowLoc?: [number, number] }): Promise<ToolResult>
+  snapshot(opts?: { useVision?: boolean; useAnnotation?: boolean; gridLines?: [number, number]; display?: number[]; width?: number; targetApp?: string }): Promise<ToolResult>
 }
 
 export async function connectStdio(command: string, args: string[], cwd?: string): Promise<ComputerUseClient> {
@@ -225,5 +236,16 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
       window_id: windowId, space_id: spaceId,
     }),
     destroySpace: (spaceId) => call('destroy_space', { space_id: spaceId }),
+
+    // Windows-parity tools
+    filesystem: (mode, path, opts?) => call('filesystem', { mode, path, ...opts }),
+    processKill: (mode, opts?) => call('process_kill', { mode, ...opts }),
+    registry: (mode, path, opts?) => call('registry', { mode, path, ...opts }),
+    notification: (title, message, appId?) => call('notification', { title, message, ...(appId ? { app_id: appId } : {}) }),
+    multiSelect: (locs?, opts?) => call('multi_select', { ...(locs ? { locs } : {}), ...(opts?.labels ? { labels: opts.labels } : {}), ...(opts?.pressCtrl !== undefined ? { press_ctrl: opts.pressCtrl } : {}), ...(opts?.targetApp ? { target_app: opts.targetApp } : {}) }),
+    multiEdit: (locs?, opts?) => call('multi_edit', { ...(locs ? { locs } : {}), ...(opts?.labels ? { labels: opts.labels } : {}), ...(opts?.targetApp ? { target_app: opts.targetApp } : {}) }),
+    scrape: (url, opts?) => call('scrape', { url, ...(opts?.query ? { query: opts.query } : {}), ...(opts?.useDom !== undefined ? { use_dom: opts.useDom } : {}) }),
+    resizeWindow: (opts) => call('resize_window', { ...(opts.windowName ? { window_name: opts.windowName } : {}), ...(opts.windowId !== undefined ? { window_id: opts.windowId } : {}), ...(opts.windowSize ? { window_size: opts.windowSize } : {}), ...(opts.windowLoc ? { window_loc: opts.windowLoc } : {}) }),
+    snapshot: (opts?) => call('snapshot', { ...(opts?.useVision !== undefined ? { use_vision: opts.useVision } : {}), ...(opts?.useAnnotation !== undefined ? { use_annotation: opts.useAnnotation } : {}), ...(opts?.gridLines ? { grid_lines: opts.gridLines } : {}), ...(opts?.display ? { display: opts.display } : {}), ...(opts?.width ? { width: opts.width } : {}), ...(opts?.targetApp ? { target_app: opts.targetApp } : {}) }),
   }
 }

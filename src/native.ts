@@ -223,6 +223,16 @@ export interface NativeModule {
    */
   drainRunloop(): void
 
+  // ── Windows-only: native clipboard ──────────────────────────────────────
+  /** Read clipboard text (Windows native). Undefined on macOS. */
+  readClipboard?(): string
+  /** Write text to clipboard (Windows native). Undefined on macOS. */
+  writeClipboard?(text: string): void
+  /** Draw annotations and grid lines on a JPEG image. Windows only. */
+  annotateImage?(base64Jpeg: string, annotations: string | null, gridCols: number | null, gridRows: number | null, quality: number | null): { base64: string; width: number; height: number; mimeType: string }
+  /** Crop a region from a base64 image at full resolution. Windows only. */
+  cropImage?(base64Image: string, x1: number, y1: number, x2: number, y2: number, quality: number | null): { base64: string; width: number; height: number; mimeType: string }
+
   // ── v5.2 prepareDisplay ─────────────────────────────────────────────────
   /**
    * Hide every regular running app except the target and the keep-visible

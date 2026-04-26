@@ -4,8 +4,8 @@
  * Run: npx tsx examples/crypto-numbers.ts
  */
 
-import { createComputerUseServer } from '../src/server.js'
-import { connectInProcess, type ToolResult } from '../src/client.js'
+import { createComputerUseServer } from '../../src/server.js'
+import { connectInProcess, type ToolResult } from '../../src/client.js'
 import { writeFile } from 'fs/promises'
 
 const numbers = 'com.apple.iWork.Numbers'
