@@ -21,17 +21,17 @@ jobs:
             runner: macos-14
             rust-target: aarch64-apple-darwin
             artifact: computer-use-napi.darwin-arm64.node
-            copy-from: target/release/libcomputer_use_napi.dylib
+            copy-from: target/aarch64-apple-darwin/release/libcomputer_use_napi.dylib
           - name: macOS x64
             runner: macos-13
             rust-target: x86_64-apple-darwin
             artifact: computer-use-napi.darwin-x64.node
-            copy-from: target/release/libcomputer_use_napi.dylib
+            copy-from: target/x86_64-apple-darwin/release/libcomputer_use_napi.dylib
           - name: Windows x64
             runner: windows-latest
             rust-target: x86_64-pc-windows-msvc
             artifact: computer-use-napi.win32-x64.node
-            copy-from: target/release/computer_use_napi.dll
+            copy-from: target/x86_64-pc-windows-msvc/release/computer_use_napi.dll
     steps:
       - uses: actions/checkout@v4
 
