@@ -3,5 +3,5 @@ dist/
 *.node
 native/target/
 .playwright-mcp/
-.kiro/
 .claude/
+reference-projects/
