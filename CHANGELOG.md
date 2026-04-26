@@ -1,5 +1,42 @@
 # Changelog
 
+## v5.2.0 (2026-04-25)
+
+v5.2 adds three reliability primitives — **cross-process session lock**, **main-runloop pump during sessions**, and **`prepare_display` focus strategy** — plus a new **`focusRequired` metadata** surface so agents can reason about which tools actually need the target frontmost.
+
+Architectural choice: we follow Claude Code's foreground-only contract. Opt-in background AX automation was explored and rejected as unreliable in the general case (Freeform, SwiftUI popovers, Electron apps). Use `run_script` (AppleScript/JXA) when you need true background work.
+
+### New tools
+- **`get_tool_metadata(tool_name)`** — Structured per-tool metadata: `{ focusRequired: "scripting" | "ax" | "cgevent" | "none", mutates: boolean }`. Every tool also carries `[focusRequired: X]` as a suffix in its description so agents that read descriptions can filter without a separate call.
+
+### New focus strategy
+- **`focus_strategy: "prepare_display"`** — Before activating the target, hide every regular running app except the target and the terminal host (plus anything in `COMPUTER_USE_PREPARE_KEEP_VISIBLE`). Defends against focus-stealing background apps (screenshot watchers, notification banners) that race your activation. The response payload gains a trailing JSON block with `hiddenBundleIds` so callers can restore the layout later.
+
+### Reliability
+- **Cross-process session lock** — `/tmp/.computer-use-mcp.lock` held via `O_EXCL` for the duration of any mutating tool call. Prevents two MCP servers from fighting over the cursor. Stale-PID recovery: a lock held by a dead PID is reclaimed automatically. Observation tools skip the lock and stay concurrent.
+- **Main-runloop pump during sessions** — While a mutating tool is in flight, a 1 ms `setInterval` drains the main CFRunLoop via a new `drainRunloop()` NAPI export. Matches Claude Code's `drainRunLoop.ts` pattern. Keeps NSWorkspace KVO updates and `@MainActor` async continuations making progress under libuv. Pump is refcounted and `.unref()`-ed so it doesn't keep Node alive on its own.
+- **`return await` fix in `doClick`** — Latent bug since v4: the outer `try/finally` in dispatch was firing before the click helper's Promise resolved, which broke any code relying on session state set inside the helper. Fixed by changing `return doClick(...)` to `return await doClick(...)` in the five click case branches.
+
+### Native module
+- **`prepare_display(target_bundle_id, keep_visible)`** — Hides every regular non-target app except the keep list. Returns only the bundles we newly hid (already-hidden apps are excluded from the return), so restore is idempotent.
+- **`drain_runloop` exposed as `drainRunloop()` NAPI** — Previously internal only.
+
+### Session layer changes
+- **`MUTATING_TOOLS`** — An explicit set of tool names that acquire the session lock + pump. Observation tools (`get_*`, `list_*`, `find_*`, `screenshot`) skip both.
+- **`FocusStrategy`** union extended with `'prepare_display'`.
+- **`ensureFocusV4`** return type extended to `{ hiddenBundleIds?: string[] }`. Dispatch decorates the response when set.
+- **`resolveKeepVisibleBundles()`** — Env (`COMPUTER_USE_PREPARE_KEEP_VISIBLE`) > `__CFBundleIdentifier` > `TERM_PROGRAM_BUNDLE_ID` > fallback `com.apple.Terminal`.
+- **Lock disabled by default when a mock native is injected** (`opts.native` present). Keeps property-based tests out of the filesystem without requiring every test to opt out.
+
+### Tests
+- 78/78 tests pass (up from 61 in v5.1). 17 new tests: 7 lock/pump, 5 prepare_display, 5 metadata.
+- 12/12 smoke probes pass. Expected tool count bumped from 45 to 46.
+
+### Tool count
+- 45 → 46 (added `get_tool_metadata`).
+
+---
+
 ## v5.1.0 (2026-04-25)
 
 v5.1 fixes a latent bug that made `list_running_apps` / `activate_app` return stale data after the server had been running a while, and adds a new `list_menu_bar` tool that exposes every menu item's keyboard shortcut — letting agents skip menu traversal and press `cmd+X` directly.

@@ -174,6 +174,30 @@ export interface NativeModule {
   removeWindowFromSpace(windowId: number, spaceId: number): { removed: boolean; reason?: string }
   /** Destroy a Space created via createAgentSpace. */
   destroySpace(spaceId: number): { destroyed: boolean; reason?: string }
+
+  // ── v5.2 Runloop pump ───────────────────────────────────────────────────
+  /**
+   * Pump the main CFRunLoop once. Used by the session layer during a CU
+   * session to keep NSWorkspace / AX state fresh. Cheap when idle.
+   */
+  drainRunloop(): void
+
+  // ── v5.2 prepareDisplay ─────────────────────────────────────────────────
+  /**
+   * Hide every regular running app except the target and the keep-visible
+   * set. Defends against focus-stealing background apps (screenshot
+   * watchers, notification panels) before input dispatch.
+   *
+   * Returns the bundle IDs we actually hid — apps already hidden are NOT
+   * included, so callers can restore exactly the state they changed.
+   */
+  prepareDisplay(
+    targetBundleId: string,
+    keepVisible: string[],
+  ): {
+    targetBundleId: string
+    hiddenBundleIds: string[]
+  }
 }
 
 let cached: NativeModule | undefined

@@ -50,6 +50,18 @@ fn drain_runloop() {
     }
 }
 
+/// Pump the main CFRunLoop once in default mode.
+///
+/// Long-lived Node hosts under libuv never spin the main run loop, so KVO
+/// updates (e.g. `NSWorkspace.runningApplications` refreshes) and
+/// `@MainActor` continuations can go unserviced. Callers schedule this on a
+/// 1 ms interval during a computer-use session to keep macOS state fresh
+/// without blocking. Cheap when no sources are pending.
+#[napi(js_name = "drainRunloop")]
+pub fn drain_runloop_pub() {
+    drain_runloop();
+}
+
 #[napi]
 pub fn get_frontmost_app() -> napi::Result<serde_json::Value> {
     drain_runloop();
@@ -164,6 +176,68 @@ pub fn list_running_apps() -> napi::Result<serde_json::Value> {
         }
         Ok(serde_json::json!(result))
     }
+}
+
+/// Hide every non-target regular app except those in `keep_visible`.
+///
+/// Used by the session layer as the muscular option against focus-stealing
+/// background apps (screenshot watchers, notification panels, etc.). The
+/// session promises the target app will be frontmost when this returns.
+///
+/// Returns the list of bundle IDs we actually hid — apps already hidden at
+/// call time are NOT included, so a later `unhide_bundles` helper can be
+/// idempotent.
+#[napi]
+pub fn prepare_display(
+    target_bundle_id: String,
+    keep_visible: Vec<String>,
+) -> napi::Result<serde_json::Value> {
+    drain_runloop();
+    let mut hidden: Vec<String> = Vec::new();
+
+    unsafe {
+        let ws = shared_workspace();
+        let apps: *mut Object = msg_send![ws, runningApplications];
+        let count: usize = msg_send![apps, count];
+
+        for i in 0..count {
+            let app: *mut Object = msg_send![apps, objectAtIndex: i];
+            // Only regular apps — skip agents/menu-extras (they usually
+            // don't have a visible window anyway, and some break on `hide`).
+            let policy: i64 = msg_send![app, activationPolicy];
+            if policy != 0 {
+                continue;
+            }
+            let bid: *mut Object = msg_send![app, bundleIdentifier];
+            let bid_str = match nsstring_to_string(bid) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Never hide the target or the keep-visible set.
+            if bid_str == target_bundle_id {
+                continue;
+            }
+            if keep_visible.iter().any(|k| k == &bid_str) {
+                continue;
+            }
+
+            // Skip already-hidden apps so our return value reflects the
+            // delta we caused, not the preexisting state.
+            let already_hidden: BOOL = msg_send![app, isHidden];
+            if already_hidden == YES {
+                continue;
+            }
+
+            let _: BOOL = msg_send![app, hide];
+            hidden.push(bid_str);
+        }
+    }
+
+    Ok(serde_json::json!({
+        "targetBundleId": target_bundle_id,
+        "hiddenBundleIds": hidden,
+    }))
 }
 
 #[napi]

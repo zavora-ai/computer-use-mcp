@@ -1,6 +1,6 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "MCP server + client for macOS computer control — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",

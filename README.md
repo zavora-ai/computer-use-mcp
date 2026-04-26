@@ -86,7 +86,7 @@ Your AI client (Claude, Cursor, etc.)
         │  MCP protocol (JSON-RPC over stdio or in-memory)
         ▼
   MCP Server  (src/server.ts)
-  ├── Registers 45 tools with Zod schemas
+  ├── Registers 46 tools with Zod schemas
   ├── Validates all inputs at the boundary
   └── Delegates to Session
         │
@@ -637,9 +637,12 @@ Controls how aggressively the server acquires focus before delivering input:
 
 | Strategy | Behavior | Default for |
 |---|---|---|
-| `strict` | Fail with `FocusFailure` if the target cannot be confirmed as frontmost. For keyboard tools with a `target_window_id`, also confirms the window is on-screen. | Keyboard tools (`type`, `key`, `hold_key`) |
+| `strict` | Fail with `FocusFailure` if the target cannot be confirmed as frontmost. For keyboard tools with a `target_window_id`, also confirms the window is on-screen. | Keyboard tools (`type`, `key`, `hold_key`) and text-writing AX tools (`set_value`, `fill_form`) |
 | `best_effort` | Attempt focus acquisition and proceed with input delivery even if full confirmation is not achieved. | Pointer tools (`left_click`, `scroll`, etc.) |
 | `none` | Skip all activation. Send input to the current frontmost target regardless of `target_app` or `target_window_id`. | — (must be explicit) |
+| `prepare_display` *(v5.2)* | Hide every regular running app except the target, the terminal, and any bundles in the `COMPUTER_USE_PREPARE_KEEP_VISIBLE` env var, **then** activate the target. Defends against focus-stealing background apps (screenshot watchers, notification panels). The response payload gains a trailing `hiddenBundleIds` block so callers can restore the layout later with `unhide_app`. | — (must be explicit) |
+
+> **Tip:** Use `prepare_display` whenever you see a `focus_failed` with a `thief` app that isn't yours (for example, a macOS screenshot watcher grabbing focus after your screenshot call). It's a hammer, not a default — it leaves non-target apps hidden until you restore them.
 
 ### Focus failure diagnostics
 
@@ -674,7 +677,7 @@ The `suggestedRecovery` field tells you what to do next:
 
 ### `createComputerUseServer(): McpServer`
 
-Creates an MCP server instance with all 45 tools registered. The server is not started until you connect a transport.
+Creates an MCP server instance with all 46 tools registered. The server is not started until you connect a transport.
 
 ```typescript
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'

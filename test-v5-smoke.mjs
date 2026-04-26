@@ -27,7 +27,7 @@ const probe = async (name, fn) => {
 const text = r => r.content.find(c => c.type === 'text')?.text ?? ''
 const parse = r => { try { return JSON.parse(text(r)) } catch { return text(r) } }
 
-const EXPECTED_TOOL_COUNT = 45
+const EXPECTED_TOOL_COUNT = 46
 
 console.log('\n━━━ v5 smoke test ━━━')
 

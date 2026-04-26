@@ -263,6 +263,23 @@ if (r.isError) {
 
 `list_spaces` and `get_active_space` are reliable — use them to tell which Space a window is in. Space creation / window moves via CGS are **not exposed**: they silently no-op or orphan Spaces on SIP-enabled Macs. If you need a new Space, ask the user to create one in Mission Control.
 
+### When to use `focus_strategy: "prepare_display"` (v5.2)
+
+If your mutating call returned a `FocusFailure` payload whose `frontmostAfter` shows a third-party app (screenshot watcher, notification panel, overlay) that you don't control, retry with `focus_strategy: "prepare_display"`. The session will hide every regular app except your target and the terminal, then activate — nothing else on screen can race you to the front.
+
+```typescript
+try {
+  await client.selectMenuItem('com.apple.freeform', 'Insert', 'Shape', 'Oval')
+} catch (err) {
+  // Second try with the hammer: hide every other app first.
+  await client.selectMenuItem('com.apple.freeform', 'Insert', 'Shape', 'Oval', {
+    focus_strategy: 'prepare_display',
+  })
+}
+```
+
+The tool response gains a trailing JSON block with `hiddenBundleIds`. Save it so you can restore the user's layout with `unhide_app` after your automation finishes. Don't call `prepare_display` on every action — it's disruptive UX; use it only after a focus race has been observed.
+
 ## Best practices for agents
 
 ### Use window-level targeting for multi-window apps

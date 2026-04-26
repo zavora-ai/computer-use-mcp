@@ -149,7 +149,24 @@ export interface TargetState {
   establishedAt: number
 }
 
-export type FocusStrategy = 'strict' | 'best_effort' | 'none'
+/**
+ * Focus-acquisition strategy for a mutating tool.
+ *
+ * - `strict`: fail with a structured FocusFailure if the target cannot be
+ *   confirmed frontmost after activation attempts. Default for text-writing
+ *   tools (type/key/hold_key/set_value/fill_form) where a wrong-target send
+ *   is more damaging than a failed call.
+ * - `best_effort`: attempt activation and proceed regardless. Default for
+ *   pointer tools.
+ * - `none`: skip all activation. Send input to whatever is currently
+ *   frontmost. Use only when you genuinely don't care.
+ * - `prepare_display`: v5.2 — before activation, hide every non-target
+ *   regular app (except the terminal + the caller's keep-visible set).
+ *   Blocks focus-stealing background apps (screenshot watchers, NC
+ *   banners). After a prepare_display call, the response payload carries
+ *   `hiddenBundleIds` so the caller can later restore the layout.
+ */
+export type FocusStrategy = 'strict' | 'best_effort' | 'none' | 'prepare_display'
 
 interface FocusFailure {
   error: 'focus_failed'
@@ -173,6 +190,14 @@ export interface SessionOptions {
   native?: NativeModule
   /** Override subprocess spawner for tests (used by run_script, get_app_dictionary). */
   spawnBounded?: SpawnBounded
+  /** Override session-lock path (tests use a tmpdir-local path so they don't collide with real sessions). */
+  lockPath?: string
+  /**
+   * Disable cross-process session lock. Used in tests that drive multiple
+   * Session objects within a single process where the OS-level lock would
+   * self-deadlock. Default: false (lock enabled).
+   */
+  disableSessionLock?: boolean
 }
 
 // ── v5: Tool guide static table ───────────────────────────────────────────────
@@ -319,6 +344,177 @@ class WindowNotFoundError extends Error {
   }
 }
 
+// ── v5.2: Session lock + runloop pump ─────────────────────────────────────────
+//
+// One computer-use session per Mac. Prevents two MCP processes from fighting
+// over the cursor. While the lock is held, we run a 1 ms CFRunLoop pump so
+// NSWorkspace KVO updates and @MainActor continuations make progress under
+// libuv — matches Claude Code's `drainRunLoop.ts` pattern.
+//
+// Both lock and pump are refcounted within a single process so nested
+// mutating calls (e.g. fill_form → set_value) don't tear down and rebuild.
+
+import * as fs from 'fs'
+
+const DEFAULT_LOCK_PATH = '/tmp/.computer-use-mcp.lock'
+
+export class LockError extends Error {
+  readonly lockingPid: number | null
+  constructor(lockingPid: number | null) {
+    super(lockingPid != null
+      ? `computer-use session locked by PID ${lockingPid}`
+      : 'computer-use session locked')
+    this.name = 'LockError'
+    this.lockingPid = lockingPid
+  }
+}
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    // Signal 0 is the probe signal — succeeds iff the process exists and we
+    // have permission to signal it. Throws ESRCH when the process is gone.
+    process.kill(pid, 0)
+    return true
+  } catch (err: any) {
+    // EPERM means the process exists but we can't signal — treat as alive.
+    return err?.code === 'EPERM'
+  }
+}
+
+interface LockHandle {
+  release: () => void
+}
+
+/**
+ * Tries to acquire the cross-process session lock.
+ *
+ * Returns a handle on success. Throws `LockError` when the lock is held by
+ * another live process. Reclaims the lock when the holding PID is dead.
+ */
+function acquireLockOnce(lockPath: string): LockHandle {
+  try {
+    const fd = fs.openSync(
+      lockPath,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR,
+      0o600,
+    )
+    fs.writeSync(fd, String(process.pid))
+    return {
+      release: () => {
+        try { fs.closeSync(fd) } catch { /* already closed */ }
+        try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
+      },
+    }
+  } catch (err: any) {
+    if (err?.code !== 'EEXIST') throw err
+    // Lock exists — inspect the holder.
+    let holder: number | null = null
+    try {
+      const raw = fs.readFileSync(lockPath, 'utf8').trim()
+      const parsed = parseInt(raw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) holder = parsed
+    } catch { /* file vanished between openSync and readFileSync — retry */ }
+
+    if (holder == null) {
+      // Unreadable / empty lock: treat as dead.
+      try { fs.unlinkSync(lockPath) } catch { /* race — someone else cleaned up */ }
+      return acquireLockOnce(lockPath)
+    }
+
+    if (holder === process.pid) {
+      // Our own process holds the lock but we dropped the FD ref —
+      // reclaim by unlinking + re-creating.
+      try { fs.unlinkSync(lockPath) } catch { /* ok */ }
+      return acquireLockOnce(lockPath)
+    }
+
+    if (!pidIsAlive(holder)) {
+      try { fs.unlinkSync(lockPath) } catch { /* race — ok */ }
+      return acquireLockOnce(lockPath)
+    }
+
+    throw new LockError(holder)
+  }
+}
+
+/**
+ * Per-session refcounted lock + pump. A single instance lives inside one
+ * `createSession` closure — cross-process contention still goes through the
+ * filesystem lock, but nested calls within this session are cheap.
+ */
+interface LockPumpController {
+  acquire: () => void        // throws LockError on contention
+  release: () => void
+  /** For tests — current refcount. */
+  readonly _refcount: number
+}
+
+function makeLockPumpController(
+  n: NativeModule,
+  lockPath: string,
+  disableLock: boolean,
+): LockPumpController {
+  let refcount = 0
+  let handle: LockHandle | null = null
+  let pumpInterval: NodeJS.Timeout | null = null
+
+  function startPump() {
+    if (pumpInterval != null) return
+    pumpInterval = setInterval(() => {
+      try { n.drainRunloop() } catch { /* never let the pump throw */ }
+    }, 1)
+    // Don't keep Node alive just for the pump.
+    pumpInterval.unref?.()
+  }
+
+  function stopPump() {
+    if (pumpInterval == null) return
+    clearInterval(pumpInterval)
+    pumpInterval = null
+  }
+
+  return {
+    acquire() {
+      if (refcount === 0 && !disableLock) {
+        handle = acquireLockOnce(lockPath)
+      }
+      refcount++
+      if (refcount === 1) startPump()
+    },
+    release() {
+      if (refcount === 0) return
+      refcount--
+      if (refcount === 0) {
+        stopPump()
+        if (handle) {
+          const h = handle
+          handle = null
+          h.release()
+        }
+      }
+    },
+    get _refcount() { return refcount },
+  }
+}
+
+// ── Tools that mutate system state (take the session lock + pump) ─────────────
+//
+// Observation tools (screenshot, list_*, get_*) do not take the lock — they
+// must be callable concurrently (e.g. screenshots during a session held by
+// another process for diagnostics).
+const MUTATING_TOOLS = new Set([
+  // Pointer + keyboard CGEvent
+  'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
+  'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up', 'scroll',
+  'type', 'key', 'hold_key', 'write_clipboard',
+  // App / window activation
+  'activate_app', 'activate_window', 'open_application', 'hide_app', 'unhide_app',
+  // Semantic AX mutations
+  'click_element', 'set_value', 'press_button', 'select_menu_item', 'fill_form',
+  // Scripting bridge (can mutate via AppleScript — treat conservatively)
+  'run_script',
+])
+
 // ── Session factory ───────────────────────────────────────────────────────────
 
 export function createSession(opts: SessionOptions = {}): Session {
@@ -326,6 +522,39 @@ export function createSession(opts: SessionOptions = {}): Session {
   const spawnBounded: SpawnBounded = opts.spawnBounded ?? defaultSpawnBounded
   let targetState: TargetState | undefined
   const visionEnabled = opts.vision !== false
+
+  // v5.2: cross-process lock + main-runloop pump. Mutating tool dispatch
+  // acquires before running and releases in `finally`; observation tools
+  // skip both to stay cheap and concurrent.
+  //
+  // Default: when a caller injects a mock native (opts.native set), we infer
+  // this is a test harness and disable the cross-process lock by default.
+  // Tests that *want* to exercise the lock can pass `disableSessionLock: false`
+  // explicitly. Production (no opts.native → real NAPI module) defaults to
+  // enabled. Callers can always override explicitly.
+  const lockDisabledByDefault = opts.native != null
+  const lockPump = makeLockPumpController(
+    n,
+    opts.lockPath ?? DEFAULT_LOCK_PATH,
+    opts.disableSessionLock ?? lockDisabledByDefault,
+  )
+
+  // Best-effort cleanup if Node exits while a lock is held (SIGINT, SIGTERM,
+  // uncaughtException). We force-release to drop the lockfile; a new session
+  // started afterwards will see EEXIST and fall into the stale-PID recovery
+  // path anyway, so this is belt + suspenders.
+  //
+  // Skipped when the cross-process lock is disabled (tests, in-process
+  // multiple-sessions). Property-based tests create many sessions, which
+  // would otherwise blow past the default MaxListeners on `process`.
+  if (!(opts.disableSessionLock ?? lockDisabledByDefault)) {
+    const forceRelease = () => {
+      try { while (lockPump._refcount > 0) lockPump.release() } catch { /* ignore */ }
+    }
+    process.once('exit', forceRelease)
+    process.once('SIGINT', () => { forceRelease(); process.exit(130) })
+    process.once('SIGTERM', () => { forceRelease(); process.exit(143) })
+  }
   const defaultProvider = opts.provider ?? process.env.COMPUTER_USE_PROVIDER ?? 'auto'
 
   // Screenshot dedup cache — keyed on the last encoded image hash.
@@ -369,7 +598,7 @@ export function createSession(opts: SessionOptions = {}): Session {
   function getStrategy(tool: string, args: Record<string, unknown>): FocusStrategy {
     if (typeof args.focus_strategy === 'string') {
       const s = args.focus_strategy as string
-      if (s === 'strict' || s === 'best_effort' || s === 'none') return s
+      if (s === 'strict' || s === 'best_effort' || s === 'none' || s === 'prepare_display') return s
     }
     return defaultStrategy(tool)
   }
@@ -411,12 +640,50 @@ export function createSession(opts: SessionOptions = {}): Session {
     }
   }
 
+  /**
+   * Resolve the terminal host's bundle ID so prepare_display doesn't hide it.
+   *
+   * Order: `COMPUTER_USE_PREPARE_KEEP_VISIBLE` env (comma-separated, user
+   * override) → `__CFBundleIdentifier` (set by the OS when launching a macOS
+   * app) → `TERM_PROGRAM_BUNDLE_ID` → fallback `com.apple.Terminal`.
+   */
+  function resolveKeepVisibleBundles(): string[] {
+    const envList = process.env.COMPUTER_USE_PREPARE_KEEP_VISIBLE
+    if (envList) {
+      return envList.split(',').map(s => s.trim()).filter(Boolean)
+    }
+    const terminal = process.env.__CFBundleIdentifier
+                  || process.env.TERM_PROGRAM_BUNDLE_ID
+                  || 'com.apple.Terminal'
+    return [terminal]
+  }
+
+  // v5.2: per-dispatch slot capturing the list of bundles `prepare_display`
+  // hid. Set inside `ensureFocusV4`, consumed by the outer dispatch wrapper
+  // to decorate the response JSON. Reset to undefined at dispatch entry.
+  let pendingHiddenBundleIds: string[] | undefined
+
   async function ensureFocusV4(
     target: { bundleId?: string; windowId?: number },
     strategy: FocusStrategy,
-  ): Promise<void> {
-    if (strategy === 'none') return
-    if (!target.bundleId) return
+  ): Promise<{ hiddenBundleIds?: string[] }> {
+    if (strategy === 'none') return {}
+    if (!target.bundleId) return {}
+
+    // v5.2: prepare_display hides everything else before we even try to
+    // activate. This is the hammer for focus-stealing apps (screenshot
+    // watchers, NC banners). After this, activation is basically
+    // deterministic because nothing else visible can steal focus.
+    let hiddenBundleIds: string[] | undefined
+    if (strategy === 'prepare_display') {
+      const keep = resolveKeepVisibleBundles()
+      const result = n.prepareDisplay(target.bundleId, keep)
+      hiddenBundleIds = result.hiddenBundleIds
+      pendingHiddenBundleIds = hiddenBundleIds
+      await sleep(50)  // let the OS process the batched hide calls
+      // Fall through to the normal activate+poll loop — after prepareDisplay,
+      // the target should activate essentially instantly.
+    }
 
     const front = n.getFrontmostApp()
     const frontBundleId = front?.bundleId ?? null
@@ -435,7 +702,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           ))
         }
       }
-      return
+      return { hiddenBundleIds }
     }
 
     // App not frontmost — attempt recovery
@@ -465,6 +732,7 @@ export function createSession(opts: SessionOptions = {}): Session {
         true,
       ))
     }
+    return { hiddenBundleIds }
   }
 
   function focusFailureText(details: FocusFailure): string {
@@ -657,7 +925,35 @@ export function createSession(opts: SessionOptions = {}): Session {
       return typeof v === 'number' ? v : fallback
     }
 
+    // v5.2: Only mutating tools take the session lock and start the pump.
+    // Observation tools stay concurrent and cheap.
+    const mutates = MUTATING_TOOLS.has(tool)
+    let acquired = false
+    if (mutates) {
+      try {
+        lockPump.acquire()
+        acquired = true
+      } catch (err) {
+        if (err instanceof LockError) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({
+              error: 'locked_by_pid',
+              lockingPid: err.lockingPid,
+            }) }],
+            isError: true,
+          }
+        }
+        throw err
+      }
+    }
+
+    // Reset the prepare_display slot at dispatch entry so one tool call's
+    // hidden list doesn't leak into the next.
+    pendingHiddenBundleIds = undefined
+
+    let result: ToolResult
     try {
+      result = await (async (): Promise<ToolResult> => {
       switch (tool) {
 
         // ── Screenshot (observation — never mutates TargetState) ──────────
@@ -714,11 +1010,14 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         // ── Clicks ───────────────────────────────────────────────────────────
-        case 'left_click':   return doClick(tool, coord(), 'left', 1, args)
-        case 'right_click':  return doClick(tool, coord(), 'right', 1, args)
-        case 'middle_click': return doClick(tool, coord(), 'middle', 1, args)
-        case 'double_click': return doClick(tool, coord(), 'left', 2, args)
-        case 'triple_click': return doClick(tool, coord(), 'left', 3, args)
+        // NB: we `return await` instead of `return` so the lock/pump in the
+        // outer try/finally stay held until doClick actually resolves.
+        // `return promise` fires the finally on return, not on resolution.
+        case 'left_click':   return await doClick(tool, coord(), 'left', 1, args)
+        case 'right_click':  return await doClick(tool, coord(), 'right', 1, args)
+        case 'middle_click': return await doClick(tool, coord(), 'middle', 1, args)
+        case 'double_click': return await doClick(tool, coord(), 'left', 2, args)
+        case 'triple_click': return await doClick(tool, coord(), 'left', 3, args)
 
         case 'mouse_move': {
           const target = resolveTarget(args)
@@ -1342,11 +1641,11 @@ export function createSession(opts: SessionOptions = {}): Session {
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${tool}` }], isError: true }
       }
+      })()
     } catch (err: unknown) {
       if (err instanceof FocusError) {
-        return { content: [{ type: 'text', text: focusFailureText(err.details) }], isError: true }
-      }
-      if (err instanceof WindowNotFoundError) {
+        result = { content: [{ type: 'text', text: focusFailureText(err.details) }], isError: true }
+      } else if (err instanceof WindowNotFoundError) {
         // For input tools with invalid target_window_id, return FocusFailure
         const front = n.getFrontmostApp()
         const failure: FocusFailure = {
@@ -1361,11 +1660,22 @@ export function createSession(opts: SessionOptions = {}): Session {
           activationAttempted: false,
           suggestedRecovery: 'open_application',
         }
-        return { content: [{ type: 'text', text: focusFailureText(failure) }], isError: true }
+        result = { content: [{ type: 'text', text: focusFailureText(failure) }], isError: true }
+      } else {
+        const msg = err instanceof Error ? err.message : String(err)
+        result = { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true }
       }
-      const msg = err instanceof Error ? err.message : String(err)
-      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true }
+    } finally {
+      if (acquired) lockPump.release()
     }
+
+    // v5.2: decorate the response with hiddenBundleIds when prepare_display
+    // ran. We attach to both the text payload (parseable by agents) and as
+    // a top-level field (for strictly-typed callers who care).
+    if (pendingHiddenBundleIds != null) {
+      result = decorateWithHiddenBundleIds(result, pendingHiddenBundleIds)
+    }
+    return result
   }
 
   return { dispatch }
@@ -1373,4 +1683,19 @@ export function createSession(opts: SessionOptions = {}): Session {
 
 function ok(text: string): ToolResult {
   return { content: [{ type: 'text', text }] }
+}
+
+/**
+ * Append `hiddenBundleIds` metadata to a dispatch result when the caller
+ * used `focus_strategy: "prepare_display"`. We add a trailing text block so
+ * the original payload is untouched — agents can parse either block.
+ */
+function decorateWithHiddenBundleIds(r: ToolResult, hidden: string[]): ToolResult {
+  return {
+    ...r,
+    content: [
+      ...r.content,
+      { type: 'text', text: JSON.stringify({ hiddenBundleIds: hidden }) },
+    ],
+  }
 }
