@@ -55,10 +55,13 @@ function createMockNative({ prepareResult } = {}) {
 // ── prepare_display routes through native.prepareDisplay ────────────────────
 
 test('Phase 2: focus_strategy=prepare_display calls native.prepareDisplay with terminal in keep list', async () => {
-  // Simulate running inside Terminal.app
+  // Simulate running inside Terminal.app (macOS) or use Windows default
   const originalBundle = process.env.__CFBundleIdentifier
   process.env.__CFBundleIdentifier = 'com.apple.Terminal'
   delete process.env.COMPUTER_USE_PREPARE_KEEP_VISIBLE
+
+  const isWindows = process.platform === 'win32'
+  const expectedKeep = isWindows ? ['explorer.exe'] : ['com.apple.Terminal']
 
   try {
     const mock = createMockNative()
@@ -72,7 +75,7 @@ test('Phase 2: focus_strategy=prepare_display calls native.prepareDisplay with t
     const prep = mock.calls.find(c => c.method === 'prepareDisplay')
     assert.ok(prep, 'expected prepareDisplay to be called')
     assert.equal(prep.target, 'com.apple.TextEdit')
-    assert.deepEqual(prep.keepVisible, ['com.apple.Terminal'],
+    assert.deepEqual(prep.keepVisible, expectedKeep,
       'keep list should include the terminal host by default')
   } finally {
     if (originalBundle === undefined) delete process.env.__CFBundleIdentifier

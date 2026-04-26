@@ -1,7 +1,7 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "5.2.0",
-  "description": "MCP server + client for macOS computer control — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
+  "version": "6.0.0",
+  "description": "MCP server + client for cross-platform desktop control (macOS + Windows) — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,8 @@
     "node": ">=18"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "win32"
   ],
   "bin": {
     "computer-use-mcp": "dist/server.js"
@@ -38,11 +39,15 @@
     "dist/native.js",
     "dist/native.d.ts",
     "computer-use-napi.node",
+    "computer-use-napi.darwin-arm64.node",
+    "computer-use-napi.darwin-x64.node",
+    "computer-use-napi.win32-x64.node",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node",
+    "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node",
+    "build:native:win": "cd native && cargo build --release && copy target\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-x64.node",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
     "test": "npm run build:ts && node --test test/*.test.mjs",

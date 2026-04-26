@@ -216,62 +216,118 @@ interface ToolGuidePattern extends ToolGuideEntry {
 }
 
 const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
-  {
-    pattern: /\b(send|compose|reply|new|write).*(email|mail|message)\b/i,
-    bundleIdHints: ['com.apple.mail'],
-    approach: 'scripting',
-    toolSequence: ['get_app_capabilities', 'run_script'],
-    explanation:
-      'Mail is scriptable. Use AppleScript `make new outgoing message` or `send` — one call replaces the whole compose flow.',
-  },
-  {
-    pattern: /\b(open|visit|navigate).*(url|website|https?:|web\s*page|tab)\b/i,
-    bundleIdHints: ['com.apple.Safari', 'com.google.Chrome'],
-    approach: 'scripting',
-    toolSequence: ['run_script'],
-    explanation:
-      'Safari and Chrome are scriptable. `tell application "Safari" to open location "<url>"` beats screenshot-and-click.',
-  },
-  {
-    pattern: /\b(spreadsheet|cell|row|column|numbers|sheet)\b/i,
-    bundleIdHints: ['com.apple.iWork.Numbers', 'com.microsoft.Excel'],
-    approach: 'scripting',
-    toolSequence: ['get_app_dictionary', 'run_script'],
-    explanation:
-      'Numbers is deeply scriptable — read/write cells via AppleScript. Fall back to fill_form if scripting is unavailable.',
-  },
-  {
-    pattern: /\b(file|folder|directory|finder|rename|move|copy|desktop)\b/i,
-    bundleIdHints: ['com.apple.finder'],
-    approach: 'scripting',
-    toolSequence: ['run_script'],
-    explanation:
-      'Finder is scriptable (and shell is often even better). Prefer `osascript` or direct filesystem calls over GUI clicks.',
-  },
-  {
-    pattern: /\b(calendar|event|reminder|note|todo|task)\b/i,
-    bundleIdHints: ['com.apple.iCal', 'com.apple.reminders', 'com.apple.Notes'],
-    approach: 'scripting',
-    toolSequence: ['get_app_capabilities', 'run_script'],
-    explanation:
-      'Calendar, Reminders, and Notes are all scriptable. One `make new <event/reminder/note>` call does the work.',
-  },
-  {
-    pattern: /\b(play|pause|track|playlist|song|music)\b/i,
-    bundleIdHints: ['com.apple.Music'],
-    approach: 'scripting',
-    toolSequence: ['run_script'],
-    explanation:
-      'Music.app is scriptable: `tell application "Music" to play` / `pause` / `next track`.',
-  },
-  {
-    pattern: /\b(imessage|send\s+message|chat|sms)\b/i,
-    bundleIdHints: ['com.apple.iChat'],
-    approach: 'scripting',
-    toolSequence: ['run_script'],
-    explanation:
-      'Messages is scriptable. Use AppleScript to send messages to a buddy without UI.',
-  },
+  // ── Windows-specific entries (checked first on Windows) ─────────────────
+  ...(process.platform === 'win32' ? [
+    {
+      pattern: /\b(file|folder|directory|rename|move|copy)\b.*\b(file|folder|directory|desktop)\b|\b(desktop)\b.*\b(file|folder|save|copy)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['filesystem', 'run_script'],
+      explanation:
+        'Use the filesystem tool for file operations, or PowerShell via run_script for complex tasks. Faster than GUI clicks.',
+    },
+    {
+      pattern: /\b(registry|regedit|hkey|hkcu|hklm)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['registry'],
+      explanation:
+        'Use the registry tool for Windows Registry operations. Accepts PowerShell-format paths.',
+    },
+    {
+      pattern: /\b(send|compose|reply|new|write).*(email|mail|message)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Use PowerShell via run_script to automate email. For Outlook: `$ol = New-Object -ComObject Outlook.Application; $mail = $ol.CreateItem(0)`.',
+    },
+    {
+      pattern: /\b(open|visit|navigate).*(url|website|https?:|web\s*page|tab)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Use PowerShell: `Start-Process "https://example.com"` to open URLs in the default browser.',
+    },
+    {
+      pattern: /\b(powershell|cmd|terminal|command|shell|script)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Use run_script with language "powershell" for system automation, CLI tools, and scripting.',
+    },
+    {
+      pattern: /\b(process|task|kill|terminate|stop)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['process_kill'],
+      explanation:
+        'Use process_kill to list or terminate processes by name or PID.',
+    },
+    {
+      pattern: /\b(notify|notification|alert|toast)\b/i,
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['notification'],
+      explanation:
+        'Use the notification tool to send Windows toast notifications.',
+    },
+  ] as ToolGuidePattern[] : []),
+  // ── macOS-specific entries ──────────────────────────────────────────────
+  ...(process.platform === 'darwin' ? [
+    {
+      pattern: /\b(send|compose|reply|new|write).*(email|mail|message)\b/i,
+      bundleIdHints: ['com.apple.mail'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['get_app_capabilities', 'run_script'],
+      explanation:
+        'Mail is scriptable. Use AppleScript `make new outgoing message` or `send` — one call replaces the whole compose flow.',
+    },
+    {
+      pattern: /\b(open|visit|navigate).*(url|website|https?:|web\s*page|tab)\b/i,
+      bundleIdHints: ['com.apple.Safari', 'com.google.Chrome'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Safari and Chrome are scriptable. `tell application "Safari" to open location "<url>"` beats screenshot-and-click.',
+    },
+    {
+      pattern: /\b(spreadsheet|cell|row|column|numbers|sheet)\b/i,
+      bundleIdHints: ['com.apple.iWork.Numbers', 'com.microsoft.Excel'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['get_app_dictionary', 'run_script'],
+      explanation:
+        'Numbers is deeply scriptable — read/write cells via AppleScript. Fall back to fill_form if scripting is unavailable.',
+    },
+    {
+      pattern: /\b(file|folder|directory|finder|rename|move|copy|desktop)\b/i,
+      bundleIdHints: ['com.apple.finder'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Finder is scriptable (and shell is often even better). Prefer `osascript` or direct filesystem calls over GUI clicks.',
+    },
+    {
+      pattern: /\b(calendar|event|reminder|note|todo|task)\b/i,
+      bundleIdHints: ['com.apple.iCal', 'com.apple.reminders', 'com.apple.Notes'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['get_app_capabilities', 'run_script'],
+      explanation:
+        'Calendar, Reminders, and Notes are all scriptable. One `make new <event/reminder/note>` call does the work.',
+    },
+    {
+      pattern: /\b(play|pause|track|playlist|song|music)\b/i,
+      bundleIdHints: ['com.apple.Music'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Music.app is scriptable: `tell application "Music" to play` / `pause` / `next track`.',
+    },
+    {
+      pattern: /\b(imessage|send\s+message|chat|sms)\b/i,
+      bundleIdHints: ['com.apple.iChat'],
+      approach: 'scripting' as AutomationApproach,
+      toolSequence: ['run_script'],
+      explanation:
+        'Messages is scriptable. Use AppleScript to send messages to a buddy without UI.',
+    },
+  ] as ToolGuidePattern[] : []),
+  // ── Cross-platform entries ─────────────────────────────────────────────
   {
     pattern: /\b(fill|enter|type)\b.*\b(form|field|input)\b/i,
     approach: 'accessibility',
@@ -294,11 +350,25 @@ const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
       'press_button finds buttons by label — avoids pixel-coordinate drift across window moves and resolution changes.',
   },
   {
-    pattern: /\b(screenshot|see|show|look)\b/i,
-    approach: 'accessibility',
-    toolSequence: ['get_ui_tree'],
+    pattern: /\b(read|inspect|verify|check|examine|zoom|detail|small\s*text|tiny|pixel|magnif|enlarge|close.?up)\b/i,
+    approach: 'coordinate' as AutomationApproach,
+    toolSequence: ['zoom'],
     explanation:
-      'Before capturing a screenshot, try get_ui_tree — structured UI is smaller and cheaper to parse than an image.',
+      'Use the zoom tool to inspect a specific screen region at full native resolution. Pass region: [x1, y1, x2, y2] to crop without downscaling. Best for reading small text, verifying values, or checking pixel-level details. Default output is lossless PNG. Tip: take a screenshot first to identify the region coordinates, then zoom into the area of interest.',
+  },
+  {
+    pattern: /\b(text|value|number|label|title|heading|content|status|what\s*does\s*it\s*say|read\s*the|what\s*is\s*written|what\s*does.*say)\b/i,
+    approach: 'accessibility' as AutomationApproach,
+    toolSequence: ['get_ui_tree', 'zoom'],
+    explanation:
+      'To read text on screen: first try get_ui_tree which returns element labels and values as structured data (fastest, no image needed). If the text is in an image or non-accessible element, use zoom with a tight region around the text for a full-resolution lossless PNG crop.',
+  },
+  {
+    pattern: /\b(screenshot|see|show|look|observe|capture|screen)\b/i,
+    approach: 'accessibility' as AutomationApproach,
+    toolSequence: ['screenshot', 'zoom'],
+    explanation:
+      'Use screenshot for a full-screen overview (resized for efficiency). If you need to read specific text or inspect details, follow up with zoom on the region of interest — it returns full native resolution without downscaling. For structured UI data without an image, use get_ui_tree instead.',
   },
   {
     pattern: /.*/,
@@ -355,8 +425,15 @@ class WindowNotFoundError extends Error {
 // mutating calls (e.g. fill_form → set_value) don't tear down and rebuild.
 
 import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 
-const DEFAULT_LOCK_PATH = '/tmp/.computer-use-mcp.lock'
+const IS_WINDOWS = process.platform === 'win32'
+const IS_MACOS = process.platform === 'darwin'
+
+const DEFAULT_LOCK_PATH = IS_WINDOWS
+  ? path.join(os.tmpdir(), '.computer-use-mcp.lock')
+  : '/tmp/.computer-use-mcp.lock'
 
 export class LockError extends Error {
   readonly lockingPid: number | null
@@ -459,6 +536,7 @@ function makeLockPumpController(
   let pumpInterval: NodeJS.Timeout | null = null
 
   function startPump() {
+    if (IS_WINDOWS) return  // No CFRunLoop on Windows
     if (pumpInterval != null) return
     pumpInterval = setInterval(() => {
       try { n.drainRunloop() } catch { /* never let the pump throw */ }
@@ -652,6 +730,10 @@ export function createSession(opts: SessionOptions = {}): Session {
     if (envList) {
       return envList.split(',').map(s => s.trim()).filter(Boolean)
     }
+    if (IS_WINDOWS) {
+      // On Windows, keep the terminal/IDE process visible
+      return ['explorer.exe']
+    }
     const terminal = process.env.__CFBundleIdentifier
                   || process.env.TERM_PROGRAM_BUNDLE_ID
                   || 'com.apple.Terminal'
@@ -825,6 +907,7 @@ export function createSession(opts: SessionOptions = {}): Session {
   // ── v5: Scripting dictionary lookup + cache ─────────────────────────────
 
   async function findAppPath(bundleId: string): Promise<string | undefined> {
+    if (IS_WINDOWS) return undefined  // mdfind/sdef are macOS-only
     // Try mdfind first (fast, indexed). Fall back to NSWorkspace is unnecessary
     // — we can simply let `sdef` fail if the app is missing.
     const r = await spawnBounded(
@@ -874,15 +957,61 @@ export function createSession(opts: SessionOptions = {}): Session {
     return { dict: summary }
   }
 
+  // Cache which PowerShell executable is available
+  let _psExe: string | undefined
+  function getPowerShellExe(): string {
+    if (_psExe) return _psExe
+    try {
+      execFileSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], { timeout: 3000 })
+      _psExe = 'pwsh'
+    } catch {
+      _psExe = 'powershell'
+    }
+    return _psExe
+  }
+
   async function runScriptHelper(
-    language: 'applescript' | 'javascript',
+    language: string,
     script: string,
     timeoutMs: number,
   ): Promise<SpawnResult> {
+    if (IS_WINDOWS) {
+      if (language === 'applescript' || language === 'javascript') {
+        return {
+          stdout: '',
+          stderr: `${language} is not supported on Windows. Use language: "powershell" instead.`,
+          code: 1,
+          timedOut: false,
+        }
+      }
+      const exe = getPowerShellExe()
+      // Use -Command for simple scripts (faster, no encoding overhead)
+      // Use -EncodedCommand only when script contains quotes or special chars
+      const needsEncoding = /['"$`\r\n]/.test(script)
+      if (needsEncoding) {
+        const buf = Buffer.from(script, 'utf16le')
+        const encoded = buf.toString('base64')
+        return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], timeoutMs)
+      }
+      return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+    }
+    // macOS: osascript
     const args = language === 'javascript'
       ? ['-l', 'JavaScript', '-e', script]
       : ['-e', script]
     return spawnBounded('osascript', args, timeoutMs)
+  }
+
+  // ── Coordinate validation ─────────────────────────────────────────────
+
+  function validateCoordinates(x: number, y: number): void {
+    const display = n.getDisplaySize()
+    if (x < 0 || y < 0 || x >= display.width || y >= display.height) {
+      throw new Error(
+        `Coordinates (${x}, ${y}) are outside display bounds (${display.width}x${display.height}). ` +
+        `Valid range: x=[0, ${display.width - 1}], y=[0, ${display.height - 1}].`
+      )
+    }
   }
 
   // ── Click helper ────────────────────────────────────────────────────────
@@ -899,6 +1028,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     await ensureFocusV4(target, strategy)
 
     const [x, y] = coord
+    validateCoordinates(x, y)
     n.mouseMove(x, y)
     await sleep(50)  // HID round-trip settle before click
     n.mouseClick(x, y, button, count)
@@ -1009,6 +1139,43 @@ export function createSession(opts: SessionOptions = {}): Session {
           return _lastResult
         }
 
+        // ── Zoom (crop a region at full resolution) ──────────────────────────
+        case 'zoom': {
+          const region = args.region
+          if (!Array.isArray(region) || region.length !== 4) {
+            throw new Error('zoom requires region: [x1, y1, x2, y2]')
+          }
+          const [x1, y1, x2, y2] = region as [number, number, number, number]
+          if (x1 >= x2 || y1 >= y2) {
+            throw new Error(`Invalid region: x1(${x1}) must be < x2(${x2}), y1(${y1}) must be < y2(${y2})`)
+          }
+
+          // Capture full-res as PNG (lossless, fast)
+          const fullRes = n.takeScreenshot(undefined, undefined, 0, undefined, undefined)
+          if (!fullRes.base64) throw new Error('Screenshot capture failed')
+
+          const q = typeof args.quality === 'number' ? args.quality : 0
+
+          // Crop the region at full resolution using native Rust
+          if (n.cropImage) {
+            const cropped = n.cropImage(fullRes.base64, x1, y1, x2, y2, q)
+            return {
+              content: [
+                { type: 'image' as const, data: cropped.base64, mimeType: cropped.mimeType },
+                { type: 'text' as const, text: `${cropped.width}x${cropped.height} (zoomed from ${fullRes.width}x${fullRes.height})` },
+              ],
+            }
+          }
+
+          // Fallback: return full image with region metadata
+          return {
+            content: [
+              { type: 'image' as const, data: fullRes.base64, mimeType: fullRes.mimeType },
+              { type: 'text' as const, text: `${fullRes.width}x${fullRes.height} — zoom region: [${x1},${y1},${x2},${y2}]` },
+            ],
+          }
+        }
+
         // ── Clicks ───────────────────────────────────────────────────────────
         // NB: we `return await` instead of `return` so the lock/pump in the
         // outer try/finally stay held until doClick actually resolves.
@@ -1024,6 +1191,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           const strategy = getStrategy(tool, args)
           await ensureFocusV4(target, strategy)
           const [x, y] = coord()
+          validateCoordinates(x, y)
           n.mouseMove(x, y)
           if (target.bundleId) updateTargetState(target, 'pointer')
           return ok(`Moved to (${x}, ${y})`)
@@ -1103,28 +1271,68 @@ export function createSession(opts: SessionOptions = {}): Session {
           const strategy = getStrategy(tool, args)
           await ensureFocusV4(target, strategy)
           const text = str('text')
+
+          // caret_position: move caret before typing
+          const caretPos = typeof args.caret_position === 'string' ? args.caret_position : 'idle'
+          if (caretPos === 'start') {
+            n.keyPress('home')
+            await sleep(30)
+          } else if (caretPos === 'end') {
+            n.keyPress('end')
+            await sleep(30)
+          }
+
+          // clear: select all + delete before typing
+          if (args.clear === true || args.clear === 'true') {
+            n.keyPress(IS_WINDOWS ? 'ctrl+a' : 'command+a')
+            await sleep(30)
+            n.keyPress('delete')
+            await sleep(30)
+          }
+
           if (text.length > 100) {
             // Clipboard-based typing: faster and more reliable for long text
-            let saved: string | undefined
-            try { saved = execFileSync('pbpaste', []).toString() } catch { /* ignore */ }
-            try {
-              execFileSync('pbcopy', [], { input: text })
-              const verify = execFileSync('pbpaste', []).toString()
-              if (verify === text) {
-                n.keyPress('command+v')
-                await sleep(100)  // paste-effect vs clipboard-restore race
-              } else {
-                n.typeText(text)  // fallback to injection
+            if (IS_WINDOWS && n.readClipboard && n.writeClipboard) {
+              let saved: string | undefined
+              try { saved = n.readClipboard() } catch { /* ignore */ }
+              try {
+                n.writeClipboard(text)
+                n.keyPress('ctrl+v')
+                await sleep(100)
+              } finally {
+                if (typeof saved === 'string') {
+                  try { n.writeClipboard(saved) } catch { /* ignore */ }
+                }
               }
-            } finally {
-              if (typeof saved === 'string') {
-                try { execFileSync('pbcopy', [], { input: saved }) } catch { /* ignore */ }
+            } else {
+              let saved: string | undefined
+              try { saved = execFileSync('pbpaste', []).toString() } catch { /* ignore */ }
+              try {
+                execFileSync('pbcopy', [], { input: text })
+                const verify = execFileSync('pbpaste', []).toString()
+                if (verify === text) {
+                  n.keyPress('command+v')
+                  await sleep(100)
+                } else {
+                  n.typeText(text)
+                }
+              } finally {
+                if (typeof saved === 'string') {
+                  try { execFileSync('pbcopy', [], { input: saved }) } catch { /* ignore */ }
+                }
               }
             }
           } else {
             n.typeText(text)
           }
           if (target.bundleId) updateTargetState(target, 'keyboard')
+
+          // press_enter: submit after typing
+          if (args.press_enter === true || args.press_enter === 'true') {
+            n.keyPress('return')
+            await sleep(30)
+          }
+
           return ok('Typed')
         }
 
@@ -1149,10 +1357,17 @@ export function createSession(opts: SessionOptions = {}): Session {
 
         // ── Clipboard ────────────────────────────────────────────────────────
         case 'read_clipboard': {
+          if (IS_WINDOWS && n.readClipboard) {
+            return ok(n.readClipboard())
+          }
           const text = execFileSync('pbpaste', []).toString()
           return ok(text)
         }
         case 'write_clipboard': {
+          if (IS_WINDOWS && n.writeClipboard) {
+            n.writeClipboard(str('text'))
+            return ok('Written')
+          }
           execFileSync('pbcopy', [], { input: str('text') })
           return ok('Written')
         }
@@ -1293,6 +1508,128 @@ export function createSession(opts: SessionOptions = {}): Session {
         case 'wait': {
           await sleep(num('duration', 1) * 1000)
           return ok(`Waited ${args.duration}s`)
+        }
+
+        case 'resize_window': {
+          if (IS_WINDOWS) {
+            const wid = typeof args.window_id === 'number' ? args.window_id : undefined
+            const wname = typeof args.window_name === 'string' ? args.window_name : undefined
+            const wsize = Array.isArray(args.window_size) ? args.window_size as [number, number] : undefined
+            const wloc = Array.isArray(args.window_loc) ? args.window_loc as [number, number] : undefined
+
+            // Find target HWND
+            let targetCmd = ''
+            if (wid) {
+              targetCmd = `$hwnd = [IntPtr]${wid}`
+            } else if (wname) {
+              targetCmd = `$hwnd = (Get-Process -Name '${wname.replace(/\.exe$/i, '')}' -ErrorAction SilentlyContinue | Select-Object -First 1).MainWindowHandle; if (-not $hwnd -or $hwnd -eq 0) { $hwnd = (Get-Process | Where-Object { $_.MainWindowTitle -like '*${wname}*' } | Select-Object -First 1).MainWindowHandle }`
+            } else {
+              targetCmd = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();}'; $hwnd = [W]::GetForegroundWindow()`
+            }
+
+            let moveCmd = ''
+            if (wsize && wloc) {
+              moveCmd = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class MW{[DllImport("user32.dll")]public static extern bool MoveWindow(IntPtr h,int x,int y,int w,int ht,bool r);}'; [MW]::MoveWindow($hwnd, ${wloc[0]}, ${wloc[1]}, ${wsize[0]}, ${wsize[1]}, $true)`
+            } else if (wsize) {
+              moveCmd = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class GR{[DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out RECT r);[StructLayout(LayoutKind.Sequential)]public struct RECT{public int l,t,r,b;} [DllImport("user32.dll")]public static extern bool MoveWindow(IntPtr h,int x,int y,int w,int ht,bool rp);}'; $r = New-Object GR+RECT; [GR]::GetWindowRect($hwnd, [ref]$r); [GR]::MoveWindow($hwnd, $r.l, $r.t, ${wsize[0]}, ${wsize[1]}, $true)`
+            } else if (wloc) {
+              moveCmd = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class GR2{[DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out RECT r);[StructLayout(LayoutKind.Sequential)]public struct RECT{public int l,t,r,b;} [DllImport("user32.dll")]public static extern bool MoveWindow(IntPtr h,int x,int y,int w,int ht,bool rp);}'; $r = New-Object GR2+RECT; [GR2]::GetWindowRect($hwnd, [ref]$r); [GR2]::MoveWindow($hwnd, ${wloc[0]}, ${wloc[1]}, $r.r-$r.l, $r.b-$r.t, $true)`
+            } else {
+              return { content: [{ type: 'text', text: 'window_size or window_loc required' }], isError: true }
+            }
+
+            const ps = `${targetCmd}; if ($hwnd -and $hwnd -ne 0) { ${moveCmd}; 'Resized' } else { 'Window not found' }`
+            const r = await runScriptHelper('powershell', ps, 10000)
+            return r.code === 0 ? ok(r.stdout.trim()) : { content: [{ type: 'text', text: r.stderr || r.stdout }], isError: true }
+          }
+          return { content: [{ type: 'text', text: 'resize_window: use AppleScript on macOS' }], isError: true }
+        }
+
+        case 'snapshot': {
+          // Combined tool: screenshot + UI tree + windows + desktops
+          const parts: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = []
+
+          // Desktop info
+          const front = n.getFrontmostApp()
+          const wins = n.listWindows()
+          const display = n.getDisplaySize()
+          const runningApps = n.listRunningApps()
+
+          let desktopInfo = `Display: ${display.width}x${display.height} (scale: ${display.scaleFactor})\n`
+          desktopInfo += `Frontmost: ${front?.bundleId ?? 'unknown'} — ${front?.displayName ?? ''}\n`
+          desktopInfo += `Windows: ${Array.isArray(wins) ? wins.length : 0}\n`
+          desktopInfo += `Running apps: ${Array.isArray(runningApps) ? runningApps.length : 0}`
+
+          // Windows list
+          if (Array.isArray(wins)) {
+            const winList = (wins as Array<{windowId: number; bundleId: string | null; title: string | null; isFocused: boolean; bounds: {x: number; y: number; width: number; height: number}}>).map(w =>
+              `  ${w.windowId} | ${w.bundleId} | ${w.title ?? '(no title)'}`
+            ).join('\n')
+            desktopInfo += `\n\nWindows:\n${winList}`
+          }
+
+          // UI tree for the frontmost window
+          let uiTreeText = ''
+          if (args.use_vision !== false) {
+            const frontWin = Array.isArray(wins) ? (wins as Array<{windowId: number; isFocused: boolean; bundleId: string | null}>).find(w => w.isFocused) : null
+            if (frontWin) {
+              try {
+                const tree = n.getUiTree(frontWin.windowId, 5)
+                uiTreeText = `\n\nUI Tree (${frontWin.bundleId}):\n${JSON.stringify(tree).slice(0, 4000)}`
+              } catch { /* UI tree may fail */ }
+            }
+          }
+
+          parts.push({ type: 'text', text: desktopInfo + uiTreeText })
+
+          // Screenshot if use_vision
+          if (args.use_vision) {
+            const provider = defaultProvider
+            const defaultWidth = PROVIDER_WIDTH[provider] ?? 1024
+            const w = typeof args.width === 'number' ? args.width : defaultWidth
+            const r = n.takeScreenshot(w, undefined, 80, undefined, undefined)
+            if (r.base64) {
+              const needsAnnotation = args.use_annotation && Array.isArray(wins)
+              const gridLines = Array.isArray(args.grid_lines) ? args.grid_lines as [number, number] : undefined
+
+              if ((needsAnnotation || gridLines) && n.annotateImage) {
+                // Build annotation data for Rust drawing
+                const annData = needsAnnotation
+                  ? (wins as Array<{bounds: {x: number; y: number; width: number; height: number}}>)
+                      .filter(win => win.bounds)
+                      .map(win => ({
+                        x: Math.round(win.bounds.x * r.width / display.width),
+                        y: Math.round(win.bounds.y * r.height / display.height),
+                        width: Math.round(win.bounds.width * r.width / display.width),
+                        height: Math.round(win.bounds.height * r.height / display.height),
+                      }))
+                  : null
+                const annotated = n.annotateImage(
+                  r.base64,
+                  annData ? JSON.stringify(annData) : null,
+                  gridLines?.[0] ?? null,
+                  gridLines?.[1] ?? null,
+                  80,
+                )
+                parts.push({ type: 'image', data: annotated.base64, mimeType: annotated.mimeType })
+                parts.push({ type: 'text', text: `${annotated.width}x${annotated.height}` })
+              } else {
+                parts.push({ type: 'image', data: r.base64, mimeType: r.mimeType })
+                parts.push({ type: 'text', text: `${r.width}x${r.height}` })
+              }
+
+              // Always include text annotations for non-vision models
+              if (needsAnnotation) {
+                const annText = (wins as Array<{bundleId: string | null; bounds: {x: number; y: number; width: number; height: number}}>)
+                  .filter(win => win.bounds)
+                  .map(win => `[${win.bundleId}] (${win.bounds.x},${win.bounds.y}) ${win.bounds.width}x${win.bounds.height}`)
+                  .join('\n')
+                parts.push({ type: 'text', text: `\nAnnotations:\n${annText}` })
+              }
+            }
+          }
+
+          return { content: parts }
         }
 
         // ── v5: Accessibility observation (never mutate TargetState) ─────
@@ -1441,6 +1778,9 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         case 'list_menu_bar': {
+          if (IS_WINDOWS) {
+            return { content: [{ type: 'text', text: 'platform_unsupported: list_menu_bar is macOS-only. Use get_ui_tree to discover menu structure on Windows.' }], isError: true }
+          }
           const bundleId = str('bundle_id')
           const bar = n.getMenuBar(bundleId)
           return ok(JSON.stringify(bar))
@@ -1488,7 +1828,9 @@ export function createSession(opts: SessionOptions = {}): Session {
 
         // ── v5: Scripting bridge (never mutate TargetState) ───────────────
         case 'run_script': {
-          const lang = args.language === 'javascript' ? 'javascript' : 'applescript'
+          const lang = IS_WINDOWS
+            ? (args.language === 'powershell' ? 'powershell' : String(args.language ?? 'powershell'))
+            : (args.language === 'javascript' ? 'javascript' : 'applescript')
           const script = str('script')
           const requested = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000
           const timeoutMs = Math.max(100, Math.min(requested, 120_000))
@@ -1503,6 +1845,9 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         case 'get_app_dictionary': {
+          if (IS_WINDOWS) {
+            return { content: [{ type: 'text', text: 'platform_unsupported: get_app_dictionary is macOS-only. Use get_ui_tree to discover UI structure on Windows.' }], isError: true }
+          }
           const bundleId = str('bundle_id')
           const suite = typeof args.suite === 'string' ? args.suite : undefined
           const r = await getAppDictionary(bundleId, suite)
@@ -1522,6 +1867,19 @@ export function createSession(opts: SessionOptions = {}): Session {
           const bundleId = str('bundle_id')
           const running = n.listRunningApps().find(a => a.bundleId === bundleId)
           const wins = n.listWindows(bundleId)
+
+          if (IS_WINDOWS) {
+            return ok(JSON.stringify({
+              bundle_id: bundleId,
+              scriptable: false, // No AppleScript on Windows
+              suites: [],
+              powershell: true, // PowerShell available via run_script
+              accessible: wins.length > 0,
+              topLevelCount: wins.length,
+              running: Boolean(running),
+              hidden: running?.isHidden ?? false,
+            }))
+          }
 
           const dictResult = await getAppDictionary(bundleId)
           const scriptable = !('error' in dictResult)
@@ -1548,6 +1906,29 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         case 'create_agent_space': {
+          if (IS_WINDOWS) {
+            // Count desktops before
+            const beforeSpaces = n.listSpaces()
+            const beforeCount = beforeSpaces.displays?.[0]?.spaces?.length ?? 0
+
+            // Create via keyboard shortcut — Ctrl+Win+D
+            n.keyPress('ctrl+win+d')
+            await sleep(500)
+
+            // Count after
+            const afterSpaces = n.listSpaces()
+            const afterCount = afterSpaces.displays?.[0]?.spaces?.length ?? 0
+            const newDesktop = afterSpaces.displays?.[0]?.spaces?.[afterCount - 1]
+
+            return ok(JSON.stringify({
+              created: afterCount > beforeCount,
+              space_id: newDesktop?.uuid ?? null,
+              name: `Desktop ${afterCount}`,
+              total_desktops: afterCount,
+              note: 'Created via Ctrl+Win+D keyboard shortcut. You are now on the new desktop.',
+            }))
+          }
+
           if (cachedAgentSpaceId !== undefined) {
             return ok(JSON.stringify({
               space_id: cachedAgentSpaceId,
@@ -1625,6 +2006,25 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         case 'destroy_space': {
+          if (IS_WINDOWS) {
+            // Close current desktop via Ctrl+Win+F4
+            // This closes the desktop you're currently on and moves windows to the adjacent one
+            const beforeSpaces = n.listSpaces()
+            const beforeCount = beforeSpaces.displays?.[0]?.spaces?.length ?? 0
+
+            n.keyPress('ctrl+win+f4')
+            await sleep(500)
+
+            const afterSpaces = n.listSpaces()
+            const afterCount = afterSpaces.displays?.[0]?.spaces?.length ?? 0
+
+            return ok(JSON.stringify({
+              destroyed: afterCount < beforeCount,
+              remaining_desktops: afterCount,
+              note: 'Closed current desktop via Ctrl+Win+F4. Windows moved to adjacent desktop.',
+            }))
+          }
+
           const spaceId = num('space_id', -1)
           if (spaceId < 0) throw new Error('Invalid space_id: expected number')
           const r = n.destroySpace(spaceId)
@@ -1636,6 +2036,294 @@ export function createSession(opts: SessionOptions = {}): Session {
           }
           if (cachedAgentSpaceId === spaceId) cachedAgentSpaceId = undefined
           return ok(JSON.stringify({ space_id: spaceId, destroyed: true }))
+        }
+
+        // ── New Windows-parity tools ──────────────────────────────────────
+
+        case 'filesystem': {
+          const mode = str('mode')
+          let filePath = str('path')
+          // Resolve relative paths from Desktop — use already-imported modules
+          if (!path.isAbsolute(filePath)) {
+            filePath = path.join(os.homedir(), 'Desktop', filePath)
+          }
+          let dest = typeof args.destination === 'string' ? args.destination : undefined
+          if (dest && !path.isAbsolute(dest)) {
+            dest = path.join(os.homedir(), 'Desktop', dest)
+          }
+          const encoding = (typeof args.encoding === 'string' ? args.encoding : 'utf-8') as BufferEncoding
+
+          switch (mode) {
+            case 'read': {
+              if (!fs.existsSync(filePath)) return { content: [{ type: 'text', text: `File not found: ${filePath}` }], isError: true }
+              const content = fs.readFileSync(filePath, encoding)
+              const lines = content.split('\n')
+              const offset = typeof args.offset === 'number' ? args.offset : 0
+              const limit = typeof args.limit === 'number' ? args.limit : lines.length
+              return ok(lines.slice(offset, offset + limit).join('\n'))
+            }
+            case 'write': {
+              const content = typeof args.content === 'string' ? args.content : ''
+              const dir = path.dirname(filePath)
+              if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+              if (args.append) {
+                fs.appendFileSync(filePath, content, encoding)
+              } else {
+                fs.writeFileSync(filePath, content, encoding)
+              }
+              return ok(`Written to ${filePath}`)
+            }
+            case 'copy': {
+              if (!dest) return { content: [{ type: 'text', text: 'destination required for copy' }], isError: true }
+              fs.cpSync(filePath, dest, { recursive: true, force: Boolean(args.overwrite) })
+              return ok(`Copied ${filePath} → ${dest}`)
+            }
+            case 'move': {
+              if (!dest) return { content: [{ type: 'text', text: 'destination required for move' }], isError: true }
+              fs.renameSync(filePath, dest)
+              return ok(`Moved ${filePath} → ${dest}`)
+            }
+            case 'delete': {
+              if (!fs.existsSync(filePath)) return { content: [{ type: 'text', text: `Not found: ${filePath}` }], isError: true }
+              const stat = fs.statSync(filePath)
+              if (stat.isDirectory()) {
+                fs.rmSync(filePath, { recursive: Boolean(args.recursive), force: true })
+              } else {
+                fs.unlinkSync(filePath)
+              }
+              return ok(`Deleted ${filePath}`)
+            }
+            case 'list': {
+              if (!fs.existsSync(filePath)) return { content: [{ type: 'text', text: `Directory not found: ${filePath}` }], isError: true }
+              const entries = fs.readdirSync(filePath, { withFileTypes: true })
+              const filtered = entries.filter(e => args.show_hidden || !e.name.startsWith('.'))
+              const result = filtered.map(e => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`).join('\n')
+              return ok(result || '(empty)')
+            }
+            case 'search': {
+              const pattern = typeof args.pattern === 'string' ? args.pattern : '*'
+              // Simple glob: just list recursively and filter
+              const results: string[] = []
+              const walk = (dir: string) => {
+                try {
+                  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                    const full = path.join(dir, e.name)
+                    if (e.name.includes(pattern.replace(/\*/g, '')) || pattern === '*') results.push(full)
+                    if (e.isDirectory() && args.recursive) walk(full)
+                  }
+                } catch { /* permission denied etc */ }
+              }
+              walk(filePath)
+              return ok(results.slice(0, 100).join('\n') || 'No matches')
+            }
+            case 'info': {
+              if (!fs.existsSync(filePath)) return { content: [{ type: 'text', text: `Not found: ${filePath}` }], isError: true }
+              const stat = fs.statSync(filePath)
+              return ok(JSON.stringify({
+                path: filePath, type: stat.isDirectory() ? 'directory' : 'file',
+                size: stat.size, created: stat.birthtime.toISOString(),
+                modified: stat.mtime.toISOString(),
+              }))
+            }
+            default: return { content: [{ type: 'text', text: `Unknown filesystem mode: ${mode}` }], isError: true }
+          }
+        }
+
+        case 'process_kill': {
+          const mode = str('mode')
+          if (mode === 'list') {
+            if (IS_WINDOWS) {
+              const r = await spawnBounded('powershell', ['-NoProfile', '-Command',
+                'Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 20 Id,ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'], 10000)
+              return r.code === 0 ? ok(r.stdout) : { content: [{ type: 'text', text: r.stderr }], isError: true }
+            } else {
+              const r = await spawnBounded('ps', ['aux', '--sort=-rss'], 5000)
+              const lines = r.stdout.split('\n').slice(0, 21)
+              return ok(lines.join('\n'))
+            }
+          }
+          if (mode === 'kill') {
+            const name = typeof args.name === 'string' ? args.name : undefined
+            const pid = typeof args.pid === 'number' ? args.pid : undefined
+            if (!name && !pid) return { content: [{ type: 'text', text: 'name or pid required' }], isError: true }
+            if (IS_WINDOWS) {
+              const target = pid ? `/PID ${pid}` : `/IM ${name}`
+              const flag = args.force ? '/F' : ''
+              const r = await spawnBounded('taskkill', [target, flag].filter(Boolean), 10000)
+              return r.code === 0 ? ok(r.stdout.trim() || 'Process terminated') : { content: [{ type: 'text', text: r.stderr || r.stdout }], isError: true }
+            } else {
+              const signal = args.force ? 'SIGKILL' : 'SIGTERM'
+              if (pid) { process.kill(pid, signal); return ok(`Sent ${signal} to PID ${pid}`) }
+              const r = await spawnBounded('pkill', [args.force ? '-9' : '-15', name!], 5000)
+              return r.code === 0 ? ok(`Killed ${name}`) : { content: [{ type: 'text', text: r.stderr || 'No matching process' }], isError: true }
+            }
+          }
+          return { content: [{ type: 'text', text: `Unknown process mode: ${mode}` }], isError: true }
+        }
+
+        case 'registry': {
+          if (!IS_WINDOWS) return { content: [{ type: 'text', text: 'registry is Windows-only. Use `defaults` via run_script on macOS.' }], isError: true }
+          const mode = str('mode')
+          const regPath = str('path')
+          const name = typeof args.name === 'string' ? args.name : undefined
+          const psExe = getPowerShellExe()
+          switch (mode) {
+            case 'get': {
+              if (!name) return { content: [{ type: 'text', text: 'name required for get' }], isError: true }
+              const r = await spawnBounded(psExe, ['-NoProfile', '-NonInteractive', '-Command', `Get-ItemPropertyValue -Path '${regPath}' -Name '${name}'`], 10000)
+              return r.code === 0 ? ok(r.stdout.trim()) : { content: [{ type: 'text', text: r.stderr }], isError: true }
+            }
+            case 'set': {
+              if (!name) return { content: [{ type: 'text', text: 'name required for set' }], isError: true }
+              const val = typeof args.value === 'string' ? args.value : ''
+              const type = typeof args.type === 'string' ? args.type : 'String'
+              const r = await spawnBounded(psExe, ['-NoProfile', '-NonInteractive', '-Command',
+                `New-ItemProperty -Path '${regPath}' -Name '${name}' -Value '${val}' -PropertyType ${type} -Force`], 10000)
+              return r.code === 0 ? ok(`Set ${regPath}\\${name}`) : { content: [{ type: 'text', text: r.stderr }], isError: true }
+            }
+            case 'delete': {
+              const cmd = name
+                ? `Remove-ItemProperty -Path '${regPath}' -Name '${name}' -Force`
+                : `Remove-Item -Path '${regPath}' -Recurse -Force`
+              const r = await spawnBounded(psExe, ['-NoProfile', '-NonInteractive', '-Command', cmd], 10000)
+              return r.code === 0 ? ok(`Deleted ${name ? `${regPath}\\${name}` : regPath}`) : { content: [{ type: 'text', text: r.stderr }], isError: true }
+            }
+            case 'list': {
+              const r = await spawnBounded(psExe, ['-NoProfile', '-NonInteractive', '-Command',
+                `Get-Item -Path '${regPath}' | Select-Object -ExpandProperty Property; Get-ChildItem -Path '${regPath}' -Name`], 10000)
+              return r.code === 0 ? ok(r.stdout.trim() || '(empty)') : { content: [{ type: 'text', text: r.stderr }], isError: true }
+            }
+            default: return { content: [{ type: 'text', text: `Unknown registry mode: ${mode}` }], isError: true }
+          }
+        }
+
+        case 'notification': {
+          if (!IS_WINDOWS) return { content: [{ type: 'text', text: 'notification is Windows-only. Use osascript via run_script on macOS.' }], isError: true }
+          const title = str('title')
+          const message = str('message')
+          const appId = typeof args.app_id === 'string' ? args.app_id : 'Windows.SystemToastNotification'
+          const ps = `
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
+$xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+$xml.LoadXml("<toast><visual><binding template='ToastText02'><text id='1'>${title}</text><text id='2'>${message}</text></binding></visual></toast>")
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${appId}').Show($toast)
+`
+          const r = await spawnBounded('powershell', ['-NoProfile', '-Command', ps], 10000)
+          return r.code === 0 ? ok('Notification sent') : { content: [{ type: 'text', text: r.stderr || 'Failed to send notification' }], isError: true }
+        }
+
+        case 'multi_select': {
+          const target = resolveTarget(args)
+          const strategy = getStrategy(tool, args)
+          await ensureFocusV4(target, strategy)
+
+          const locs = (Array.isArray(args.locs) ? args.locs : []) as [number, number][]
+
+          // Resolve labels to coordinates via find_element
+          if (Array.isArray(args.labels) && args.labels.length > 0 && target.windowId) {
+            for (const label of args.labels as string[]) {
+              try {
+                const elements = n.findElement(target.windowId, undefined, label, undefined, 1)
+                const arr = Array.isArray(elements) ? elements : JSON.parse(JSON.stringify(elements))
+                if (arr.length > 0 && arr[0].bounds) {
+                  const b = arr[0].bounds
+                  locs.push([Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2)])
+                }
+              } catch { /* label not found */ }
+            }
+          }
+
+          if (locs.length === 0) {
+            return { content: [{ type: 'text', text: 'No coordinates resolved. Provide locs or valid labels.' }], isError: true }
+          }
+
+          // Ctrl-click: hold ctrl for the entire sequence
+          if (args.press_ctrl) {
+            n.keyPress(IS_WINDOWS ? 'ctrl' : 'command')  // press modifier
+          }
+          for (let i = 0; i < locs.length; i++) {
+            const [x, y] = locs[i]
+            n.mouseMove(x, y)
+            await sleep(50)
+            n.mouseClick(x, y, 'left', 1)
+            await sleep(30)
+          }
+          if (target.bundleId) updateTargetState(target, 'pointer')
+          return ok(`Selected ${locs.length} elements`)
+        }
+
+        case 'multi_edit': {
+          const target = resolveTarget(args)
+          const strategy = getStrategy(tool, args)
+          await ensureFocusV4(target, strategy)
+
+          const locs = (Array.isArray(args.locs) ? args.locs : []) as [number, number, string][]
+
+          // Resolve labels to coordinates via find_element
+          if (Array.isArray(args.labels) && args.labels.length > 0 && target.windowId) {
+            for (const [label, text] of args.labels as [string, string][]) {
+              try {
+                const elements = n.findElement(target.windowId, undefined, label, undefined, 1)
+                const arr = Array.isArray(elements) ? elements : JSON.parse(JSON.stringify(elements))
+                if (arr.length > 0 && arr[0].bounds) {
+                  const b = arr[0].bounds
+                  locs.push([Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2), text])
+                }
+              } catch { /* label not found */ }
+            }
+          }
+
+          if (locs.length === 0) {
+            return { content: [{ type: 'text', text: 'No coordinates resolved. Provide locs or valid labels.' }], isError: true }
+          }
+
+          for (const [x, y, text] of locs) {
+            n.mouseMove(x, y)
+            await sleep(50)
+            n.mouseClick(x, y, 'left', 1)
+            await sleep(50)
+            n.typeText(text)
+            await sleep(30)
+          }
+          if (target.bundleId) updateTargetState(target, 'keyboard')
+          return ok(`Edited ${locs.length} fields`)
+        }
+
+        case 'scrape': {
+          const url = str('url')
+          if (args.use_dom) {
+            return { content: [{ type: 'text', text: 'use_dom mode requires a browser tab open with the URL. This feature is not yet implemented.' }], isError: true }
+          }
+          try {
+            const resp = await fetch(url, {
+              headers: { 'User-Agent': 'computer-use-mcp/6.0.0' },
+              signal: AbortSignal.timeout(15000),
+            })
+            if (!resp.ok) {
+              return { content: [{ type: 'text', text: `HTTP ${resp.status}: ${resp.statusText}` }], isError: true }
+            }
+            const html = await resp.text()
+            // Simple HTML-to-text: strip tags, decode entities, collapse whitespace
+            const text = html
+              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/\s+/g, ' ')
+              .trim()
+            const truncated = text.length > 8000 ? text.slice(0, 8000) + '...' : text
+            return ok(`URL: ${url}\nContent:\n${truncated}`)
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e)
+            return { content: [{ type: 'text', text: `Scrape failed: ${msg}` }], isError: true }
+          }
         }
 
         default:

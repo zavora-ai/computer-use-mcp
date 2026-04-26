@@ -5,8 +5,8 @@
  * Run: npx tsx examples/demo.ts
  */
 
-import { createComputerUseServer } from '../src/server.js'
-import { connectInProcess, type ToolResult } from '../src/client.js'
+import { createComputerUseServer } from '../../src/server.js'
+import { connectInProcess, type ToolResult } from '../../src/client.js'
 import { writeFile } from 'fs/promises'
 
 async function main() {
