@@ -144,6 +144,6 @@ jobs:
         run: npx tsc
 
       - name: Publish (dry run)
-        run: npm publish --dry-run
+        run: npm publish --dry-run --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
