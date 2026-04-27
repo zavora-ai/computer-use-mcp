@@ -1,0 +1,149 @@
+name: CI — Build & Test
+
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-native:
+    name: Build native — ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: macOS arm64
+            runner: macos-14
+            rust-target: aarch64-apple-darwin
+            artifact: computer-use-napi.darwin-arm64.node
+            copy-from: target/aarch64-apple-darwin/release/libcomputer_use_napi.dylib
+          - name: macOS x64
+            runner: macos-14
+            rust-target: x86_64-apple-darwin
+            artifact: computer-use-napi.darwin-x64.node
+            copy-from: target/x86_64-apple-darwin/release/libcomputer_use_napi.dylib
+          - name: Windows x64
+            runner: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            artifact: computer-use-napi.win32-x64.node
+            copy-from: target/x86_64-pc-windows-msvc/release/computer_use_napi.dll
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target.rust-target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Build native module
+        working-directory: native
+        run: cargo build --release --target ${{ matrix.target.rust-target }}
+
+      - name: Copy binary to artifact name
+        shell: bash
+        run: cp native/${{ matrix.target.copy-from }} ${{ matrix.target.artifact }}
+
+      - name: Upload native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.artifact }}
+          path: ${{ matrix.target.artifact }}
+          if-no-files-found: error
+
+  test:
+    name: Test — ${{ matrix.os.name }}
+    needs: build-native
+    runs-on: ${{ matrix.os.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: macOS arm64
+            runner: macos-14
+            binary: computer-use-napi.darwin-arm64.node
+          - name: Windows x64
+            runner: windows-latest
+            binary: computer-use-napi.win32-x64.node
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download native binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.os.binary }}
+
+      - name: Copy binary to generic name
+        shell: bash
+        run: cp ${{ matrix.os.binary }} computer-use-napi.node
+
+      - name: Build TypeScript
+        run: npx tsc
+
+      - name: Run tests (macOS)
+        if: runner.os == 'macOS'
+        run: node --test test/stdio.test.mjs
+
+      - name: Run smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: node test/smoke-windows.mjs
+
+      - name: Run new tools smoke test
+        run: node test/smoke-new-tools.mjs
+
+  publish:
+    name: Publish to npm
+    needs: [build-native, test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all native binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+
+      - name: Verify binaries exist
+        run: |
+          ls -la computer-use-napi.*.node
+          test -f computer-use-napi.darwin-arm64.node
+          test -f computer-use-napi.darwin-x64.node
+          test -f computer-use-napi.win32-x64.node
+
+      - name: Build TypeScript
+        run: npx tsc
+
+      - name: Publish (dry run)
+        run: npm publish --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

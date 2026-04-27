@@ -1157,21 +1157,11 @@ export function createSession(opts: SessionOptions = {}): Session {
           const q = typeof args.quality === 'number' ? args.quality : 0
 
           // Crop the region at full resolution using native Rust
-          if (n.cropImage) {
-            const cropped = n.cropImage(fullRes.base64, x1, y1, x2, y2, q)
-            return {
-              content: [
-                { type: 'image' as const, data: cropped.base64, mimeType: cropped.mimeType },
-                { type: 'text' as const, text: `${cropped.width}x${cropped.height} (zoomed from ${fullRes.width}x${fullRes.height})` },
-              ],
-            }
-          }
-
-          // Fallback: return full image with region metadata
+          const cropped = n.cropImage(fullRes.base64, x1, y1, x2, y2, q)
           return {
             content: [
-              { type: 'image' as const, data: fullRes.base64, mimeType: fullRes.mimeType },
-              { type: 'text' as const, text: `${fullRes.width}x${fullRes.height} — zoom region: [${x1},${y1},${x2},${y2}]` },
+              { type: 'image' as const, data: cropped.base64, mimeType: cropped.mimeType },
+              { type: 'text' as const, text: `${cropped.width}x${cropped.height} (zoomed from ${fullRes.width}x${fullRes.height})` },
             ],
           }
         }
@@ -1542,7 +1532,32 @@ export function createSession(opts: SessionOptions = {}): Session {
             const r = await runScriptHelper('powershell', ps, 10000)
             return r.code === 0 ? ok(r.stdout.trim()) : { content: [{ type: 'text', text: r.stderr || r.stdout }], isError: true }
           }
-          return { content: [{ type: 'text', text: 'resize_window: use AppleScript on macOS' }], isError: true }
+
+          // macOS: use AppleScript for window resize/move
+          const wname = typeof args.window_name === 'string' ? args.window_name : undefined
+          const wsize = Array.isArray(args.window_size) ? args.window_size as [number, number] : undefined
+          const wloc = Array.isArray(args.window_loc) ? args.window_loc as [number, number] : undefined
+
+          if (!wsize && !wloc) {
+            return { content: [{ type: 'text', text: 'window_size or window_loc required' }], isError: true }
+          }
+
+          // Build AppleScript to resize/move the window
+          let targetClause: string
+          if (wname) {
+            targetClause = `tell application "${wname}"`
+          } else {
+            // Target the frontmost app
+            targetClause = `tell application (path to frontmost application as text)`
+          }
+
+          const parts: string[] = []
+          if (wloc) parts.push(`set position of front window to {${wloc[0]}, ${wloc[1]}}`)
+          if (wsize) parts.push(`set size of front window to {${wsize[0]}, ${wsize[1]}}`)
+
+          const script = `${targetClause}\n${parts.join('\n')}\nend tell`
+          const r = await runScriptHelper('applescript', script, 10000)
+          return r.code === 0 ? ok('Resized') : { content: [{ type: 'text', text: r.stderr || r.stdout || 'resize failed' }], isError: true }
         }
 
         case 'snapshot': {
@@ -1592,7 +1607,7 @@ export function createSession(opts: SessionOptions = {}): Session {
               const needsAnnotation = args.use_annotation && Array.isArray(wins)
               const gridLines = Array.isArray(args.grid_lines) ? args.grid_lines as [number, number] : undefined
 
-              if ((needsAnnotation || gridLines) && n.annotateImage) {
+              if (needsAnnotation || gridLines) {
                 // Build annotation data for Rust drawing
                 const annData = needsAnnotation
                   ? (wins as Array<{bounds: {x: number; y: number; width: number; height: number}}>)
@@ -2137,7 +2152,7 @@ export function createSession(opts: SessionOptions = {}): Session {
                 'Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 20 Id,ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'], 10000)
               return r.code === 0 ? ok(r.stdout) : { content: [{ type: 'text', text: r.stderr }], isError: true }
             } else {
-              const r = await spawnBounded('ps', ['aux', '--sort=-rss'], 5000)
+              const r = await spawnBounded('ps', ['aux', '-r'], 5000)
               const lines = r.stdout.split('\n').slice(0, 21)
               return ok(lines.join('\n'))
             }

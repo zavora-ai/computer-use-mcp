@@ -166,6 +166,162 @@ mod macos {
         }
         None
     }
+
+    fn encode_png_mac(rgb: &[u8], w: u32, h: u32) -> napi::Result<Vec<u8>> {
+        use image::codecs::png::PngEncoder;
+        use image::ImageEncoder;
+        use std::io::Cursor;
+        let estimated = (w * h * 3 / 2) as usize;
+        let mut buf = Cursor::new(Vec::with_capacity(estimated));
+        let enc = PngEncoder::new(&mut buf);
+        enc.write_image(rgb, w, h, image::ExtendedColorType::Rgb8)
+            .map_err(|e| napi::Error::from_reason(format!("PNG encode: {e}")))?;
+        Ok(buf.into_inner())
+    }
+
+    fn encode_jpeg_mac(rgb: &[u8], w: u32, h: u32, quality: u8) -> napi::Result<Vec<u8>> {
+        use image::codecs::jpeg::JpegEncoder;
+        use std::io::Cursor;
+        let estimated = (w * h * 3 / 10) as usize;
+        let mut buf = Cursor::new(Vec::with_capacity(estimated));
+        let mut enc = JpegEncoder::new_with_quality(&mut buf, quality);
+        enc.encode(rgb, w, h, image::ExtendedColorType::Rgb8)
+            .map_err(|e| napi::Error::from_reason(format!("JPEG encode: {e}")))?;
+        Ok(buf.into_inner())
+    }
+
+    /// Draw colored rectangles and grid lines on an image, then re-encode as JPEG.
+    #[napi]
+    pub fn annotate_image(
+        base64_jpeg: String,
+        annotations: Option<String>,
+        grid_cols: Option<u32>,
+        grid_rows: Option<u32>,
+        quality: Option<u32>,
+    ) -> napi::Result<serde_json::Value> {
+        let jpeg_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&base64_jpeg)
+            .map_err(|e| napi::Error::from_reason(format!("base64 decode: {e}")))?;
+
+        use image::io::Reader as ImageReader;
+        use std::io::Cursor;
+        let img = ImageReader::new(Cursor::new(&jpeg_bytes))
+            .with_guessed_format()
+            .map_err(|e| napi::Error::from_reason(format!("image format: {e}")))?
+            .decode()
+            .map_err(|e| napi::Error::from_reason(format!("image decode: {e}")))?;
+        let mut rgb_img = img.to_rgb8();
+        let w = rgb_img.width();
+        let h = rgb_img.height();
+
+        let colors: [(u8, u8, u8); 8] = [
+            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+            (255, 0, 255), (0, 255, 255), (255, 128, 0), (128, 0, 255),
+        ];
+
+        if let Some(ref ann_json) = annotations {
+            if let Ok(anns) = serde_json::from_str::<Vec<serde_json::Value>>(ann_json) {
+                for (i, ann) in anns.iter().enumerate() {
+                    let ax = ann.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let ay = ann.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let aw = ann.get("width").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let ah = ann.get("height").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let (cr, cg, cb) = colors[i % colors.len()];
+                    let thickness = 2i32;
+                    for t in 0..thickness {
+                        for x in ax.max(0)..(ax + aw).min(w as i32) {
+                            for dy in [ay + t, ay + ah - 1 - t] {
+                                if dy >= 0 && dy < h as i32 && x >= 0 && x < w as i32 {
+                                    rgb_img.put_pixel(x as u32, dy as u32, image::Rgb([cr, cg, cb]));
+                                }
+                            }
+                        }
+                        for y in ay.max(0)..(ay + ah).min(h as i32) {
+                            for dx in [ax + t, ax + aw - 1 - t] {
+                                if dx >= 0 && dx < w as i32 && y >= 0 && y < h as i32 {
+                                    rgb_img.put_pixel(dx as u32, y as u32, image::Rgb([cr, cg, cb]));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let (Some(cols), Some(rows)) = (grid_cols, grid_rows) {
+            let gray = image::Rgb([128u8, 128, 128]);
+            if cols > 0 {
+                for i in 1..cols {
+                    let x = (w as u64 * i as u64 / cols as u64) as u32;
+                    if x < w { for y in 0..h { rgb_img.put_pixel(x, y, gray); } }
+                }
+            }
+            if rows > 0 {
+                for i in 1..rows {
+                    let y = (h as u64 * i as u64 / rows as u64) as u32;
+                    if y < h { for x in 0..w { rgb_img.put_pixel(x, y, gray); } }
+                }
+            }
+        }
+
+        let q = quality.unwrap_or(80).clamp(1, 100) as u8;
+        let rgb_raw = rgb_img.into_raw();
+        let jpeg = encode_jpeg_mac(&rgb_raw, w, h, q)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+
+        Ok(serde_json::json!({
+            "base64": b64,
+            "width": w, "height": h,
+            "mimeType": "image/jpeg",
+        }))
+    }
+
+    /// Crop a region from a base64-encoded image at full resolution.
+    #[napi]
+    pub fn crop_image(
+        base64_image: String,
+        x1: u32, y1: u32, x2: u32, y2: u32,
+        quality: Option<u32>,
+    ) -> napi::Result<serde_json::Value> {
+        let img_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&base64_image)
+            .map_err(|e| napi::Error::from_reason(format!("base64 decode: {e}")))?;
+
+        use image::io::Reader as ImageReader;
+        use std::io::Cursor;
+        let img = ImageReader::new(Cursor::new(&img_bytes))
+            .with_guessed_format()
+            .map_err(|e| napi::Error::from_reason(format!("image format: {e}")))?
+            .decode()
+            .map_err(|e| napi::Error::from_reason(format!("image decode: {e}")))?;
+
+        let iw = img.width();
+        let ih = img.height();
+        let cx1 = x1.min(iw.saturating_sub(1));
+        let cy1 = y1.min(ih.saturating_sub(1));
+        let cx2 = x2.min(iw).max(cx1 + 1);
+        let cy2 = y2.min(ih).max(cy1 + 1);
+
+        let cropped = img.crop_imm(cx1, cy1, cx2 - cx1, cy2 - cy1);
+        let rgb = cropped.to_rgb8();
+        let cw = rgb.width();
+        let ch = rgb.height();
+        let raw = rgb.into_raw();
+
+        let q = quality.unwrap_or(0);
+        let (encoded, mime) = if q == 0 {
+            (encode_png_mac(&raw, cw, ch)?, "image/png")
+        } else {
+            (encode_jpeg_mac(&raw, cw, ch, q.clamp(1, 100) as u8)?, "image/jpeg")
+        };
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&encoded);
+        Ok(serde_json::json!({
+            "base64": b64,
+            "width": cw, "height": ch,
+            "mimeType": mime,
+        }))
+    }
 }
 
 
