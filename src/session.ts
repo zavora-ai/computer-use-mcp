@@ -2152,7 +2152,7 @@ export function createSession(opts: SessionOptions = {}): Session {
                 'Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 20 Id,ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'], 10000)
               return r.code === 0 ? ok(r.stdout) : { content: [{ type: 'text', text: r.stderr }], isError: true }
             } else {
-              const r = await spawnBounded('ps', ['aux', '--sort=-rss'], 5000)
+              const r = await spawnBounded('ps', ['aux', '-r'], 5000)
               const lines = r.stdout.split('\n').slice(0, 21)
               return ok(lines.join('\n'))
             }
