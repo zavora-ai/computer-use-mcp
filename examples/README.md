@@ -24,7 +24,8 @@ examples/
 │   ├── calendar-event.mjs       Create a calendar event for tomorrow via AppleScript
 │   ├── create-contact.mjs       Create (and clean up) a contact in Contacts.app
 │   ├── open-vscode.mjs          Open VS Code, create file, type TypeScript code, screenshot
-│   └── terminal-disk-space.mjs  Check disk space via shell and Terminal UI
+│   ├── terminal-disk-space.mjs  Check disk space via shell and Terminal UI
+│   └── zoom.mjs                 Capture full screen then zoom into macOS-specific regions
 └── README.md
 ```
 
@@ -60,4 +61,5 @@ node examples/macos/calendar-event.mjs         # Create calendar event
 node examples/macos/create-contact.mjs         # Create + cleanup contact
 node examples/macos/open-vscode.mjs            # VS Code + TypeScript code
 node examples/macos/terminal-disk-space.mjs    # Disk space via Terminal
+node examples/macos/zoom.mjs                  # Region inspection at native resolution
 ```
