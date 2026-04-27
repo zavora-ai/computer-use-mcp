@@ -18,7 +18,13 @@ examples/
 │   ├── calculator.mjs           Open Calculator, compute 42+58, screenshot, clipboard
 │   ├── window-targeting.mjs     TextEdit + Safari, window-level targeting, focus recovery
 │   ├── browser.mjs              Safari navigation, copy text, multi-tab screenshots
-│   └── crypto-spreadsheet.mjs   Fetch crypto prices, paste into Numbers
+│   ├── crypto-spreadsheet.mjs   Fetch crypto prices, create blank workbook, paste into Numbers
+│   ├── budget-template.mjs     Open budget template, personalise with data, add formulas, save
+│   ├── send-email.mjs           Compose and send email via Mail.app AppleScript
+│   ├── calendar-event.mjs       Create a calendar event for tomorrow via AppleScript
+│   ├── create-contact.mjs       Create (and clean up) a contact in Contacts.app
+│   ├── open-vscode.mjs          Open VS Code, create file, type TypeScript code, screenshot
+│   └── terminal-disk-space.mjs  Check disk space via shell and Terminal UI
 └── README.md
 ```
 
@@ -47,5 +53,11 @@ node examples/windows/system-info.mjs          # System introspection
 node examples/macos/calculator.mjs
 node examples/macos/window-targeting.mjs
 node examples/macos/browser.mjs
-node examples/macos/crypto-spreadsheet.mjs
+node examples/macos/crypto-spreadsheet.mjs     # Blank workbook + crypto data
+node examples/macos/budget-template.mjs        # Budget template + personalised data
+node examples/macos/send-email.mjs             # Send email via Mail.app
+node examples/macos/calendar-event.mjs         # Create calendar event
+node examples/macos/create-contact.mjs         # Create + cleanup contact
+node examples/macos/open-vscode.mjs            # VS Code + TypeScript code
+node examples/macos/terminal-disk-space.mjs    # Disk space via Terminal
 ```
