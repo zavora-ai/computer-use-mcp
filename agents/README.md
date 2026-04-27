@@ -4,7 +4,6 @@ End-to-end AI agent examples using `computer-use-mcp` for desktop automation. Ea
 
 ```
 agents/
-├── adk-rust-gemini/     Rust agent using ADK-Rust + Gemini
 ├── claude-agent/        TypeScript agent using Anthropic Claude
 ├── openai-agent/        TypeScript agent using OpenAI GPT-4o
 └── langchain-agent/     TypeScript agent using LangChain + Claude
@@ -35,14 +34,6 @@ npm install @langchain/anthropic @langchain/core langchain
 node agents/langchain-agent/agent.mjs "Open Finder and list files on Desktop"
 ```
 
-### ADK-Rust + Gemini Agent
-```bash
-export GOOGLE_API_KEY=your-key
-npm install -g @zavora-ai/computer-use-mcp
-cd agents/adk-rust-gemini
-cargo run
-```
-
 ## How They Work
 
 All four agents follow the same pattern:
@@ -61,7 +52,6 @@ All four agents follow the same pattern:
 | Claude | Claude Sonnet | TypeScript | ✓ screenshots | Vision-heavy tasks, UI navigation |
 | OpenAI | GPT-4o | TypeScript | text only* | Text-based tasks, scripting |
 | LangChain | Claude (swappable) | TypeScript | ✓ via Claude | Framework integration, chains |
-| ADK-Rust | Gemini 2.5 Flash | Rust | ✓ screenshots | Performance, production agents |
 
 *OpenAI function calling doesn't support image returns in tool results — screenshots are described as text.
 
