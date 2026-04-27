@@ -23,7 +23,7 @@ jobs:
             artifact: computer-use-napi.darwin-arm64.node
             copy-from: target/aarch64-apple-darwin/release/libcomputer_use_napi.dylib
           - name: macOS x64
-            runner: macos-13
+            runner: macos-14
             rust-target: x86_64-apple-darwin
             artifact: computer-use-napi.darwin-x64.node
             copy-from: target/x86_64-apple-darwin/release/libcomputer_use_napi.dylib
@@ -71,9 +71,6 @@ jobs:
           - name: macOS arm64
             runner: macos-14
             binary: computer-use-napi.darwin-arm64.node
-          - name: macOS x64
-            runner: macos-13
-            binary: computer-use-napi.darwin-x64.node
           - name: Windows x64
             runner: windows-latest
             binary: computer-use-napi.win32-x64.node
