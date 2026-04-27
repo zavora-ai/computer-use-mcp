@@ -9,7 +9,7 @@ import { connectInProcess } from '../../dist/client.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
-const outDir = path.join(process.cwd(), 'zoom-output')
+const outDir = path.join(process.cwd(), 'zoom-output', 'windows')
 fs.mkdirSync(outDir, { recursive: true })
 
 const server = createComputerUseServer()
