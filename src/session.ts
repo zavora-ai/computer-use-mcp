@@ -2313,7 +2313,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
           }
           try {
             const resp = await fetch(url, {
-              headers: { 'User-Agent': 'computer-use-mcp/6.0.0' },
+              headers: { 'User-Agent': 'computer-use-mcp/6.1.0' },
               signal: AbortSignal.timeout(15000),
             })
             if (!resp.ok) {

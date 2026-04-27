@@ -49,13 +49,19 @@ export interface ComputerUseClient {
   close(): Promise<void>
   // Typed convenience
   screenshot(args?: { width?: number; quality?: number; target_app?: string; target_window_id?: number; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto' }): Promise<ToolResult>
+  zoom(region: [number, number, number, number], quality?: number): Promise<ToolResult>
   click(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   doubleClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  tripleClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   rightClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  middleClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   moveMouse(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   drag(to: [number, number], from?: [number, number], targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
-  type(text: string, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
-  key(combo: string, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  mouseDown(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  mouseUp(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
+  type(text: string, targetApp?: string, opts?: WindowTargetOpts & { clear?: boolean; pressEnter?: boolean; caretPosition?: 'start' | 'end' | 'idle' }): Promise<ToolResult>
+  key(combo: string, targetApp?: string, opts?: WindowTargetOpts & { repeat?: number }): Promise<ToolResult>
+  holdKey(keys: string[], durationSecs: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   scroll(x: number, y: number, direction: 'up' | 'down' | 'left' | 'right', amount?: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   readClipboard(): Promise<ToolResult>
   writeClipboard(text: string): Promise<ToolResult>
@@ -104,6 +110,9 @@ export interface ComputerUseClient {
   removeWindowFromSpace(windowId: number, spaceId: number): Promise<ToolResult>
   destroySpace(spaceId: number): Promise<ToolResult>
 
+  // ── v5.2: Tool metadata ───────────────────────────────────────────────
+  getToolMetadata(toolName: string): Promise<ToolResult>
+
   // ── Windows-parity tools ──────────────────────────────────────────────
   filesystem(mode: string, path: string, opts?: Record<string, unknown>): Promise<ToolResult>
   processKill(mode: 'list' | 'kill', opts?: { name?: string; pid?: number; force?: boolean }): Promise<ToolResult>
@@ -148,13 +157,19 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     callTool: call,
     close: closeFn,
     screenshot: (args?) => call('screenshot', args ?? {}),
+    zoom: (region, quality?) => call('zoom', { region, ...(quality !== undefined ? { quality } : {}) }),
     click: (x, y, app?, opts?) => call('left_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
     doubleClick: (x, y, app?, opts?) => call('double_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    tripleClick: (x, y, app?, opts?) => call('triple_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
     rightClick: (x, y, app?, opts?) => call('right_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    middleClick: (x, y, app?, opts?) => call('middle_click', { coordinate: [x, y], ...targetArgs(app, opts) }),
     moveMouse: (x, y, app?, opts?) => call('mouse_move', { coordinate: [x, y], ...targetArgs(app, opts) }),
     drag: (to, from?, app?, opts?) => call('left_click_drag', { coordinate: to, ...(from ? { start_coordinate: from } : {}), ...targetArgs(app, opts) }),
-    type: (text, app?, opts?) => call('type', { text, ...targetArgs(app, opts) }),
-    key: (combo, app?, opts?) => call('key', { text: combo, ...targetArgs(app, opts) }),
+    mouseDown: (x, y, app?, opts?) => call('left_mouse_down', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    mouseUp: (x, y, app?, opts?) => call('left_mouse_up', { coordinate: [x, y], ...targetArgs(app, opts) }),
+    type: (text, app?, opts?) => call('type', { text, ...targetArgs(app, opts), ...(opts?.clear !== undefined ? { clear: opts.clear } : {}), ...(opts?.pressEnter !== undefined ? { press_enter: opts.pressEnter } : {}), ...(opts?.caretPosition ? { caret_position: opts.caretPosition } : {}) }),
+    key: (combo, app?, opts?) => call('key', { text: combo, ...targetArgs(app, opts), ...(opts?.repeat !== undefined ? { repeat: opts.repeat } : {}) }),
+    holdKey: (keys, durationSecs, app?, opts?) => call('hold_key', { keys, duration: durationSecs, ...targetArgs(app, opts) }),
     scroll: (x, y, dir, amt = 3, app?, opts?) => call('scroll', { coordinate: [x, y], direction: dir, amount: amt, ...targetArgs(app, opts) }),
     readClipboard: () => call('read_clipboard'),
     writeClipboard: (text) => call('write_clipboard', { text }),
@@ -236,6 +251,9 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
       window_id: windowId, space_id: spaceId,
     }),
     destroySpace: (spaceId) => call('destroy_space', { space_id: spaceId }),
+
+    // v5.2: Tool metadata
+    getToolMetadata: (toolName) => call('get_tool_metadata', { tool_name: toolName }),
 
     // Windows-parity tools
     filesystem: (mode, path, opts?) => call('filesystem', { mode, path, ...opts }),

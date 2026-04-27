@@ -50,7 +50,7 @@ export interface ServerOptions extends SessionOptions {
 }
 
 export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
-  const server = new McpServer({ name: 'computer-use', version: '6.0.0' })
+  const server = new McpServer({ name: 'computer-use', version: '6.1.0' })
   const session = opts.session ?? createSession({
     vision: opts.vision ?? (process.env.COMPUTER_USE_VISION !== 'false'),
     provider: opts.provider ?? process.env.COMPUTER_USE_PROVIDER,
