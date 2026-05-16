@@ -32,6 +32,8 @@
   "files": [
     "dist/server.js",
     "dist/server.d.ts",
+    "dist/entrypoint.js",
+    "dist/entrypoint.d.ts",
     "dist/client.js",
     "dist/client.d.ts",
     "dist/session.js",

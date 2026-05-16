@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z, ZodTypeAny } from 'zod'
 import { createSession, type Session, type SessionOptions } from './session.js'
+import { isStdioEntrypoint } from './entrypoint.js'
 
 /**
  * v5.2 — How each tool reaches the target app.
@@ -409,8 +410,9 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   return server
 }
 
-// Standalone stdio entrypoint
-if (process.argv[1]?.endsWith('/server.ts') || process.argv[1]?.endsWith('/server.js') || process.argv[1]?.endsWith('/computer-use-mcp')) {
+// Standalone stdio entrypoint. Detection lives in ./entrypoint.ts so it is
+// unit-testable without loading the native NAPI binary.
+if (isStdioEntrypoint(process.argv[1])) {
   const server = createComputerUseServer()
   const transport = new StdioServerTransport()
   server.connect(transport).then(() => console.error('[computer-use-mcp] Server running'))
