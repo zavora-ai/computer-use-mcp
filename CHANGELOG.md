@@ -1,5 +1,32 @@
 # Changelog
 
+## v6.1.1 (2026-05-16)
+
+v6.1.1 adds **native Linux support** (X11 + Wayland), making computer-use-mcp a true cross-platform desktop automation server for macOS, Windows, and Linux.
+
+### Linux native modules (Rust)
+- **Mouse** — X11/XTest for X11 sessions, `ydotool` for Wayland. Absolute positioning, click, drag, scroll
+- **Keyboard** — X11/XTest keycodes for X11, `ydotool` evdev keycodes for Wayland. Full key map with combos
+- **Text input** — `xdotool type` (X11) or `ydotool type` (Wayland) for reliable Unicode text entry
+- **Screenshot** — XDG Desktop Portal (GNOME Wayland), `gnome-screenshot`, `grim` (wlroots), `scrot` (X11 fallback)
+- **Clipboard** — `wl-copy`/`wl-paste` on Wayland, `xclip`/`xsel` on X11
+- **Window management** — GNOME Shell D-Bus Eval for Wayland, `wmctrl`/`xdotool` for X11
+- **App management** — `/proc` filesystem + `wmctrl` + GNOME D-Bus for listing, activation, hide/unhide
+- **Display** — X11 `XDisplayWidth`/`XDisplayHeight` for resolution and multi-screen
+- **Workspaces** — `wmctrl -d` for listing, `wmctrl -t` for moving windows between desktops
+- **Accessibility** — Stubs (AT-SPI2 integration planned for future release)
+- **Scripting** — `bash` by default, `pwsh` if installed
+
+### Wayland-native support
+- Runtime detection via `XDG_SESSION_TYPE` environment variable
+- Automatic fallback: Wayland tools → X11/XWayland tools
+- Tested on GNOME 50 (Ubuntu 25.04) with Wayland session
+
+### Platform detection
+- `src/native.ts` — added `linux-x64` and `linux-arm64` targets
+- `src/session.ts` — `IS_LINUX` constant, Linux-specific clipboard, scripting, and keyboard handling
+- All Linux code gated behind `#[cfg(target_os = "linux")]` — zero impact on macOS/Windows
+
 ## v6.0.0 (2026-04-26)
 
 v6.0 adds **native Windows support**, transforming computer-use-mcp from a macOS-only tool into a cross-platform desktop automation server. Every Windows API call goes through Rust via `windows-rs` with zero-overhead NAPI bindings — no Python, no pywin32, no subprocess overhead.

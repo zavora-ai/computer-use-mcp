@@ -26,6 +26,10 @@ core-graphics-types = "0.2"
 core-foundation = "0.10"
 objc = "0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 = { version = "2.21", features = ["xlib", "xtest", "xrandr"] }
+libc = "0.2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_UI_Input_KeyboardAndMouse",

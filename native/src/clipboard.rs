@@ -1,6 +1,58 @@
 // ── macOS: clipboard handled in session layer via pbcopy/pbpaste ─────────────
 // No native clipboard functions needed on macOS.
 
+// ── Linux implementation ─────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod linux {
+    use napi_derive::napi;
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
+
+    fn is_wayland() -> bool {
+        *IS_WAYLAND.get_or_init(|| {
+            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        })
+    }
+
+    #[napi]
+    pub fn read_clipboard() -> napi::Result<String> {
+        let output = if is_wayland() {
+            Command::new("wl-paste").args(["--no-newline"]).output()
+                .or_else(|_| Command::new("xclip").args(["-selection", "clipboard", "-o"]).output())
+        } else {
+            Command::new("xclip").args(["-selection", "clipboard", "-o"]).output()
+                .or_else(|_| Command::new("xsel").args(["--clipboard", "--output"]).output())
+        };
+        let output = output.map_err(|e| napi::Error::from_reason(
+            format!("clipboard read failed (install wl-clipboard or xclip): {e}")))?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    #[napi]
+    pub fn write_clipboard(text: String) -> napi::Result<()> {
+        if is_wayland() {
+            // wl-copy works best with text as argument
+            let status = Command::new("wl-copy").arg(&text).status()
+                .map_err(|e| napi::Error::from_reason(format!("wl-copy failed: {e}")))?;
+            if status.success() { return Ok(()); }
+        }
+        // X11 fallback: pipe to xclip
+        use std::io::Write;
+        let child = Command::new("xclip").args(["-selection", "clipboard"])
+            .stdin(std::process::Stdio::piped()).spawn()
+            .or_else(|_| Command::new("xsel").args(["--clipboard", "--input"]).stdin(std::process::Stdio::piped()).spawn());
+        let mut child = child.map_err(|e| napi::Error::from_reason(
+            format!("clipboard write failed (install wl-clipboard or xclip): {e}")))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(text.as_bytes()).map_err(|e| napi::Error::from_reason(format!("write: {e}")))?;
+        }
+        child.wait().map_err(|e| napi::Error::from_reason(format!("wait: {e}")))?;
+        Ok(())
+    }
+}
+
 // ── Windows implementation ───────────────────────────────────────────────────
 #[cfg(target_os = "windows")]
 mod win {

@@ -1,3 +1,208 @@
+// ── Linux implementation ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod linux {
+    use napi_derive::napi;
+    use std::collections::HashMap;
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
+
+    fn is_wayland() -> bool {
+        *IS_WAYLAND.get_or_init(|| {
+            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        })
+    }
+
+    static LINUX_KEY_MAP: OnceLock<HashMap<&'static str, u32>> = OnceLock::new();
+
+    fn key_map() -> &'static HashMap<&'static str, u32> {
+        LINUX_KEY_MAP.get_or_init(|| {
+            let mut m = HashMap::new();
+            m.insert("return", 36); m.insert("enter", 36);
+            m.insert("tab", 23); m.insert("space", 65);
+            m.insert("backspace", 22); m.insert("delete", 119);
+            m.insert("escape", 9); m.insert("esc", 9);
+            m.insert("shift", 50); m.insert("control", 37); m.insert("ctrl", 37);
+            m.insert("alt", 64); m.insert("option", 64);
+            m.insert("super", 133); m.insert("command", 133); m.insert("cmd", 133);
+            m.insert("win", 133); m.insert("capslock", 66);
+            m.insert("f1", 67); m.insert("f2", 68); m.insert("f3", 69);
+            m.insert("f4", 70); m.insert("f5", 71); m.insert("f6", 72);
+            m.insert("f7", 73); m.insert("f8", 74); m.insert("f9", 75);
+            m.insert("f10", 76); m.insert("f11", 95); m.insert("f12", 96);
+            m.insert("home", 110); m.insert("end", 115);
+            m.insert("pageup", 112); m.insert("pagedown", 117);
+            m.insert("left", 113); m.insert("right", 114);
+            m.insert("up", 111); m.insert("down", 116);
+            m.insert("a", 38); m.insert("b", 56); m.insert("c", 54);
+            m.insert("d", 40); m.insert("e", 26); m.insert("f", 41);
+            m.insert("g", 42); m.insert("h", 43); m.insert("i", 31);
+            m.insert("j", 44); m.insert("k", 45); m.insert("l", 46);
+            m.insert("m", 58); m.insert("n", 57); m.insert("o", 32);
+            m.insert("p", 33); m.insert("q", 24); m.insert("r", 27);
+            m.insert("s", 39); m.insert("t", 28); m.insert("u", 30);
+            m.insert("v", 55); m.insert("w", 25); m.insert("x", 53);
+            m.insert("y", 29); m.insert("z", 52);
+            m.insert("0", 19); m.insert("1", 10); m.insert("2", 11);
+            m.insert("3", 12); m.insert("4", 13); m.insert("5", 14);
+            m.insert("6", 15); m.insert("7", 16); m.insert("8", 17);
+            m.insert("9", 18);
+            m.insert("-", 20); m.insert("=", 21);
+            m.insert("[", 34); m.insert("]", 35);
+            m.insert("\\", 51); m.insert(";", 47);
+            m.insert("'", 48); m.insert(",", 59);
+            m.insert(".", 60); m.insert("/", 61);
+            m.insert("`", 49);
+            m
+        })
+    }
+
+    fn is_modifier(keycode: u32) -> bool {
+        matches!(keycode, 50 | 37 | 64 | 133 | 66)
+    }
+
+    // ydotool uses evdev keycodes (X11 keycode - 8)
+    fn x11_to_evdev(x11_keycode: u32) -> u32 {
+        x11_keycode.saturating_sub(8)
+    }
+
+    fn ydotool_key_combo(combo: &str, repeat: i32) -> napi::Result<()> {
+        let map = key_map();
+        let combo_lower = combo.to_lowercase();
+        let parts: Vec<&str> = combo_lower.split('+').map(|s| s.trim()).collect();
+
+        let mut codes: Vec<u32> = Vec::new();
+        for part in &parts {
+            let kc = map.get(part).copied()
+                .ok_or_else(|| napi::Error::from_reason(format!("Unknown key in combo: {combo}")))?;
+            codes.push(x11_to_evdev(kc));
+        }
+
+        // Build ydotool key sequence: "keydown code keydown code ... keyup code keyup code"
+        for _ in 0..repeat {
+            let mut args: Vec<String> = vec!["key".to_string()];
+            for &c in &codes {
+                args.push(format!("{}:1", c)); // key down
+            }
+            for c in codes.iter().rev() {
+                args.push(format!("{}:0", c)); // key up
+            }
+            let _ = Command::new("ydotool").args(&args).status();
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn key_press(combo: String, repeat: Option<i32>) -> napi::Result<()> {
+        let repeat = repeat.unwrap_or(1);
+
+        if is_wayland() {
+            return ydotool_key_combo(&combo, repeat);
+        }
+
+        // X11 path
+        let map = key_map();
+        let combo_lower = combo.to_lowercase();
+        let parts: Vec<&str> = combo_lower.split('+').map(|s| s.trim()).collect();
+
+        let mut modifiers: Vec<u32> = Vec::new();
+        let mut main_key: Option<u32> = None;
+
+        for part in &parts {
+            if let Some(&kc) = map.get(part) {
+                if is_modifier(kc) {
+                    modifiers.push(kc);
+                } else {
+                    main_key = Some(kc);
+                }
+            }
+        }
+
+        let key = main_key.ok_or_else(|| napi::Error::from_reason(format!("Unknown key in combo: {combo}")))?;
+
+        unsafe {
+            use x11::xlib::*;
+            use x11::xtest::*;
+            let dpy = XOpenDisplay(std::ptr::null());
+            if dpy.is_null() { return Err(napi::Error::from_reason("Cannot open X display")); }
+
+            for i in 0..repeat {
+                for &m in &modifiers {
+                    XTestFakeKeyEvent(dpy, m, 1, 0);
+                }
+                XTestFakeKeyEvent(dpy, key, 1, 0);
+                XTestFakeKeyEvent(dpy, key, 0, 0);
+                for m in modifiers.iter().rev() {
+                    XTestFakeKeyEvent(dpy, *m, 0, 0);
+                }
+                XFlush(dpy);
+                if i < repeat - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+            XCloseDisplay(dpy);
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn type_text(text: String) {
+        if is_wayland() {
+            let _ = Command::new("ydotool").args(["type", "--", &text]).status();
+        } else {
+            let _ = Command::new("xdotool").args(["type", "--clearmodifiers", &text]).status();
+        }
+    }
+
+    #[napi]
+    pub fn hold_key(keys: Vec<String>, duration_ms: i32) -> napi::Result<()> {
+        let map = key_map();
+
+        if is_wayland() {
+            let mut down_args: Vec<String> = vec!["key".to_string()];
+            let mut up_args: Vec<String> = vec!["key".to_string()];
+            for k in &keys {
+                let lower = k.to_lowercase();
+                let kc = map.get(lower.as_str()).copied()
+                    .ok_or_else(|| napi::Error::from_reason(format!("Unknown key: {k}")))?;
+                let evdev = x11_to_evdev(kc);
+                down_args.push(format!("{}:1", evdev));
+                up_args.push(format!("{}:0", evdev));
+            }
+            let _ = Command::new("ydotool").args(&down_args).status();
+            std::thread::sleep(std::time::Duration::from_millis(duration_ms as u64));
+            let _ = Command::new("ydotool").args(&up_args).status();
+            return Ok(());
+        }
+
+        // X11 path
+        unsafe {
+            use x11::xlib::*;
+            use x11::xtest::*;
+            let dpy = XOpenDisplay(std::ptr::null());
+            if dpy.is_null() { return Err(napi::Error::from_reason("Cannot open X display")); }
+
+            let mut pressed: Vec<u32> = Vec::new();
+            for k in &keys {
+                let lower = k.to_lowercase();
+                let kc = map.get(lower.as_str()).copied()
+                    .ok_or_else(|| napi::Error::from_reason(format!("Unknown key: {k}")))?;
+                XTestFakeKeyEvent(dpy, kc, 1, 0);
+                pressed.push(kc);
+            }
+            XFlush(dpy);
+            std::thread::sleep(std::time::Duration::from_millis(duration_ms as u64));
+            for kc in pressed.into_iter().rev() {
+                XTestFakeKeyEvent(dpy, kc, 0, 0);
+            }
+            XFlush(dpy);
+            XCloseDisplay(dpy);
+        }
+        Ok(())
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod macos {

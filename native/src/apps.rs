@@ -1,3 +1,143 @@
+// ── Linux implementation ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod linux {
+    use napi_derive::napi;
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
+
+    fn is_wayland() -> bool {
+        *IS_WAYLAND.get_or_init(|| {
+            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        })
+    }
+
+    fn gdbus_eval(js: &str) -> Option<String> {
+        let output = Command::new("gdbus").args([
+            "call", "--session",
+            "--dest", "org.gnome.Shell",
+            "--object-path", "/org/gnome/Shell",
+            "--method", "org.gnome.Shell.Eval",
+            js,
+        ]).output().ok()?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.starts_with("(true,") {
+            let start = text.find('\'')?;
+            let end = text.rfind('\'')?;
+            if start < end {
+                return Some(text[start+1..end].replace("\\'", "'"));
+            }
+        }
+        None
+    }
+
+    #[napi(js_name = "drainRunloop")]
+    pub fn drain_runloop_pub() {}
+
+    #[napi]
+    pub fn get_frontmost_app() -> napi::Result<serde_json::Value> {
+        if is_wayland() {
+            let js = r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>w.has_focus());w?JSON.stringify({bundleId:w.get_wm_class()||'',displayName:w.get_title()||'',pid:w.get_pid()}):'null'"#;
+            if let Some(json_str) = gdbus_eval(js) {
+                if json_str != "null" {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        return Ok(val);
+                    }
+                }
+            }
+        }
+        // X11/fallback
+        let output = Command::new("xdotool").args(["getactivewindow", "getwindowpid"]).output();
+        let pid = output.ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<i32>().ok())
+            .unwrap_or(0);
+        let name_output = Command::new("xdotool").args(["getactivewindow", "getwindowname"]).output();
+        let title = name_output.ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap_or_default().trim().to_string();
+        Ok(serde_json::json!({ "bundleId": proc_name, "displayName": title, "pid": pid }))
+    }
+
+    #[napi]
+    pub fn activate_app(bundle_id: String, _timeout_ms: Option<i32>) -> napi::Result<serde_json::Value> {
+        if is_wayland() {
+            let js = format!(
+                r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>(w.get_wm_class()||'').toLowerCase()==='{cls}'.toLowerCase());if(w){{w.activate(global.get_current_time());'true'}}else{{'false'}}"#,
+                cls = bundle_id.replace('\'', "\\'")
+            );
+            let activated = gdbus_eval(&js).map(|s| s == "true").unwrap_or(false);
+            if activated {
+                return Ok(serde_json::json!({ "bundleId": bundle_id, "activated": true, "displayName": bundle_id }));
+            }
+        }
+        // Try wmctrl
+        let status = Command::new("wmctrl").args(["-x", "-a", &bundle_id]).status();
+        let activated = status.map(|s| s.success()).unwrap_or(false);
+        Ok(serde_json::json!({ "bundleId": bundle_id, "activated": activated, "displayName": bundle_id }))
+    }
+
+    #[napi]
+    pub fn list_running_apps() -> napi::Result<serde_json::Value> {
+        if is_wayland() {
+            let js = r#"JSON.stringify([...new Set(global.get_window_actors().map(a=>{let w=a.meta_window;return JSON.stringify({bundleId:w.get_wm_class()||'',displayName:w.get_wm_class()||'',pid:w.get_pid(),isHidden:w.minimized})}))].map(s=>JSON.parse(s)))"#;
+            if let Some(json_str) = gdbus_eval(js) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    return Ok(val);
+                }
+            }
+        }
+        // X11 fallback: list unique processes with windows
+        let output = Command::new("wmctrl").args(["-l", "-p"]).output().unwrap_or_else(|_| {
+            Command::new("true").output().unwrap()
+        });
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut seen = std::collections::HashMap::new();
+        for line in text.lines() {
+            let parts: Vec<&str> = line.splitn(5, char::is_whitespace).filter(|s| !s.is_empty()).collect();
+            if parts.len() >= 3 {
+                let pid = parts[2].parse::<i32>().unwrap_or(0);
+                let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                    .unwrap_or_default().trim().to_string();
+                if !proc_name.is_empty() && !seen.contains_key(&proc_name) {
+                    seen.insert(proc_name.clone(), serde_json::json!({
+                        "bundleId": proc_name, "displayName": proc_name, "pid": pid, "isHidden": false,
+                    }));
+                }
+            }
+        }
+        Ok(serde_json::json!(seen.into_values().collect::<Vec<_>>()))
+    }
+
+    #[napi]
+    pub fn hide_app(bundle_id: String) -> bool {
+        if is_wayland() {
+            let js = format!(
+                r#"global.get_window_actors().map(a=>a.meta_window).filter(w=>(w.get_wm_class()||'').toLowerCase()==='{cls}'.toLowerCase()).forEach(w=>w.minimize());'ok'"#,
+                cls = bundle_id.replace('\'', "\\'")
+            );
+            return gdbus_eval(&js).is_some();
+        }
+        let _ = Command::new("xdotool").args(["search", "--class", &bundle_id, "windowminimize"]).status();
+        true
+    }
+
+    #[napi]
+    pub fn unhide_app(bundle_id: String) -> bool {
+        if is_wayland() {
+            let js = format!(
+                r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>(w.get_wm_class()||'').toLowerCase()==='{cls}'.toLowerCase());if(w){{w.unminimize();w.activate(global.get_current_time());'true'}}else{{'false'}}"#,
+                cls = bundle_id.replace('\'', "\\'")
+            );
+            return gdbus_eval(&js).map(|s| s == "true").unwrap_or(false);
+        }
+        let status = Command::new("wmctrl").args(["-x", "-a", &bundle_id]).status();
+        status.map(|s| s.success()).unwrap_or(false)
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod macos {
