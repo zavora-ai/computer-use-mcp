@@ -1,3 +1,74 @@
+// ── Linux implementation — workspaces stub ───────────────────────────────────
+#[cfg(target_os = "linux")]
+mod platform {
+    use napi_derive::napi;
+
+    #[napi]
+    pub fn list_spaces() -> napi::Result<serde_json::Value> {
+        // Try wmctrl -d to list desktops
+        let output = std::process::Command::new("wmctrl").args(["-d"]).output();
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut spaces = Vec::new();
+            let mut active_id = None;
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let id = parts[0].parse::<i64>().unwrap_or(0);
+                    if parts.get(1) == Some(&"*") { active_id = Some(id); }
+                    spaces.push(serde_json::json!({ "id": id, "type": 0, "uuid": format!("desktop-{id}") }));
+                }
+            }
+            return Ok(serde_json::json!({
+                "supported": true,
+                "active_space_id": active_id,
+                "displays": [{ "display_id": "0", "spaces": spaces }],
+            }));
+        }
+        Ok(serde_json::json!({ "supported": false, "reason": "wmctrl not available" }))
+    }
+
+    #[napi]
+    pub fn get_active_space() -> napi::Result<serde_json::Value> {
+        let output = std::process::Command::new("wmctrl").args(["-d"]).output();
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.get(1) == Some(&"*") {
+                    let id = parts[0].parse::<i64>().unwrap_or(0);
+                    return Ok(serde_json::json!(id));
+                }
+            }
+        }
+        Ok(serde_json::json!(null))
+    }
+
+    #[napi]
+    pub fn create_agent_space() -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!({ "supported": false, "reason": "workspace creation not supported on Linux via this interface" }))
+    }
+
+    #[napi]
+    pub fn move_window_to_space(window_id: u32, space_id: u32) -> napi::Result<serde_json::Value> {
+        let status = std::process::Command::new("wmctrl")
+            .args(["-i", "-r", &format!("0x{:x}", window_id), "-t", &space_id.to_string()])
+            .status();
+        let moved = status.map(|s| s.success()).unwrap_or(false);
+        Ok(serde_json::json!({ "moved": moved, "reason": if moved { serde_json::Value::Null } else { serde_json::json!("wmctrl failed") } }))
+    }
+
+    #[napi]
+    pub fn remove_window_from_space(_window_id: u32, _space_id: u32) -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!({ "removed": false, "reason": "not supported on Linux" }))
+    }
+
+    #[napi]
+    pub fn destroy_space(_space_id: Option<u32>) -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!({ "destroyed": false, "reason": "workspace destruction not supported on Linux via this interface" }))
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 #[path = "spaces_macos.rs"]

@@ -430,6 +430,7 @@ import * as path from 'path'
 
 const IS_WINDOWS = process.platform === 'win32'
 const IS_MACOS = process.platform === 'darwin'
+const IS_LINUX = process.platform === 'linux'
 
 const DEFAULT_LOCK_PATH = IS_WINDOWS
   ? path.join(os.tmpdir(), '.computer-use-mcp.lock')
@@ -536,7 +537,7 @@ function makeLockPumpController(
   let pumpInterval: NodeJS.Timeout | null = null
 
   function startPump() {
-    if (IS_WINDOWS) return  // No CFRunLoop on Windows
+    if (IS_WINDOWS || IS_LINUX) return  // No CFRunLoop on Windows/Linux
     if (pumpInterval != null) return
     pumpInterval = setInterval(() => {
       try { n.drainRunloop() } catch { /* never let the pump throw */ }
@@ -738,6 +739,9 @@ export function createSession(opts: SessionOptions = {}): Session {
       // On Windows, keep the terminal/IDE process visible
       return ['explorer.exe']
     }
+    if (IS_LINUX) {
+      return ['gnome-shell', 'gnome-terminal', 'xterm']
+    }
     const terminal = process.env.__CFBundleIdentifier
                   || process.env.TERM_PROGRAM_BUNDLE_ID
                   || 'com.apple.Terminal'
@@ -911,7 +915,7 @@ export function createSession(opts: SessionOptions = {}): Session {
   // ── v5: Scripting dictionary lookup + cache ─────────────────────────────
 
   async function findAppPath(bundleId: string): Promise<string | undefined> {
-    if (IS_WINDOWS) return undefined  // mdfind/sdef are macOS-only
+    if (IS_WINDOWS || IS_LINUX) return undefined  // mdfind/sdef are macOS-only
     // Try mdfind first (fast, indexed). Fall back to NSWorkspace is unnecessary
     // — we can simply let `sdef` fail if the app is missing.
     const r = await spawnBounded(
@@ -983,7 +987,7 @@ export function createSession(opts: SessionOptions = {}): Session {
   }
 
   async function yabaiAvailable(): Promise<boolean> {
-    if (IS_WINDOWS) return false
+    if (IS_WINDOWS || IS_LINUX) return false
     const r = await spawnBounded('yabai', ['--version'], 3_000)
     return r.code === 0
   }
@@ -1042,7 +1046,7 @@ export function createSession(opts: SessionOptions = {}): Session {
   }
 
   async function tryCreateSpaceWithMissionControl(): Promise<Record<string, unknown> | undefined> {
-    if (IS_WINDOWS || typeof n.listSpaces !== 'function') return undefined
+    if (IS_WINDOWS || IS_LINUX || typeof n.listSpaces !== 'function') return undefined
     const before = n.listSpaces()
     const beforeList = Array.isArray(before.displays)
       ? before.displays.flatMap((d: any) => Array.isArray(d.spaces) ? d.spaces : [])
@@ -1185,6 +1189,21 @@ export function createSession(opts: SessionOptions = {}): Session {
         return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], timeoutMs)
       }
       return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+    }
+    if (IS_LINUX) {
+      if (language === 'applescript' || language === 'javascript') {
+        return {
+          stdout: '',
+          stderr: `${language} is not supported on Linux. Use language: "bash" or "powershell" instead.`,
+          code: 1,
+          timedOut: false,
+        }
+      }
+      if (language === 'powershell') {
+        return spawnBounded('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+      }
+      // Default to bash on Linux
+      return spawnBounded('bash', ['-c', script], timeoutMs)
     }
     // macOS: osascript
     const args = language === 'javascript'
@@ -1487,7 +1506,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 
           // clear: select all + delete before typing
           if (args.clear === true || args.clear === 'true') {
-            n.keyPress(IS_WINDOWS ? 'ctrl+a' : 'command+a')
+            n.keyPress((IS_WINDOWS || IS_LINUX) ? 'ctrl+a' : 'command+a')
             await sleep(30)
             n.keyPress('delete')
             await sleep(30)
@@ -1495,12 +1514,12 @@ export function createSession(opts: SessionOptions = {}): Session {
 
           if (text.length > 100) {
             // Clipboard-based typing: faster and more reliable for long text
-            if (IS_WINDOWS && n.readClipboard && n.writeClipboard) {
+            if ((IS_WINDOWS || IS_LINUX) && n.readClipboard && n.writeClipboard) {
               let saved: string | undefined
               try { saved = n.readClipboard() } catch { /* ignore */ }
               try {
                 n.writeClipboard(text)
-                n.keyPress('ctrl+v')
+                n.keyPress(IS_LINUX ? 'ctrl+v' : 'ctrl+v')
                 await sleep(100)
               } finally {
                 if (typeof saved === 'string') {
@@ -1560,14 +1579,14 @@ export function createSession(opts: SessionOptions = {}): Session {
 
         // ── Clipboard ────────────────────────────────────────────────────────
         case 'read_clipboard': {
-          if (IS_WINDOWS && n.readClipboard) {
+          if ((IS_WINDOWS || IS_LINUX) && n.readClipboard) {
             return ok(n.readClipboard())
           }
           const text = execFileSync('pbpaste', []).toString()
           return ok(text)
         }
         case 'write_clipboard': {
-          if (IS_WINDOWS && n.writeClipboard) {
+          if ((IS_WINDOWS || IS_LINUX) && n.writeClipboard) {
             n.writeClipboard(str('text'))
             return ok('Written')
           }
@@ -2386,7 +2405,8 @@ export function createSession(opts: SessionOptions = {}): Session {
                 'Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 20 Id,ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'], 10000)
               return r.code === 0 ? ok(r.stdout) : { content: [{ type: 'text', text: r.stderr }], isError: true }
             } else {
-              const r = await spawnBounded('ps', ['aux', '-r'], 5000)
+              const psArgs = IS_LINUX ? ['aux', '--sort=-%mem'] : ['aux', '-r']
+              const r = await spawnBounded('ps', psArgs, 5000)
               const lines = r.stdout.split('\n').slice(0, 21)
               return ok(lines.join('\n'))
             }

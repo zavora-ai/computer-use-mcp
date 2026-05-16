@@ -12,4 +12,12 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
         println!("cargo:rustc-link-lib=framework=ImageIO");
     }
+
+    // Link X11 libraries on Linux.
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-lib=X11");
+        println!("cargo:rustc-link-lib=Xtst");
+        println!("cargo:rustc-link-lib=Xrandr");
+    }
 }

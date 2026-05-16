@@ -2,7 +2,7 @@
 
 > Computer Use MCP is an open source high performance MCP server + client for controlling your desktop computer with AI Agents. Tools include screenshot, mouse, keyboard, clipboard, app management, and window-level targeting — all in-process via Rust NAPI. Easy to install via npm and works with Claude Code, Claude DEsktop, Codex CLi, Codex Desktop, Gemnini Cli, Kiro CLi, Kiro VS Code Extension, Github Copilot, Cursor, OpenCode, OpenClaw, Hermes Agent and any other provider that supports Model Context Protocol.
 
-**macOS + Windows** · Node.js 18+ · MIT License
+**macOS + Windows + Linux** · Node.js 18+ · MIT License
 
 ---
 
@@ -37,7 +37,7 @@
 
 `computer-use-mcp` lets an AI model (or any program) control your computer — take screenshots, move the mouse, type text, press keys, read/write the clipboard, open and manage apps, target specific windows, and query display information.
 
-It works on both **macOS** and **Windows**, with platform-specific native implementations backed by a Rust NAPI module. On macOS it uses CoreGraphics/AppKit/AXUIElement; on Windows it uses SendInput/EnumWindows/IUIAutomation/DXGI — all direct Win32 API calls through Rust, no Python dependencies.
+It works on **macOS**, **Windows**, and **Linux**, with platform-specific native implementations backed by a Rust NAPI module. On macOS it uses CoreGraphics/AppKit/AXUIElement; on Windows it uses SendInput/EnumWindows/IUIAutomation/DXGI — all direct Win32 API calls through Rust, no Python dependencies. On Linux it uses X11/XTest for input synthesis, xdotool/wmctrl for window management, and scrot for screenshots.
 
 It implements the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), which means any MCP-compatible AI client (Claude Desktop, Cursor, Windsurf, etc.) can use it as a tool server with zero extra code.
 
@@ -91,6 +91,20 @@ This package takes a different approach: a **Rust native module** (`.node` addon
 | Clipboard | `OpenClipboard` / `SetClipboardData` (native Win32) |
 | UI Automation | `IUIAutomation` COM (direct vtable calls from Rust) |
 
+**Linux:**
+
+| What | How |
+|---|---|
+| Mouse & keyboard | X11/XTest (X11) or `ydotool` (Wayland) — direct synthetic events |
+| Text input | `xdotool type` (X11) or `ydotool type` (Wayland) — Unicode support |
+| App management | `/proc` filesystem + `wmctrl` + GNOME Shell D-Bus |
+| Window enumeration | `wmctrl` (X11) or GNOME Shell D-Bus Eval (Wayland) |
+| Window activation | `xdotool windowactivate` (X11) or GNOME D-Bus (Wayland) |
+| Display info | X11 `XDisplayWidth`/`XDisplayHeight` |
+| Screenshots | XDG Desktop Portal (GNOME Wayland), `grim` (wlroots), `scrot` (X11) |
+| Clipboard | `wl-copy`/`wl-paste` (Wayland) or `xclip`/`xsel` (X11) |
+| Workspaces | `wmctrl -d` for listing, `wmctrl -t` for moving windows |
+
 Mouse, keyboard, focus, window enumeration, and display operations run in-process via the native module. Screenshots and clipboard access still rely on the system utilities that are most reliable on macOS, but the control path avoids per-action shell hops.
 
 ---
@@ -101,7 +115,7 @@ Mouse, keyboard, focus, window enumeration, and display operations run in-proces
 
 | Feature | computer-use-mcp (ours) | CursorTouch/Windows-MCP | sinmb79/windows-computer-mcp | Claude Computer Use | OpenAI CUA |
 |---|---|---|---|---|---|
-| **Platform** | macOS + Windows | Windows only | Windows only | Linux (Docker) | Linux (Docker) |
+| **Platform** | macOS + Windows + Linux | Windows only | Windows only | Linux (Docker) | Linux (Docker) |
 | **Language** | Rust NAPI + TypeScript | Python | Python | Python (reference) | Python (reference) |
 | **Protocol** | MCP (stdio + in-process) | MCP (stdio) | MCP (stdio) | Claude API built-in | OpenAI API built-in |
 | **Tools** | 58 | 14 | 10 | 3 (computer, bash, editor) | 1 (computer) |
@@ -277,6 +291,19 @@ No special permissions are required for most operations on Windows. The native m
 **Notes:**
 - UI Automation access may be blocked by UIPI (User Interface Privilege Isolation) when targeting elevated processes. Run your terminal as Administrator if you need to automate elevated apps.
 - No Python, pywin32, or any Python dependencies are required — everything is implemented in Rust.
+
+### Linux
+
+No special permissions are required beyond having an X11 display available. Ensure the following tools are installed:
+
+```bash
+sudo apt-get install -y xdotool wmctrl xclip scrot
+```
+
+**Notes:**
+- XTest extension must be enabled (it is by default on most X11 setups).
+- For Wayland sessions, you may need to run under XWayland or set `GDK_BACKEND=x11`.
+- No Python dependencies required — the native module uses Rust + X11 directly.
 
 ---
 
@@ -861,6 +888,45 @@ npm run build:ts            # compiles TypeScript
 node test/smoke-windows.mjs # verify
 ```
 
+### Linux
+
+You need:
+- [Rust](https://rustup.rs) (stable, 1.70+)
+- [Node.js](https://nodejs.org) 18+
+- X11 development libraries and tools
+
+```bash
+# Install dependencies (Ubuntu/Debian)
+sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev xdotool wmctrl xclip scrot
+
+git clone https://github.com/zavora-ai/computer-use-mcp
+cd computer-use-mcp
+npm install
+npm run build:native:linux  # builds Rust native module (.so -> .node)
+npm run build:ts            # compiles TypeScript
+```
+
+**Linux implementation details:**
+
+| What | How |
+|---|---|
+| Mouse & keyboard | X11/XTest — direct synthetic events via `XTestFakeKeyEvent`/`XTestFakeButtonEvent` |
+| Text input | `xdotool type` — reliable Unicode text entry |
+| App management | `wmctrl` + `xdotool` + `/proc` |
+| Window enumeration | `wmctrl -l -p` + `xdotool` |
+| Window activation | `xdotool windowactivate` |
+| Display info | X11 `XDisplayWidth`/`XDisplayHeight` |
+| Screenshots | `scrot` (fallback: `gnome-screenshot`, `import`) |
+| Clipboard | `xclip` (fallback: `xsel`) |
+| Workspaces | `wmctrl -d` for listing, `wmctrl -t` for moving windows |
+| Accessibility | Stubs (AT-SPI2 integration planned) |
+| Scripting | `bash` (or `pwsh` if installed) |
+
+**Notes:**
+- Currently supports X11 only. Wayland support is planned.
+- Accessibility features (UI tree, find_element, click_element) are stubbed — they return empty results rather than errors.
+- The `run_script` tool uses `bash` by default on Linux. Use `language: "bash"` in your scripts.
+
 ### Try the examples
 
 **Windows:**
@@ -933,9 +999,11 @@ This package has **full control of your computer** when permissions are granted.
 ## Limitations
 
 ### Platform
-- **macOS only.** The native module uses CoreGraphics, NSWorkspace, and `screencapture` — all macOS-specific. Linux and Windows are not supported.
-- **Minimum**: macOS 10.15 (Catalina) — required for `NSWorkspaceOpenConfiguration`.
-- **Tested on**: macOS 12 (Monterey), 13 (Ventura), 14 (Sonoma), 15 (Sequoia).
+- **macOS + Windows + Linux.** Each platform has a native Rust backend.
+- **macOS minimum**: macOS 10.15 (Catalina) — required for `NSWorkspaceOpenConfiguration`.
+- **macOS tested on**: macOS 12 (Monterey), 13 (Ventura), 14 (Sonoma), 15 (Sequoia).
+- **Linux**: X11 only (Wayland support planned). Requires `xdotool`, `wmctrl`, `xclip`, `scrot`.
+- **Linux tested on**: Ubuntu 24.04+ (GNOME on X11).
 
 ### Architecture
 - The prebuilt `.node` binary is compiled for the architecture of the machine it was built on (arm64 for Apple Silicon, x86_64 for Intel). If you're on a different architecture, build from source.
@@ -977,7 +1045,7 @@ This package has **full control of your computer** when permissions are granted.
 ## Troubleshooting
 
 ### "Error: computer-use-mcp requires macOS"
-You're running on Linux or Windows. This package is macOS-only.
+You're running on an unsupported platform. This package supports macOS, Windows, and Linux (X11).
 
 ### "Error: Cannot find module '...computer-use-napi.node'"
 The native binary is missing. Either:
