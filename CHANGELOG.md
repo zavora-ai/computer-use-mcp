@@ -1,6 +1,6 @@
 # Changelog
 
-## v6.1.1 (2026-05-16)
+## v6.2.0 (2026-05-16)
 
 v6.1.1 adds **native Linux support** (X11 + Wayland), making computer-use-mcp a true cross-platform desktop automation server for macOS, Windows, and Linux.
 
