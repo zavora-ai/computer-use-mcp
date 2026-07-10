@@ -2,6 +2,16 @@
 
 This guide covers how to integrate `computer-use-mcp` into AI agent frameworks and agentic workflows. Works on **macOS**, **Windows**, and **Linux**.
 
+**Skills (recommended):** copy from `skills/` in this package into your agent skills directory:
+- `skills/computer-use` — when/how to use desktop control
+- `skills/computer-use-forms` — accessibility form fill
+- `skills/computer-use-scripting` — AppleScript / PowerShell first
+- `skills/computer-use-recovery` — FocusFailure recovery
+- `skills/computer-use-windows-admin` — filesystem / registry / process
+
+**MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
+**Profiles:** `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default `full`)
+
 ## Tool priority guidance
 
 Desktop computer use should be your **last resort**. Always prefer more precise tools:
@@ -390,6 +400,35 @@ await client.key('command+v', targetApp)
 // Windows
 await client.key('ctrl+v', targetApp)
 ```
+
+The `type` tool already routes long or newline-containing text through the
+clipboard internally, so a single `type` call is reliable for multi-line text.
+Prefer **one** `type` call with the full block over many rapid back-to-back
+calls — rapid successive calls can race the clipboard save/restore.
+
+### Windows 11 Notepad (single-instance, tabbed, session-restoring)
+
+Modern Notepad reuses one process, opens files as **tabs**, and restores the
+previous session on launch. `Start-Process notepad` therefore does **not** give
+you a clean document — it may add a tab to a window that already holds the
+user's work. To automate it safely:
+
+- **Work in a fresh tab.** If a Notepad window already exists, activate it and
+  press `Ctrl+N` for a new tab; only launch a new process when none is running.
+  Never assume the active tab is empty.
+- **Save via accessibility, not blind keystrokes.** After `Ctrl+S`, set the
+  dialog's file-name field and press Save directly:
+  ```typescript
+  await client.key('ctrl+s', undefined, { targetWindowId: winId, focusStrategy: 'strict' })
+  await client.setValue(winId, 'AXTextField', 'File name:', savePath)
+  await client.pressButton(winId, 'Save')
+  await client.pressButton(winId, 'Yes') // confirm overwrite if prompted (no-op otherwise)
+  ```
+- **Close only your tab with `Ctrl+W`, never `Alt+F4`.** `Alt+F4` closes the
+  whole window (all tabs, including the user's). For an unsaved scratch tab,
+  press the "Don't save" button to discard.
+- **Avoid `Stop-Process notepad` for cleanup.** Force-killing leaves the session
+  dirty, so Notepad resurrects (and accumulates) tabs on the next launch.
 
 ### Use `activate_window` for recovery
 

@@ -45,6 +45,13 @@ async function main() {
   })
   await client.wait(2)
 
+  // Locate the Notepad window/tab showing our report so we can target it.
+  const winsRaw = JSON.parse((await client.listWindows()).content[0].text)
+  const wins = Array.isArray(winsRaw) ? winsRaw : (winsRaw.windows ?? [])
+  const np = wins.find(w => w.bundleId?.toLowerCase().includes('notepad') && w.title?.includes('web-report'))
+    ?? wins.find(w => w.bundleId?.toLowerCase().includes('notepad'))
+  const opts = np ? { targetWindowId: np.windowId, focusStrategy: 'strict' } : undefined
+
   // Step 5: Screenshot Notepad showing the content
   console.log('4. Screenshot of Notepad...')
   const shot = await client.screenshot({ width: 800 })
@@ -57,8 +64,6 @@ async function main() {
 
   // Step 6: Zoom into the report header to verify text
   console.log('5. Zooming into report header...')
-  const wins = JSON.parse((await client.listWindows()).content[0].text)
-  const np = wins.find(w => w.bundleId?.includes('notepad') && w.title?.includes('web-report'))
   if (np) {
     const zoom = await client.callTool('zoom', {
       region: [np.bounds.x + 5, np.bounds.y + 55, np.bounds.x + 500, np.bounds.y + 180]
@@ -70,18 +75,18 @@ async function main() {
     }
   }
 
-  // Step 7: Copy content from Notepad via clipboard
+  // Step 7: Copy content from Notepad via clipboard (targeted at the window)
   console.log('6. Copying from Notepad via Ctrl+A, Ctrl+C...')
-  await client.key('ctrl+a')
+  await client.key('ctrl+a', undefined, opts)
   await client.wait(0.2)
-  await client.key('ctrl+c')
+  await client.key('ctrl+c', undefined, opts)
   await client.wait(0.3)
   const clip = await client.readClipboard()
   console.log(`   Clipboard: ${clip.content[0]?.text?.slice(0, 60)}...`)
 
-  // Step 8: Close Notepad
-  console.log('7. Closing Notepad...')
-  await client.key('alt+f4')
+  // Step 8: Close just this tab (the report file is unmodified, so no prompt)
+  console.log('7. Closing the Notepad tab...')
+  if (opts) await client.key('ctrl+w', undefined, opts)
   await client.wait(0.5)
 
   // Step 9: Get file info

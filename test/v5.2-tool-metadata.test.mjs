@@ -25,8 +25,8 @@ function createMockNative() {
   }
 }
 
-test('Phase 4: every tool\'s description ends with [focusRequired: X]', async () => {
-  const server = createComputerUseServer({ native: createMockNative() })
+test('legacy focus tag: every description ends with [focusRequired: X] when enabled', async () => {
+  const server = createComputerUseServer({ native: createMockNative(), legacyFocusTag: true })
   const client = await connectInProcess(server)
   try {
     const res = await client.listTools()
@@ -40,6 +40,25 @@ test('Phase 4: every tool\'s description ends with [focusRequired: X]', async ()
       }
     }
     assert.deepEqual(untagged, [], `tools missing focusRequired tag: ${untagged.join(', ')}`)
+  } finally {
+    await client.close()
+  }
+})
+
+test('v7 default: descriptions carry NO [focusRequired] suffix; focusRequired stays in get_tool_metadata', async () => {
+  const server = createComputerUseServer({ native: createMockNative() })
+  const client = await connectInProcess(server)
+  try {
+    const res = await client.listTools()
+    const tools = Array.isArray(res) ? res : (res.tools ?? [])
+    assert.ok(tools.length > 40)
+    const stillTagged = tools.filter(t => TAG_RE.test(t.description ?? '')).map(t => t.name)
+    assert.deepEqual(stillTagged, [], `tools should NOT carry the legacy tag by default (v7): ${stillTagged.join(', ')}`)
+
+    // focusRequired is not lost — it is still queryable structurally.
+    const r = await client.callTool('get_tool_metadata', { tool_name: 'run_script' })
+    const body = JSON.parse(r.content.find(c => c.type === 'text').text)
+    assert.equal(body.focusRequired, 'scripting')
   } finally {
     await client.close()
   }
@@ -73,8 +92,8 @@ test('Phase 4: get_tool_metadata returns error on unknown tool', async () => {
   }
 })
 
-test('Phase 4: focusRequired values match the known enum', async () => {
-  const server = createComputerUseServer({ native: createMockNative() })
+test('Phase 4: focusRequired values match the known enum (legacy tag mode)', async () => {
+  const server = createComputerUseServer({ native: createMockNative(), legacyFocusTag: true })
   const client = await connectInProcess(server)
   try {
     const res = await client.listTools()

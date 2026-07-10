@@ -118,7 +118,7 @@ Mouse, keyboard, focus, window enumeration, and display operations run in-proces
 | **Platform** | macOS + Windows + Linux | Windows only | Windows only | Linux (Docker) | Linux (Docker) |
 | **Language** | Rust NAPI + TypeScript | Python | Python | Python (reference) | Python (reference) |
 | **Protocol** | MCP (stdio + in-process) | MCP (stdio) | MCP (stdio) | Claude API built-in | OpenAI API built-in |
-| **Tools** | 58 | 14 | 10 | 3 (computer, bash, editor) | 1 (computer) |
+| **Tools** | 64 | 14 | 10 | 3 (computer, bash, editor) | 1 (computer) |
 | **Screenshot** | DXGI + GDI + PNG/JPEG | dxcam + PIL | mss + PIL | Xvfb screenshot | Xvfb screenshot |
 | **Mouse input** | SendInput (Rust) | ctypes→SendInput | pyautogui | xdotool | xdotool |
 | **Keyboard** | SendInput Unicode (Rust) | SendKeys wrapper | pyautogui.write | xdotool | xdotool |
@@ -175,7 +175,7 @@ Your AI client (Claude, Cursor, etc.)
         │  MCP protocol (JSON-RPC over stdio or in-memory)
         ▼
   MCP Server  (src/server.ts)
-  ├── Registers 46 tools with Zod schemas
+  ├── Registers 64 tools with Zod schemas
   ├── Validates all inputs at the boundary
   └── Delegates to Session
         │
@@ -316,6 +316,15 @@ npx --yes --prefer-offline @zavora-ai/computer-use-mcp
 ```
 
 The server speaks MCP over stdio and is ready to connect to any MCP client.
+
+### First-run doctor
+
+Run `doctor` from any MCP client before the first real automation. It returns machine-readable checks plus exact remediation steps for native binary compatibility, display capture, clipboard, Accessibility/UI Automation, macOS Automation, PowerShell, policy, and audit logging.
+
+```typescript
+const status = await client.doctor()
+console.log(status.content.find(c => c.type === 'text')?.text)
+```
 
 ### Test it works
 
@@ -486,6 +495,22 @@ const cursorWin = await client.getCursorWindow()
 await client.activateApp('com.apple.Safari')
 await client.activateWindow(12345)
 
+// First-run onboarding diagnostics
+await client.doctor()
+
+// Non-interrupting native overlay pointer. This does not move the OS cursor.
+await client.agentPointer('move', { coordinate: [400, 300], nativeOverlay: true })
+await client.screenshot({ show_agent_pointer: true })
+
+// OpenAI Computer Use compatibility adapter
+await client.openaiComputer({
+  useVirtualPointer: true,
+  actions: [
+    { type: 'move', x: 400, y: 300 },
+    { type: 'screenshot' }
+  ]
+})
+
 // Clipboard
 await client.writeClipboard('some text')
 const clip = await client.readClipboard()
@@ -589,8 +614,21 @@ await client.fillForm({
 
 | Tool | Description | Parameters |
 |---|---|---|
-| `screenshot` | Capture the screen or a specific app/window | `width?: number` (default 1024), `quality?: number` (0=PNG, 1-100=JPEG, default 80), `provider?: string`, `target_app?: string`, `target_window_id?: number` |
+| `screenshot` | Capture the screen or a specific app/window | `width?: number` (default 1024), `quality?: number` (0=PNG, 1-100=JPEG, default 80), `provider?: string`, `target_app?: string`, `target_window_id?: number`, `show_agent_pointer?: bool` |
 | `zoom` | View a specific screen region at full resolution. Best for reading small text or inspecting UI details. | `region: [x1, y1, x2, y2]`, `quality?: number` (0=PNG default, 1-100=JPEG) |
+
+### Onboarding, compatibility, policy, and audit
+
+| Tool | Description | Parameters |
+|---|---|---|
+| `doctor` | First-run onboarding diagnostics with exact remediation steps. | `include_remediation?: bool` |
+| `policy_status` | Show active app allow/block lists, approval settings, and audit destination without revealing tokens. | — |
+| `agent_pointer` | Manage a virtual pointer that does not move the OS cursor or focus apps. When native overlay support is available, it shows a click-through always-on-top dot. Render it into screenshots with `screenshot(show_agent_pointer=true)`. | `action: get\|move\|show\|hide\|reset`, `coordinate?: [x,y]`, `visible?: bool`, `native_overlay?: bool` |
+| `openai_computer` | OpenAI Computer Use compatibility adapter for single or batched actions. | `action?`, `actions?`, `target_app?`, `target_window_id?`, `focus_strategy?`, `return_screenshot?`, `use_virtual_pointer?`, `native_overlay?` |
+
+`openai_computer` accepts action types `click`, `double_click`, `right_click`, `scroll`, `type`, `wait`, `keypress`, `drag`, `move`, and `screenshot`. Batched `actions[]` execute in order and stop on the first error.
+
+The native overlay pointer is non-activating, always-on-top, and click-through. Moving it updates the overlay window and internal virtual pointer state without moving the user's hardware cursor. Physical input tools still use the real OS cursor; use `get_tool_metadata` to check `movesUserCursor`, `requiresFocus`, `usesVirtualPointer`, and `physicalInput`.
 
 ### Mouse
 
@@ -780,6 +818,26 @@ Controls how aggressively the server acquires focus before delivering input:
 
 > **Tip:** Use `prepare_display` whenever you see a `focus_failed` with a `thief` app that isn't yours (for example, a macOS screenshot watcher grabbing focus after your screenshot call). It's a hammer, not a default — it leaves non-target apps hidden until you restore them.
 
+### Policy and audit
+
+Mutating tools pass through a policy gate before dispatch. By default, the server allows existing behavior, blocks known credential apps unless approved, and writes audit JSONL in production sessions unless disabled.
+
+| Environment variable | Purpose |
+|---|---|
+| `COMPUTER_USE_ALLOWED_APPS` | Comma-separated allowlist for mutating targeted app control. If set, targeted mutations outside the list are denied. |
+| `COMPUTER_USE_BLOCKED_APPS` | Comma-separated app bundle IDs/process names that are always denied. |
+| `COMPUTER_USE_CREDENTIAL_APPS` | Override the default sensitive-app list that requires approval. |
+| `COMPUTER_USE_REQUIRE_APPROVAL` | Set `true` to require approval for every mutating tool. |
+| `COMPUTER_USE_REQUIRE_APPROVAL_FOR` | Comma-separated tool names that require approval. |
+| `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL` | Set `true` to require approval for destructive filesystem/process/registry/script operations. |
+| `COMPUTER_USE_APPROVAL_TOKEN` | Private token callers must pass as `approval_token` after user approval. |
+| `COMPUTER_USE_AUDIT_LOG` | JSONL audit destination. Set `false` to disable, `true` for the default `~/.computer-use-mcp/audit.jsonl`, or an explicit path. |
+| `COMPUTER_USE_FS_ROOTS` | Optional filesystem jail. Comma-separated absolute roots; when set, the `filesystem` tool may only touch paths inside a root. Blocks `..` traversal and symlink escapes (resolved via `realpath`). Unset = unrestricted (legacy). |
+| `COMPUTER_USE_NATIVE_PATH` | Explicit path to the native `.node` addon, overriding automatic resolution (optional platform package → legacy root binary). Useful for custom builds or non-standard install layouts. |
+| `COMPUTER_USE_LEGACY_FOCUS_TAG` | Append the legacy `[focusRequired: X]` suffix to tool descriptions. **Off by default in v7** (`focusRequired` is still available via `_meta` and `get_tool_metadata`). Set `true` to restore the suffix. |
+
+Audit records redact text, scripts, values, messages, and tokens, replacing them with length and SHA-256 hashes. Use `policy_status` to inspect the active policy without exposing the approval token.
+
 ### Focus failure diagnostics
 
 When focus acquisition fails, the server returns a structured `FocusFailure` JSON payload with `isError: true`:
@@ -813,7 +871,7 @@ The `suggestedRecovery` field tells you what to do next:
 
 ### `createComputerUseServer(): McpServer`
 
-Creates an MCP server instance with all 46 tools registered. The server is not started until you connect a transport.
+Creates an MCP server instance with all registered tools. The server is not started until you connect a transport.
 
 ```typescript
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'

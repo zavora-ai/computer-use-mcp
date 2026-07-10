@@ -2,40 +2,46 @@
 /**
  * Computer Use MCP Server — exposes tools over MCP protocol.
  * Backed by in-process Rust NAPI module via session.
+ *
+ * v6.2+: registerTool + annotations + structuredContent + profiles + prompts + resources.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z, ZodTypeAny } from 'zod'
 import { createSession, type Session, type SessionOptions } from './session.js'
+import {
+  TOOL_CATALOG,
+  getToolMeta,
+  toMcpAnnotations,
+  toToolMetaPublic,
+  parseProfile,
+  toolInProfile,
+  type FocusRequired,
+  type ToolMeta,
+  type ProfileName,
+} from './tool-catalog.js'
+import { toMcpToolResult } from './result.js'
+import { SERVER_INSTRUCTIONS } from './instructions.js'
+import { registerPrompts } from './prompts.js'
+import { registerResources } from './resources.js'
+import { PRIORITY_OUTPUT_SCHEMAS } from './output-schemas.js'
 import { isStdioEntrypoint } from './entrypoint.js'
 
-/**
- * v5.2 — How each tool reaches the target app.
- *
- * - `scripting`: executes via AppleScript / JXA (`osascript`). Works even when
- *   the target app is backgrounded or hidden. Cheapest path for scriptable
- *   apps (Mail, Safari, Finder, Numbers, Music, Messages, Notes, Calendar).
- * - `ax`: reads or mutates via the AXUIElement (Accessibility) API. Needs
- *   Accessibility permission. Reads are always safe; mutations typically
- *   require the target frontmost but some apps allow background AXPress.
- * - `cgevent`: synthesizes keyboard / mouse events via CGEvent. **Requires
- *   the target app to be frontmost** — events route to whatever has focus.
- * - `none`: pure observation of system state (clipboard, display size,
- *   cursor position). No target needed.
- */
-export type FocusRequired = 'scripting' | 'ax' | 'cgevent' | 'none'
+export type { FocusRequired, ToolMeta }
 
-export interface ToolMeta {
-  focusRequired: FocusRequired
-  /** Whether this tool is classified as mutating by the session layer. */
-  mutates: boolean
-}
-
-const targetAppParam = z.string().optional().describe('Bundle ID of target app (auto-focuses before action)')
-const targetWindowIdParam = z.number().int().optional().describe('CGWindowID to target. Takes precedence over target_app.')
+const targetAppParam = z.string().optional().describe('App id: macOS bundle ID or Windows process name (auto-focuses before action)')
+const targetWindowIdParam = z.number().int().optional().describe('Window ID to target (CGWindowID on macOS, HWND on Windows). Takes precedence over target_app.')
 const focusStrategyParam = z.enum(['strict', 'best_effort', 'none', 'prepare_display']).optional().describe('Focus strategy: strict (fail if unconfirmed), best_effort (try and proceed), none (skip activation), prepare_display (hide every non-target app before acting — v5.2, defeats focus-stealing background apps)')
-const coord = { coordinate: z.tuple([z.number(), z.number()]).describe('[x, y] pixels') }
+const approvalTokenParam = z.string().optional().describe('Policy approval token. Required only when COMPUTER_USE_APPROVAL_TOKEN / approval policy requires it.')
+// NOTE: use length-constrained z.array (not z.tuple). Zod tuples serialize to
+// JSON Schema as `items: [ ... ]`, which is valid in draft-07 but REJECTED by
+// JSON Schema draft 2020-12 (Claude API), where tuples must use `prefixItems`.
+// A length-constrained array emits a single `items` schema object + minItems/
+// maxItems, which is valid across drafts. Runtime values are still arrays.
+const numArray = (len: number) => z.array(z.number()).length(len)
+const intArray = (len: number) => z.array(z.number().int()).length(len)
+const coord = { coordinate: numArray(2).describe('[x, y] logical pixels') }
 const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
   ...schema,
   target_app: targetAppParam,
@@ -48,51 +54,175 @@ const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok
 export interface ServerOptions extends SessionOptions {
   /** Override session instance for tests */
   session?: Session
+  /** Init-time tool profile (K18). Default full. */
+  profile?: ProfileName | string
+  /**
+   * Emit `structuredContent` + advertise `outputSchema`. Defaults to the
+   * `COMPUTER_USE_STRUCTURED_CONTENT` env var (true unless explicitly "false").
+   * When false, both are omitted for legacy text-only compatibility.
+   */
+  structuredContent?: boolean
+  /**
+   * v7 deprecation: append the legacy `[focusRequired: X]` suffix to tool
+   * descriptions. Defaults to the `COMPUTER_USE_LEGACY_FOCUS_TAG` env var,
+   * which is **off by default in v7** (focusRequired remains in `_meta`).
+   * Set to `true` (or the env var to "true") to restore the legacy suffix.
+   */
+  legacyFocusTag?: boolean
 }
 
 export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
-  const server = new McpServer({ name: 'computer-use', version: '6.1.0' })
+  const profile = parseProfile(opts.profile ?? process.env.COMPUTER_USE_PROFILE)
+  const structuredContentEnabled =
+    opts.structuredContent ?? (process.env.COMPUTER_USE_STRUCTURED_CONTENT !== 'false')
+  const legacyFocusTag =
+    opts.legacyFocusTag ?? (process.env.COMPUTER_USE_LEGACY_FOCUS_TAG === 'true')
+
+  const server = new McpServer(
+    { name: 'computer-use', version: '7.0.0' },
+    { instructions: SERVER_INSTRUCTIONS },
+  )
+
+  // Elicitation callback (PR-10): only when client supports it; token wins in session (K13).
+  const elicitApproval = opts.elicitApproval ?? (async (ctx) => {
+    try {
+      const caps = server.server.getClientCapabilities()
+      if (!caps?.elicitation) return false
+      const result = await server.server.elicitInput(
+        {
+          message: `Allow computer-use tool "${ctx.tool}"?${ctx.targetApp ? ` Target: ${ctx.targetApp}.` : ''}${ctx.destructive ? ' This may be destructive.' : ''}\nReasons: ${ctx.reasons.join(', ')}`,
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              approve: { type: 'boolean', title: 'Approve', description: 'Allow this action' },
+            },
+            required: ['approve'],
+          },
+        },
+        { timeout: 60_000 },
+      )
+      return result.action === 'accept' && result.content?.approve === true
+    } catch {
+      return false
+    }
+  })
+
   const session = opts.session ?? createSession({
     vision: opts.vision ?? (process.env.COMPUTER_USE_VISION !== 'false'),
     provider: opts.provider ?? process.env.COMPUTER_USE_PROVIDER,
     native: opts.native,
+    spawnBounded: opts.spawnBounded,
+    lockPath: opts.lockPath,
+    disableSessionLock: opts.disableSessionLock,
+    elicitApproval: opts.elicitApproval !== undefined ? opts.elicitApproval : elicitApproval,
+    profile,
   })
 
-  // v5.2: Per-tool metadata registry. Populated as each `tool()` call runs.
-  // Exposed to clients via the new `get_tool_metadata` tool and appended to
-  // each tool's description as `[focusRequired: X]` so agents that read
-  // descriptions can filter without a separate call.
+  // Registered tool metadata (for get_tool_metadata + tests)
   const toolMeta = new Map<string, ToolMeta>()
 
-  // Shorthand for common metadata combos, so each tool() call stays readable.
-  const CG_MUT:    ToolMeta = { focusRequired: 'cgevent',   mutates: true }
-  const AX_MUT:    ToolMeta = { focusRequired: 'ax',        mutates: true }
-  const AX_READ:   ToolMeta = { focusRequired: 'ax',        mutates: false }
-  const SCRIPTING: ToolMeta = { focusRequired: 'scripting', mutates: true }
-  const SCRIPT_READ: ToolMeta = { focusRequired: 'scripting', mutates: false }
-  const NONE_READ: ToolMeta = { focusRequired: 'none',      mutates: false }
-  const NONE_MUT:  ToolMeta = { focusRequired: 'none',      mutates: true }
+  const openAiActionSchema = z.object({
+    type: z.string().optional().describe('OpenAI computer action type, e.g. click, double_click, scroll, type, wait, keypress, drag, move, screenshot'),
+    action: z.string().optional().describe('Alias for type'),
+  }).catchall(z.unknown())
 
   const tool = (
     name: string,
     desc: string,
     schema: Record<string, ZodTypeAny>,
-    meta: ToolMeta,
+    _legacyMeta?: ToolMeta,
   ) => {
-    toolMeta.set(name, meta)
-    const tagged = `${desc} [focusRequired: ${meta.focusRequired}]`
-    server.tool(name, tagged, schema, async (args: Record<string, unknown>) => {
-      const result = await session.dispatch(name, args)
-      return {
-        content: result.content.map(c =>
-          c.type === 'image'
-            ? { type: 'image' as const, data: c.data, mimeType: c.mimeType }
-            : { type: 'text' as const, text: c.text }
-        ),
-        isError: result.isError,
-      }
-    })
+    const catalogMeta = getToolMeta(name)
+    if (!catalogMeta) {
+      throw new Error(`tool "${name}" missing from TOOL_CATALOG`)
+    }
+    if (!toolInProfile(catalogMeta, profile)) {
+      return // init-time profile filter (K18) — no list_changed
+    }
+    toolMeta.set(name, catalogMeta)
+    const tagged = legacyFocusTag ? `${desc} [focusRequired: ${catalogMeta.focusRequired}]` : desc
+    const inputSchema = catalogMeta.mutates ? { ...schema, approval_token: approvalTokenParam } : schema
+    const outputSchema = structuredContentEnabled ? PRIORITY_OUTPUT_SCHEMAS[name] : undefined
+    const annotations = toMcpAnnotations(catalogMeta)
+    const _meta = {
+      'computer-use/focusRequired': catalogMeta.focusRequired,
+      'computer-use/mutates': catalogMeta.mutates,
+      'computer-use/requiresFocus': catalogMeta.requiresFocus,
+      'computer-use/movesUserCursor': catalogMeta.movesUserCursor,
+      'computer-use/usesVirtualPointer': catalogMeta.usesVirtualPointer,
+      'computer-use/physicalInput': catalogMeta.physicalInput,
+      'computer-use/tier': catalogMeta.tier,
+    }
+
+    server.registerTool(
+      name,
+      {
+        description: tagged,
+        inputSchema,
+        ...(outputSchema ? { outputSchema } : {}),
+        annotations,
+        _meta,
+      },
+      async (args: Record<string, unknown>, extra) => {
+        // PR-14 progress: only report when the request carries a progressToken (no token → no spam).
+        const progressToken = extra?._meta?.progressToken
+        let onProgress: ((u: { progress: number; total?: number; message?: string }) => void) | undefined
+        if (progressToken !== undefined && extra?.sendNotification) {
+          const send = extra.sendNotification as unknown as (n: { method: string; params: Record<string, unknown> }) => Promise<void>
+          onProgress = (u) => {
+            try {
+              void send({
+                method: 'notifications/progress',
+                params: {
+                  progressToken,
+                  progress: u.progress,
+                  ...(u.total !== undefined ? { total: u.total } : {}),
+                  ...(u.message ? { message: u.message } : {}),
+                },
+              })
+            } catch { /* best-effort progress */ }
+          }
+        }
+        const result = await session.dispatch(name, args, extra?.signal, onProgress)
+        return toMcpToolResult(result, structuredContentEnabled)
+      },
+    )
   }
+
+  // Convenience aliases matching catalog focus/mutate (legacy call sites pass these; catalog wins)
+  const CG_MUT = TOOL_CATALOG.left_click
+  const AX_MUT = TOOL_CATALOG.click_element
+  const AX_READ = TOOL_CATALOG.get_ui_tree
+  const SCRIPTING = TOOL_CATALOG.run_script
+  const SCRIPT_READ = TOOL_CATALOG.get_app_dictionary
+  const NONE_READ = TOOL_CATALOG.screenshot
+  const NONE_MUT = TOOL_CATALOG.write_clipboard
+  const VIRTUAL_MUT = TOOL_CATALOG.agent_pointer
+  const DYNAMIC_MUT = TOOL_CATALOG.openai_computer
+
+  tool('doctor', 'Run first-run onboarding diagnostics. Checks native binary compatibility, permissions, display capture, clipboard, Accessibility/UI Automation, scripting, PowerShell, policy, and audit logging; returns machine-readable remediation steps.', {
+    include_remediation: z.boolean().optional().default(true).describe('Include exact setup/fix steps for failed or warning checks'),
+  }, NONE_READ)
+  tool('policy_status', 'Show active policy and audit configuration without revealing approval tokens.', {}, NONE_READ)
+  tool('agent_pointer', 'Manage a non-interrupting virtual agent pointer. Moving it does not move the user cursor or focus any app; use screenshot(show_agent_pointer=true) to render it into observations.', {
+    action: z.enum(['get', 'move', 'show', 'hide', 'reset']).describe('Virtual pointer operation'),
+    coordinate: numArray(2).optional().describe('[x, y] logical pixels for action=move'),
+    visible: z.boolean().optional().describe('Optional visibility override for move/reset'),
+    native_overlay: z.boolean().optional().describe('Show/update the native always-on-top overlay window when available. Defaults true for visible pointer actions.'),
+  }, VIRTUAL_MUT)
+  tool('openai_computer', 'OpenAI Computer Use compatibility adapter. Accepts a single action or batched actions[] using click, double_click, scroll, type, wait, keypress, drag, move, screenshot.', {
+    action: openAiActionSchema.optional().describe('Single OpenAI-style computer action'),
+    actions: z.array(openAiActionSchema).optional().describe('Batch of OpenAI-style computer actions executed in order'),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+    focus_strategy: focusStrategyParam,
+    return_screenshot: z.boolean().optional().describe('Capture a screenshot after the batch'),
+    use_virtual_pointer: z.boolean().optional().describe('For move actions, update the virtual agent pointer instead of moving the real OS cursor'),
+    native_overlay: z.boolean().optional().describe('When use_virtual_pointer=true, show/update the native overlay pointer if available.'),
+    provider: z.enum(PROVIDERS).optional().describe('Screenshot provider defaults when the adapter captures screenshots'),
+    width: z.number().int().positive().optional().describe('Screenshot width when return_screenshot or screenshot action is used'),
+    quality: z.number().int().min(0).max(100).optional().describe('Screenshot quality; 0 = PNG'),
+  }, DYNAMIC_MUT)
 
   tool('screenshot', 'Capture the screen or a specific window. BEFORE using this, consider get_ui_tree or find_element to discover UI by role/label — structured queries are cheaper than visual parsing. Auto-targets the active session window when no explicit target is given.', {
     width: z.number().int().positive().optional()
@@ -104,23 +234,25 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     target_window_id: targetWindowIdParam,
     provider: z.enum(PROVIDERS).optional()
       .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
+    show_agent_pointer: z.boolean().optional()
+      .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
   }, NONE_READ)
   tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling.', {
-    region: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()])
+    region: intArray(4)
       .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect'),
     quality: z.number().int().min(0).max(100).optional()
       .describe('Image quality. 0 = PNG (lossless, best for text). 1-100 = JPEG. Default: 0 (PNG).'),
   }, NONE_READ)
-  // Pointer / keyboard — CGEvent, target must be frontmost.
-  tool('left_click', 'Left-click at coordinates', withTargeting(coord), CG_MUT)
-  tool('right_click', 'Right-click at coordinates', withTargeting(coord), CG_MUT)
-  tool('middle_click', 'Middle-click at coordinates', withTargeting(coord), CG_MUT)
-  tool('double_click', 'Double-click at coordinates', withTargeting(coord), CG_MUT)
-  tool('triple_click', 'Triple-click at coordinates', withTargeting(coord), CG_MUT)
-  tool('mouse_move', 'Move cursor to coordinates', withTargeting(coord), CG_MUT)
+  // Pointer / keyboard — last resort; prefer click_element / press_button / set_value when possible.
+  tool('left_click', 'Left-click at coordinates (last resort — prefer click_element or press_button when the control is accessible). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('right_click', 'Right-click at coordinates (last resort — prefer accessibility when available). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('middle_click', 'Middle-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('double_click', 'Double-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('triple_click', 'Triple-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('mouse_move', 'Move OS cursor to coordinates (last resort — prefer agent_pointer for non-interrupting pointer). Requires target frontmost for subsequent clicks.', withTargeting(coord), CG_MUT)
   tool('left_click_drag', 'Click and drag', withTargeting({
-    coordinate: z.tuple([z.number(), z.number()]),
-    start_coordinate: z.tuple([z.number(), z.number()]).optional(),
+    coordinate: numArray(2),
+    start_coordinate: numArray(2).optional(),
   }), CG_MUT)
   tool('cursor_position', 'Get current cursor position', {}, NONE_READ)
   tool('left_mouse_down', 'Press left mouse button', withTargeting(coord), CG_MUT)
@@ -160,8 +292,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('read_clipboard', 'Read clipboard contents', {}, NONE_READ)
   tool('write_clipboard', 'Write text to clipboard', { text: z.string() }, NONE_MUT)
   // App / window lifecycle — NSWorkspace/AX mutations.
-  tool('open_application', 'Open and focus an app by bundle ID', {
-    bundle_id: z.string().describe('macOS bundle ID e.g. "com.apple.Safari"'),
+  tool('open_application', 'Open and focus an app by id (macOS bundle ID or Windows process name)', {
+    bundle_id: z.string().describe('App id: e.g. "com.apple.Safari" (macOS) or "notepad.exe" (Windows)'),
   }, AX_MUT)
   tool('get_frontmost_app', 'Get the currently frontmost app', {}, AX_READ)
   tool('list_windows', 'List visible on-screen windows, optionally filtered by bundle ID', {
@@ -189,14 +321,14 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('resize_window', 'Resize and/or move a window. Omit window_name to target the foreground window.', {
     window_name: z.string().optional().describe('Window title or process name to target (omit for foreground)'),
     window_id: z.number().int().optional().describe('Window ID to target (takes precedence over window_name)'),
-    window_size: z.tuple([z.number().int(), z.number().int()]).optional().describe('[width, height] in pixels'),
-    window_loc: z.tuple([z.number().int(), z.number().int()]).optional().describe('[x, y] top-left position'),
+    window_size: intArray(2).optional().describe('[width, height] in pixels'),
+    window_loc: intArray(2).optional().describe('[x, y] top-left position'),
   }, AX_MUT)
   tool('wait', 'Wait for N seconds', { duration: z.number().positive().max(300) }, NONE_READ)
   tool('snapshot', 'Combined screenshot + UI tree + window list + desktop info in one call. Returns structured text with all desktop state. Set use_vision=true to include screenshot image. Set use_annotation=true to draw bounding boxes on UI elements. Set grid_lines=[cols,rows] to overlay reference grid.', {
     use_vision: z.boolean().optional().default(false).describe('Include screenshot image in response'),
     use_annotation: z.boolean().optional().default(false).describe('Draw bounding boxes on detected UI elements'),
-    grid_lines: z.tuple([z.number().int(), z.number().int()]).optional().describe('[columns, rows] for reference grid overlay'),
+    grid_lines: intArray(2).optional().describe('[columns, rows] for reference grid overlay'),
     display: z.array(z.number().int()).optional().describe('Monitor indices to capture (omit for all)'),
     width: z.number().int().positive().optional().describe('Resize screenshot width'),
     target_app: targetAppParam,
@@ -295,33 +427,45 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     space_id: z.number().int().optional().describe('Space ID to destroy (ignored on Windows — always closes current)'),
   }, AX_MUT)
 
-  // ── v5.2: Tool metadata introspection ───────────────────────────────────
-  //
-  // This is the only tool that doesn't go through session.dispatch —
-  // it reads directly from the toolMeta registry populated by each
-  // tool() registration above. Pure read; no side effects.
-  server.tool(
-    'get_tool_metadata',
-    'Get structured metadata for a tool: focusRequired (scripting|ax|cgevent|none) and mutates (bool). Useful for agents that want to filter tools by their focus requirements — e.g. "show me only tools I can use while Safari is backgrounded". [focusRequired: none]',
-    { tool_name: z.string().describe('Name of the tool to inspect') },
-    async (args: Record<string, unknown>) => {
-      const name = typeof args.tool_name === 'string' ? args.tool_name : ''
-      const meta = toolMeta.get(name)
-      if (!meta) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({ error: 'unknown_tool', tool_name: name }),
-          }],
-          isError: true,
-        }
-      }
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ tool_name: name, ...meta }) }],
-      }
-    },
-  )
-  toolMeta.set('get_tool_metadata', { focusRequired: 'none', mutates: false })
+  // ── v5.2: Tool metadata introspection (server-local; K20) ───────────────
+  {
+    const name = 'get_tool_metadata'
+    const catalogMeta = getToolMeta(name)!
+    if (toolInProfile(catalogMeta, profile)) {
+      toolMeta.set(name, catalogMeta)
+      const outSchema = structuredContentEnabled ? PRIORITY_OUTPUT_SCHEMAS[name] : undefined
+      server.registerTool(
+        name,
+        {
+          description: `Get structured metadata for a tool: focusRequired (scripting|ax|cgevent|none) and mutates (bool). Useful for agents that want to filter tools by their focus requirements — e.g. "show me only tools I can use while Safari is backgrounded".${legacyFocusTag ? ' [focusRequired: none]' : ''}`,
+          inputSchema: { tool_name: z.string().describe('Name of the tool to inspect') },
+          ...(outSchema ? { outputSchema: outSchema } : {}),
+          annotations: toMcpAnnotations(catalogMeta),
+          _meta: {
+            'computer-use/focusRequired': catalogMeta.focusRequired,
+            'computer-use/mutates': catalogMeta.mutates,
+          },
+        },
+        async (args: Record<string, unknown>) => {
+          const toolName = typeof args.tool_name === 'string' ? args.tool_name : ''
+          // Prefer registered set (profile-filtered); fall back to full catalog for known tools outside profile
+          const meta = toolMeta.get(toolName) ?? getToolMeta(toolName)
+          if (!meta) {
+            return toMcpToolResult({
+              content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', tool_name: toolName }) }],
+              structuredContent: { error: 'unknown_tool', tool_name: toolName },
+              isError: true,
+            }, structuredContentEnabled)
+          }
+          const payload = { tool_name: toolName, ...toToolMetaPublic(meta) }
+          return toMcpToolResult({
+            content: [{ type: 'text', text: JSON.stringify(payload) }],
+            structuredContent: payload,
+          }, structuredContentEnabled)
+        },
+      )
+    }
+  }
 
   // ── Windows-parity tools (cross-platform where possible) ────────────────
 
@@ -379,7 +523,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('multi_select',
     'Select multiple items by clicking coordinates or UI element labels. Set press_ctrl=true for additive selection.',
     {
-      locs: z.array(z.tuple([z.number(), z.number()])).optional().describe('List of [x,y] coordinates'),
+      locs: z.array(numArray(2)).optional().describe('List of [x,y] coordinates'),
       labels: z.array(z.string()).optional().describe('List of UI element labels'),
       press_ctrl: z.boolean().optional().default(true).describe('Hold Ctrl for additive selection'),
       target_app: targetAppParam,
@@ -391,8 +535,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('multi_edit',
     'Enter text into multiple fields. Provide locs as [[x,y,text],...] or labels as [[label,text],...].',
     {
-      locs: z.array(z.tuple([z.number(), z.number(), z.string()])).optional().describe('List of [x,y,text] tuples'),
-      labels: z.array(z.tuple([z.string(), z.string()])).optional().describe('List of [label,text] tuples'),
+      locs: z.array(z.array(z.union([z.number(), z.string()])).length(3)).optional().describe('List of [x,y,text] tuples'),
+      labels: z.array(z.array(z.string()).length(2)).optional().describe('List of [label,text] tuples'),
       target_app: targetAppParam,
       target_window_id: targetWindowIdParam,
       focus_strategy: focusStrategyParam,
@@ -400,12 +544,20 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
 
   // Scrape tool — fetch web page content
   tool('scrape',
-    'Fetch and extract content from a URL. Returns clean text from web pages. Set use_dom=true to extract from active browser tab DOM instead of HTTP fetch.',
+    'Fetch and extract content from a URL. Returns clean text from web pages. Set use_dom=true to extract from active browser tab DOM instead of HTTP fetch. openWorld: may fetch untrusted content.',
     {
       url: z.string().describe('URL to fetch'),
       query: z.string().optional().describe('Focus extraction on specific information'),
       use_dom: z.boolean().optional().default(false).describe('Extract from active browser tab DOM instead of HTTP'),
     }, NONE_READ)
+
+  // MCP prompts + resources (v6.2+)
+  registerPrompts(server)
+  registerResources(server, {
+    session,
+    profile,
+    getLastScreenshot: () => session.getLastScreenshot?.(),
+  })
 
   return server
 }

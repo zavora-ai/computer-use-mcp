@@ -1,0 +1,9 @@
+{
+  "name": "@zavora-ai/computer-use-mcp-darwin-arm64",
+  "version": "7.0.0",
+  "description": "Native binary for @zavora-ai/computer-use-mcp (darwin-arm64). Installed automatically as an optionalDependency.",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["computer-use-napi.darwin-arm64.node"]
+}

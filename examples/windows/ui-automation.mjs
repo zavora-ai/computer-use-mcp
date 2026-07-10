@@ -23,8 +23,9 @@ async function main() {
   await client.wait(2)
 
   // 2. Find Notepad window
-  const wins = JSON.parse((await client.listWindows()).content[0].text)
-  const notepad = wins.find(w => w.bundleId?.includes('notepad'))
+  const winsRaw = JSON.parse((await client.listWindows()).content[0].text)
+  const wins = Array.isArray(winsRaw) ? winsRaw : (winsRaw.windows ?? [])
+  const notepad = wins.find(w => w.bundleId?.toLowerCase().includes('notepad'))
   if (!notepad) { console.log('Notepad not found'); return }
   console.log(`2. Found Notepad: [${notepad.windowId}] "${notepad.title}"`)
 
@@ -43,10 +44,13 @@ async function main() {
   const fields = JSON.parse((await client.findElement(notepad.windowId, { role: 'AXTextField' })).content[0].text)
   fields.forEach(f => console.log(`  [${f.role}] "${f.label}" value="${(f.value || '').slice(0, 50)}"`))
 
-  // 6. Type some text
+  // 6. Type some text (targeted at the Notepad window)
   console.log('\n6. Typing via UI...')
-  await client.type('Hello from UI Automation!\n')
-  await client.type('This text was typed into the AXTextField element.\n')
+  await client.type(
+    'Hello from UI Automation!\n' +
+    'This text was typed into the AXTextField element.\n',
+    undefined, { targetWindowId: notepad.windowId, focusStrategy: 'strict' },
+  )
   await client.wait(0.5)
 
   // 7. Get focused element
@@ -81,12 +85,13 @@ async function main() {
     console.log(`  saved: annotated.${ext}`)
   }
 
-  // 10. Close Notepad without saving
-  console.log('\n10. Closing Notepad...')
-  await client.key('alt+f4')
+  // 10. Close just this tab without saving (preserves other tabs)
+  console.log('\n10. Closing the Notepad tab...')
+  await client.key('ctrl+w', undefined, { targetWindowId: notepad.windowId, focusStrategy: 'strict' })
+  await client.wait(0.6)
+  // Notepad prompts to save the modified tab — decline.
+  await client.pressButton(notepad.windowId, "Don't save")
   await client.wait(0.5)
-  await client.key('tab') // focus "Don't Save"
-  await client.key('return')
 
   await client.close()
   console.log(`\n+ Done -- check ${outDir}`)

@@ -4,6 +4,7 @@
 
 | Version | Supported |
 |---------|-----------|
+| 6.x     | ✅ Yes    |
 | 5.x     | ✅ Yes    |
 | 4.x     | ✅ Yes    |
 | 3.x     | ✅ Yes    |
@@ -26,7 +27,12 @@ You will receive a response within **48 hours**. We aim to release a fix within 
 
 ## Scope
 
-This package has **full control of your Mac** when Accessibility permission is granted. The following are in scope:
+This package has **full control of the desktop** when the required OS permissions are granted:
+
+**macOS:** Accessibility, Screen Recording (and Automation for `run_script`).  
+**Windows:** UI Automation / input synthesis; PowerShell for registry and advanced automation.
+
+In scope:
 
 - Privilege escalation via tool inputs
 - Symlink attacks on temp files
@@ -35,6 +41,9 @@ This package has **full control of your Mac** when Accessibility permission is g
 - Memory safety issues in the Rust native module
 - Cross-process session lock bypass or race conditions
 - AppleScript/JXA injection via `run_script` inputs
+- PowerShell abuse via `run_script` on Windows
+- Unrestricted absolute path writes/deletes via `filesystem`
+- Registry and process kill misuse on Windows
 
 ## Out of scope
 
@@ -46,11 +55,23 @@ This package has **full control of your Mac** when Accessibility permission is g
 
 - All tool inputs are validated with Zod schemas at the MCP boundary and again in the session layer
 - No shell string interpolation — all subprocess calls use argument arrays
-- Screenshot temp files use `O_EXCL` exclusive creation with a monotonic counter to prevent symlink attacks
+- Screenshot temp files use exclusive creation patterns to prevent symlink attacks
 - The `wait` tool is capped at 300 seconds
-- The `run_script` tool is bounded by `timeout_ms` (default 30s, max 120s) to prevent runaway scripts
-- Cross-process session lock (`/tmp/.computer-use-mcp.lock`) prevents concurrent mutating tool calls from multiple server instances
-- The server has no network listener — it communicates only over stdio
+- The `run_script` tool is bounded by `timeout_ms` (default 30s, max 120s)
+- Cross-process session lock prevents concurrent mutating tool calls from multiple server instances
+- Policy gates: `COMPUTER_USE_ALLOWED_APPS`, `COMPUTER_USE_BLOCKED_APPS`, `COMPUTER_USE_REQUIRE_APPROVAL`, `COMPUTER_USE_APPROVAL_TOKEN`
+- Interactive hosts may receive elicitation prompts when approval is required (token still wins when present)
+- MCP tool annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`) are **hints only** — hosts must treat them as untrusted from untrusted servers; policy/approval is the real gate
+- The server has no network listener by default — it communicates over stdio
+- `computer://screenshot/latest` is cache-only and never captures on resource read
+
+### Residual risk (filesystem)
+
+Relative `filesystem` paths resolve under the Desktop. **Absolute paths are unrestricted by default** (no path jail) — treat `mode=delete|write|move` as destructive and admin-equivalent. To contain the tool, set `COMPUTER_USE_FS_ROOTS` to a comma-separated list of absolute roots: the `filesystem` tool then refuses any path outside those roots, including `..` traversal and symlink escapes (paths are normalized and `realpath`-resolved before the containment check). When unset, behavior is unchanged (legacy). Combine with `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL` and app allowlists for defense in depth.
+
+### Residual risk (scrape + desktop)
+
+Combining `scrape` (open-world content) with desktop control and private data access can form a prompt-injection exfiltration chain. Prefer isolating open-world tools from high-privilege sessions.
 
 ## Disclosure policy
 

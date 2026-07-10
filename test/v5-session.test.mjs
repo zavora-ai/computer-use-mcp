@@ -7,6 +7,8 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
+const winSkip = { skip: process.platform === 'win32' && 'macOS/Linux native-spaces path (Windows uses Ctrl+Win+D)' }
 import fc from 'fast-check'
 import { createSession } from '../dist/session.js'
 
@@ -535,7 +537,7 @@ test('Feature: v5-accessible-ui-automation, Property 10: screenshot auto-target 
 
 // ── Property 11: Tool guide priority ─────────────────────────────────────────
 
-test('Feature: v5-accessible-ui-automation, Property 11: tool guide priority', async () => {
+test('Feature: v5-accessible-ui-automation, Property 11: tool guide priority', macOnly, async () => {
   const { session } = makeSession()
 
   const scenarios = [
@@ -560,7 +562,7 @@ test('Feature: v5-accessible-ui-automation, Property 11: tool guide priority', a
 
 // ── Property 12: get_app_capabilities accuracy ──────────────────────────────
 
-test('Feature: v5-accessible-ui-automation, Property 12: get_app_capabilities accuracy', async () => {
+test('Feature: v5-accessible-ui-automation, Property 12: get_app_capabilities accuracy', macOnly, async () => {
   const native = createMockNative()
   // sdef says "com.apple.mail" is scriptable
   const scriptableSdef = `<?xml version="1.0" encoding="UTF-8"?>
@@ -597,7 +599,7 @@ test('Feature: v5-accessible-ui-automation, Property 12: get_app_capabilities ac
 
 // ── Property 13: run_script timeout enforcement ──────────────────────────────
 
-test('Feature: v5-accessible-ui-automation, Property 13: run_script timeout', async () => {
+test('Feature: v5-accessible-ui-automation, Property 13: run_script timeout', macOnly, async () => {
   const native = createMockNative()
   const spawnBounded = async (_cmd, _args, timeoutMs) => {
     return { stdout: '', stderr: '', code: -1, timedOut: true }
@@ -623,7 +625,7 @@ test('Feature: v5-accessible-ui-automation, Property 13: run_script timeout', as
   assert.match(r0.content[0].text, /timed out after 30000ms/)
 })
 
-test('run_script success returns stdout trimmed', async () => {
+test('run_script success returns stdout trimmed', macOnly, async () => {
   const native = createMockNative()
   const spawnBounded = async () => ({ stdout: 'hello world\n\n', stderr: '', code: 0, timedOut: false })
   const session = createSession({ native, spawnBounded })
@@ -635,7 +637,7 @@ test('run_script success returns stdout trimmed', async () => {
   assert.equal(r.content[0].text, 'hello world')
 })
 
-test('run_script non-zero exit surfaces stderr with isError', async () => {
+test('run_script non-zero exit surfaces stderr with isError', macOnly, async () => {
   const native = createMockNative()
   const spawnBounded = async () => ({ stdout: '', stderr: "syntax error\n", code: 1, timedOut: false })
   const session = createSession({ native, spawnBounded })
@@ -649,7 +651,7 @@ test('run_script non-zero exit surfaces stderr with isError', async () => {
 
 // ── Property 14: Spaces graceful degradation ─────────────────────────────────
 
-test('Feature: v5-accessible-ui-automation, Property 14: spaces unsupported degrades gracefully', async () => {
+test('Feature: v5-accessible-ui-automation, Property 14: spaces unsupported degrades gracefully', winSkip, async () => {
   const native = createMockNative()
   native._setCreateAgentSpaceResult(() => ({ supported: false, reason: 'api_unavailable' }))
   native._setMoveWindowToSpaceResult(() => ({ moved: false, reason: 'api_unavailable' }))
@@ -667,7 +669,7 @@ test('Feature: v5-accessible-ui-automation, Property 14: spaces unsupported degr
   assert.ok(['api_unavailable', 'mock'].includes(b2.error) || b2.error === 'api_unavailable')
 })
 
-test('create_agent_space caches a supported result', async () => {
+test('create_agent_space caches a supported result', winSkip, async () => {
   const native = createMockNative()
   let invocations = 0
   native._setCreateAgentSpaceResult(() => {
@@ -686,7 +688,7 @@ test('create_agent_space caches a supported result', async () => {
   assert.equal(b2.created, false)
 })
 
-test('create_agent_space reports yabai scripting-addition setup requirement', async () => {
+test('create_agent_space reports yabai scripting-addition setup requirement', macOnly, async () => {
   const previousBackend = process.env.COMPUTER_USE_SPACES_BACKEND
   process.env.COMPUTER_USE_SPACES_BACKEND = 'yabai'
   try {
@@ -800,7 +802,7 @@ test('fill_form with all fields failing still returns structured JSON (not isErr
 
 // ── Example: get_app_dictionary cache hits on repeat ────────────────────────
 
-test('get_app_dictionary caches results and invalidates on PID change', async () => {
+test('get_app_dictionary caches results and invalidates on PID change', macOnly, async () => {
   const native = createMockNative()
   let sdefCalls = 0
   const responses = new Map()

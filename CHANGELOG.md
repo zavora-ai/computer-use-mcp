@@ -1,5 +1,111 @@
 # Changelog
 
+## v7.0.0 (2026-07-10)
+
+Architecture-finish release. Builds on the v6.2.1 modernization with cancellation, progress, filesystem containment, a native binary resolver, and a session-layer split. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
+
+### Fixed (Windows)
+- **Tool input schemas are now valid JSON Schema draft 2020-12.** Coordinate/region/size parameters were emitted as Zod tuples (`"items": [ … ]`), which draft 2020-12 rejects (it requires `prefixItems`). Some MCP hosts (e.g. Anthropic-backed clients) refused the whole tool list with a 400. These parameters now use length-constrained arrays (`{ type: "array", items: {…}, minItems/maxItems }`), valid across drafts, with identical runtime values. Affects `agent_pointer`, `zoom`, all click/mouse tools, `left_click_drag`, `resize_window`, `snapshot`, `multi_select`, `multi_edit`.
+- **`type` no longer drops or garbles characters on Windows.** Native keyboard injection sent one `SendInput` per character, which the Windows 11 (UWP) text stack intermittently dropped/reordered. Characters are now sent as a single batched `SendInput` of `KEYEVENTF_UNICODE` events (atomic, reliably queued).
+- **Multi-line typing preserves line breaks.** `write_clipboard` now normalizes `\n` → `\r\n` for `CF_UNICODETEXT`, and the session `type` handler routes newline-containing (or long) text through the clipboard-paste path, which is reliable on UWP controls.
+
+### Docs / examples (Windows)
+- Windows examples updated for the v7 wire shapes: `list_windows` → `{ windows: [...] }` and `get_frontmost_app` → `{ app: {...} }`.
+- Notepad examples hardened for Windows 11's single-instance/tabbed/session-restoring Notepad: work in a fresh tab (`Ctrl+N`), drive the Save As dialog via accessibility (`set_value` on "File name:" + press "Save"), and close only that tab (`Ctrl+W`) instead of `Alt+F4`. De-hardcoded a `Desktop` path.
+
+### Breaking
+- **`[focusRequired: X]` description suffix is now OFF by default.** `focusRequired` remains available via `_meta` (`computer-use/focusRequired`) and `get_tool_metadata`. Restore the suffix with `COMPUTER_USE_LEGACY_FOCUS_TAG=true` (or `ServerOptions.legacyFocusTag: true`).
+
+### Added
+- **Cancellation** — tool handlers honor the MCP host `AbortSignal`: `wait` returns early, `run_script` `SIGKILL`s the child.
+- **Progress** — `filesystem search` (and the bounded spawner path) emit `notifications/progress` **only when the request carries a progressToken** (no token → no spam).
+- **Filesystem jail** — `COMPUTER_USE_FS_ROOTS` confines the `filesystem` tool to allowlisted roots (blocks `..`/symlink escapes). Unset = legacy unrestricted.
+- **Native binary dual resolver** — `COMPUTER_USE_NATIVE_PATH` → optional platform package → legacy root binary → generic, with a doctor-friendly error. Lazy resolution.
+- **Native `optionalDependencies` packaging** — per-platform packages under `packages/*` (lockstep version); the resolver prefers them, falling back to the legacy root binary shipped in the main tarball through the 7.x line.
+
+### Architecture
+- Session split continues into `src/session/*` (`tool-guide`, `fs-jail`, …); `session.ts` re-exports.
+- rmcp evaluated — **NO-GO** for a rewrite (`docs/specs/SPIKE-rmcp.md`).
+
+### Tests
+- Suite expanded to cover cancellation, progress, FS jail, resolver, profiles/resources/elicitation, and the focus-tag deprecation modes.
+
+## v6.2.1 (2026-07-10)
+
+Release-completion gate for the v6.2 modernization (see `docs/specs/MODERNIZATION-v6.2-v7.md`, PR-19).
+
+### Fixed
+- **`COMPUTER_USE_STRUCTURED_CONTENT=false` now omits both `outputSchema` and `structuredContent`.** Previously only the `outputSchema` advertisement was suppressed while results still carried `structuredContent`, so the documented legacy text-only mode did not actually take effect. The flag is now evaluated per `createComputerUseServer` (also overridable via `ServerOptions.structuredContent`) and threaded through every result-mapping path, including the server-local `get_tool_metadata` handler.
+
+### Changed
+- **Pinned `@modelcontextprotocol/sdk` to exact `1.29.0`** (no caret range) for reproducible release builds (K11).
+
+### Docs
+- Corrected stale tool counts in README (feature matrix and architecture diagram) to **64**.
+- Reconciled contradictory SDK "pin" wording in the CHANGELOG and modernization spec.
+
+### CI / release assurance
+- CI now runs the **full Node test suite on both macOS and Windows** (previously only `stdio.test.mjs` on macOS).
+- Added a **package-content assertion** that the published tarball includes `dist/**`, `AGENTS.md`, `README`, `LICENSE`, and `skills/**/SKILL.md`.
+- The stdio initialize/list/version smoke runs as part of the full suite on both platforms.
+
+### Tests
+- Added positive/negative coverage for the structured-content opt-out (enabled, disabled via option, disabled via env var), asserting both the result field and the `outputSchema` advertisement.
+
+### Cancellation (PR-14)
+- Tool handlers now honor the MCP host `AbortSignal` (`extra.signal`), threaded through `Session.dispatch`.
+- `wait` returns early on abort instead of blocking the full duration.
+- `run_script` (and the bounded spawner) `SIGKILL`s the child process on abort.
+- Best-effort: many stdio hosts never send cancellation; unaborted behavior is unchanged. Covered by `test/cancellation.test.mjs`.
+
+### Native loader (PR-15, resolver)
+- `src/native.ts` now resolves the native binary via an ordered dual resolver: `COMPUTER_USE_NATIVE_PATH` → optional platform package `@zavora-ai/computer-use-mcp-${platform}-${arch}` → legacy package-root `computer-use-napi.${platform}-${arch}.node` → generic `computer-use-napi.node`, with a doctor-friendly error listing every attempt. Resolution is lazy (first `loadNative`).
+- Additive/back-compatible: with the optional packages unpublished, resolution falls through to the legacy root binary (unchanged behavior). Publishing the platform packages + declaring `optionalDependencies` remains a follow-up. Covered by `test/native-resolver.test.mjs`.
+
+### v6.2 MCP protocol modernization (ships in this 6.2.1 release)
+
+Annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
+
+### Protocol
+- **Pin** `@modelcontextprotocol/sdk` to exact `1.29.0` (K11: exact tested version, no caret); migrate tool registration to `registerTool`
+- **Tool annotations:** `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` on all 64 tools (Appendix A)
+- **`_meta`:** `computer-use/focusRequired`, mutates, and related fields for hosts that understand them
+- **Server instructions** injected at initialize (tool priority hierarchy)
+- **`structuredContent`** dual-write for priority tools (`doctor`, `policy_status`, guide, windows, etc.)
+- **`outputSchema`** only where structured success paths are complete (K17)
+- **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`
+- **MCP resources:** `computer://display/main`, `windows`, `frontmost`, `policy`, `profile/tools`, `screenshot/latest` (**cache-only**, never captures on read)
+
+### Wire format (breaking for text-JSON parsers)
+- `list_windows` text JSON is now `{ "windows": [...] }` (was a top-level array)
+- `get_frontmost_app` text JSON is now `{ "app": ... | null }`
+- `get_active_space` text JSON is now `{ "active_space_id": number | null }`
+- Object-shaped tools keep previous keys; additive fields only (`profile` on `policy_status`, guide confidence fields)
+
+### Agent guidance
+- **Skills** shipped under `skills/**` and included in the npm package
+- **AGENTS.md** packaged; points at skills and prompts
+- `get_tool_guide` returns additive `confidence`, `fallbackSequence`, `platform`, and profile remediation
+
+### Profiles (init-time only)
+- `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default **`full`**)
+- Filters tools at process start; no runtime `list_changed` in this release
+
+### Policy / safety
+- **PR-0:** `resize_window` added to mutating lock set (was missing from `MUTATING_TOOLS`)
+- Tool catalog SSOT for mutates + annotations (`src/tool-catalog.ts`)
+- Elicitation-based approval when the host supports it; **`approval_token` still wins** when valid
+- `SECURITY.md` updated for Windows + 6.x and filesystem residual risk
+
+### Client
+- `listTools` returns annotations / `_meta` / schemas
+- `listResources` / `readResource` / `listPrompts` / `getPrompt` helpers
+- `ToolResult.structuredContent` passthrough
+
+### Env
+- `COMPUTER_USE_PROFILE` — tool profile (default `full`)
+- `COMPUTER_USE_STRUCTURED_CONTENT=false` — disable structuredContent + outputSchema advertisement
+
 ## v6.2.0 (2026-05-16)
 
 v6.1.1 adds **native Linux support** (X11 + Wayland), making computer-use-mcp a true cross-platform desktop automation server for macOS, Windows, and Linux.

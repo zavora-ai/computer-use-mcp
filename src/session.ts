@@ -8,139 +8,67 @@
  */
 
 import { loadNative, type NativeModule } from './native.js'
-import { execFile, execFileSync } from 'child_process'
+import { execFileSync } from 'child_process'
+import { MUTATING_TOOLS } from './tool-catalog.js'
+import { lookupToolGuide } from './session/tool-guide.js'
+import { fsRootsViolation } from './session/fs-jail.js'
+import { parseSdef } from './session/scripting-dictionary.js'
+import { sleep, sleepAbortable, defaultSpawnBounded } from './session/spawn.js'
+import type { SpawnResult, SpawnBounded } from './session/spawn.js'
+import { FocusError, WindowNotFoundError } from './session/errors.js'
+import type { FocusFailure } from './session/errors.js'
+import { PROVIDER_WIDTH, PROVIDER_QUALITY } from './session/constants.js'
+import type {
+  ScriptingDictionary,
+  ScriptingDictionaryCommand,
+  ScriptingDictionarySuite,
+  ScriptingDictionaryClass,
+} from './session/scripting-dictionary.js'
+import {
+  ok,
+  okJson,
+  okJsonWrappedArray,
+  okJsonWrappedScalar,
+  errJson,
+  type ToolResult,
+} from './result.js'
 
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+export type { ToolResult } from './result.js'
+export type { SpawnResult, SpawnBounded } from './session/spawn.js'
+export type { AutomationApproach, ToolGuideEntry } from './session/tool-guide.js'
+export type {
+  ScriptingDictionary,
+  ScriptingDictionaryCommand,
+  ScriptingDictionarySuite,
+  ScriptingDictionaryClass,
+} from './session/scripting-dictionary.js'
 
-// ── Scripting bridge ──────────────────────────────────────────────────────────
 
-export interface SpawnResult {
-  stdout: string
-  stderr: string
-  code: number
-  timedOut: boolean
-}
 
-export type SpawnBounded = (
-  cmd: string,
-  args: string[],
-  timeoutMs: number,
-) => Promise<SpawnResult>
 
-/** Spawn a process with a hard timeout. Kills the child on overrun. */
-const defaultSpawnBounded: SpawnBounded = (cmd, args, timeoutMs) =>
-  new Promise<SpawnResult>(resolve => {
-    const child = execFile(cmd, args, { timeout: 0, maxBuffer: 8 * 1024 * 1024 })
-    let stdout = ''
-    let stderr = ''
-    child.stdout?.on('data', chunk => { stdout += chunk.toString() })
-    child.stderr?.on('data', chunk => { stderr += chunk.toString() })
-    let timedOut = false
-    const killer = setTimeout(() => {
-      timedOut = true
-      try { child.kill('SIGKILL') } catch { /* ignore */ }
-    }, Math.max(timeoutMs, 100))
-    child.on('error', err => {
-      clearTimeout(killer)
-      resolve({ stdout, stderr: stderr || String(err), code: -1, timedOut })
-    })
-    child.on('close', code => {
-      clearTimeout(killer)
-      resolve({ stdout, stderr, code: code ?? -1, timedOut })
-    })
-  })
-
-// ── Scripting dictionary parser ───────────────────────────────────────────────
-
-export interface ScriptingDictionaryCommand {
-  name: string
-  description?: string
-}
-
-export interface ScriptingDictionaryClass {
-  name: string
-  properties?: string[]
-}
-
-export interface ScriptingDictionarySuite {
-  name: string
-  commands: ScriptingDictionaryCommand[]
-  classes: ScriptingDictionaryClass[]
-}
-
-export interface ScriptingDictionary {
-  bundleId: string
-  suites: ScriptingDictionarySuite[]
-}
-
-/** Minimal `.sdef` parser — extracts suite/command/class names from the XML. */
-function parseSdef(xml: string, bundleId: string): ScriptingDictionary {
-  const suites: ScriptingDictionarySuite[] = []
-  const suiteRe = /<suite\b[^>]*\bname="([^"]+)"[^>]*>([\s\S]*?)<\/suite>/g
-  let m: RegExpExecArray | null
-  while ((m = suiteRe.exec(xml)) !== null) {
-    const suiteName = m[1]
-    const body = m[2]
-    const commands: ScriptingDictionaryCommand[] = []
-    const cmdRe = /<command\b[^>]*\bname="([^"]+)"[^>]*(?:\/>|>([\s\S]*?)<\/command>)/g
-    let cm: RegExpExecArray | null
-    while ((cm = cmdRe.exec(body)) !== null) {
-      const desc = cm[0].match(/\bdescription="([^"]*)"/)?.[1]
-      commands.push(desc ? { name: cm[1], description: desc } : { name: cm[1] })
-    }
-    const classes: ScriptingDictionaryClass[] = []
-    const classRe = /<class\b[^>]*\bname="([^"]+)"[^>]*(?:\/>|>([\s\S]*?)<\/class>)/g
-    let classMatch: RegExpExecArray | null
-    while ((classMatch = classRe.exec(body)) !== null) {
-      const clsName = classMatch[1]
-      const clsBody = classMatch[2] ?? ''
-      const propNames: string[] = []
-      const propRe = /<property\b[^>]*\bname="([^"]+)"/g
-      let pm: RegExpExecArray | null
-      while ((pm = propRe.exec(clsBody)) !== null) {
-        propNames.push(pm[1])
-      }
-      classes.push(propNames.length ? { name: clsName, properties: propNames } : { name: clsName })
-    }
-    suites.push({ name: suiteName, commands, classes })
-  }
-  return { bundleId, suites }
-}
-
-// ── Provider-aware screenshot defaults ────────────────────────────────────────
-
-const PROVIDER_WIDTH: Record<string, number> = {
-  anthropic:     1024,
-  openai:        1024,
-  'openai-low':   512,
-  gemini:         768,
-  llama:         1120,
-  grok:          1024,
-  mistral:       1024,
-  qwen:           896,
-  nova:          1024,
-  'deepseek-vl':  896,
-  phi:            896,
-  auto:          1024,
-}
-
-const PROVIDER_QUALITY: Record<string, number> = {
-  anthropic: 80,
-  openai:    80,
-  gemini:    75,
-  default:   80,
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Session {
-  dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult>
+  dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal, onProgress?: ProgressReporter): Promise<ToolResult>
+  /** Last screenshot from this session, if any (for cache-only resource; K15). */
+  getLastScreenshot?(): { mimeType: string; data: string; capturedAt: number } | undefined
 }
 
-export interface ToolResult {
-  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>
-  isError?: boolean
-}
+export type ElicitApproval = (ctx: {
+  tool: string
+  args: Record<string, unknown>
+  reasons: string[]
+  targetApp?: string
+  destructive: boolean
+}) => Promise<boolean>
+
+/**
+ * Progress reporter for long-running tools (PR-14 progress half). Only wired by
+ * the server when the MCP request carries a progressToken — no token, no reporter,
+ * no notifications (avoids spam). Best-effort; handlers ignore a missing reporter.
+ */
+export type ProgressReporter = (update: { progress: number; total?: number; message?: string }) => void
 
 export interface TargetState {
   bundleId?: string
@@ -168,19 +96,6 @@ export interface TargetState {
  */
 export type FocusStrategy = 'strict' | 'best_effort' | 'none' | 'prepare_display'
 
-interface FocusFailure {
-  error: 'focus_failed'
-  requestedBundleId: string
-  requestedWindowId: number | null
-  frontmostBefore: string | null
-  frontmostAfter: string | null
-  targetRunning: boolean
-  targetHidden: boolean
-  targetWindowVisible: boolean | null
-  activationAttempted: boolean
-  suggestedRecovery: 'activate_window' | 'unhide_app' | 'open_application'
-}
-
 export interface SessionOptions {
   /** Disable image output for text-only models (DeepSeek-V3, R1, etc.) */
   vision?: boolean
@@ -198,221 +113,17 @@ export interface SessionOptions {
    * self-deadlock. Default: false (lock enabled).
    */
   disableSessionLock?: boolean
-}
-
-// ── v5: Tool guide static table ───────────────────────────────────────────────
-
-export type AutomationApproach = 'scripting' | 'accessibility' | 'keyboard' | 'coordinate'
-
-export interface ToolGuideEntry {
-  approach: AutomationApproach
-  toolSequence: string[]
-  explanation: string
-  bundleIdHints?: string[]
-}
-
-interface ToolGuidePattern extends ToolGuideEntry {
-  pattern: RegExp
-}
-
-const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
-  // ── Windows-specific entries (checked first on Windows) ─────────────────
-  ...(process.platform === 'win32' ? [
-    {
-      pattern: /\b(file|folder|directory|rename|move|copy)\b.*\b(file|folder|directory|desktop)\b|\b(desktop)\b.*\b(file|folder|save|copy)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['filesystem', 'run_script'],
-      explanation:
-        'Use the filesystem tool for file operations, or PowerShell via run_script for complex tasks. Faster than GUI clicks.',
-    },
-    {
-      pattern: /\b(registry|regedit|hkey|hkcu|hklm)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['registry'],
-      explanation:
-        'Use the registry tool for Windows Registry operations. Accepts PowerShell-format paths.',
-    },
-    {
-      pattern: /\b(send|compose|reply|new|write).*(email|mail|message)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Use PowerShell via run_script to automate email. For Outlook: `$ol = New-Object -ComObject Outlook.Application; $mail = $ol.CreateItem(0)`.',
-    },
-    {
-      pattern: /\b(open|visit|navigate).*(url|website|https?:|web\s*page|tab)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Use PowerShell: `Start-Process "https://example.com"` to open URLs in the default browser.',
-    },
-    {
-      pattern: /\b(powershell|cmd|terminal|command|shell|script)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Use run_script with language "powershell" for system automation, CLI tools, and scripting.',
-    },
-    {
-      pattern: /\b(process|task|kill|terminate|stop)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['process_kill'],
-      explanation:
-        'Use process_kill to list or terminate processes by name or PID.',
-    },
-    {
-      pattern: /\b(notify|notification|alert|toast)\b/i,
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['notification'],
-      explanation:
-        'Use the notification tool to send Windows toast notifications.',
-    },
-  ] as ToolGuidePattern[] : []),
-  // ── macOS-specific entries ──────────────────────────────────────────────
-  ...(process.platform === 'darwin' ? [
-    {
-      pattern: /\b(send|compose|reply|new|write).*(email|mail|message)\b/i,
-      bundleIdHints: ['com.apple.mail'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['get_app_capabilities', 'run_script'],
-      explanation:
-        'Mail is scriptable. Use AppleScript `make new outgoing message` or `send` — one call replaces the whole compose flow.',
-    },
-    {
-      pattern: /\b(open|visit|navigate).*(url|website|https?:|web\s*page|tab)\b/i,
-      bundleIdHints: ['com.apple.Safari', 'com.google.Chrome'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Safari and Chrome are scriptable. `tell application "Safari" to open location "<url>"` beats screenshot-and-click.',
-    },
-    {
-      pattern: /\b(spreadsheet|cell|row|column|numbers|sheet)\b/i,
-      bundleIdHints: ['com.apple.iWork.Numbers', 'com.microsoft.Excel'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['get_app_dictionary', 'run_script'],
-      explanation:
-        'Numbers is deeply scriptable — read/write cells via AppleScript. Fall back to fill_form if scripting is unavailable.',
-    },
-    {
-      pattern: /\b(file|folder|directory|finder|rename|move|copy|desktop)\b/i,
-      bundleIdHints: ['com.apple.finder'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Finder is scriptable (and shell is often even better). Prefer `osascript` or direct filesystem calls over GUI clicks.',
-    },
-    {
-      pattern: /\b(calendar|event|reminder|note|todo|task)\b/i,
-      bundleIdHints: ['com.apple.iCal', 'com.apple.reminders', 'com.apple.Notes'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['get_app_capabilities', 'run_script'],
-      explanation:
-        'Calendar, Reminders, and Notes are all scriptable. One `make new <event/reminder/note>` call does the work.',
-    },
-    {
-      pattern: /\b(play|pause|track|playlist|song|music)\b/i,
-      bundleIdHints: ['com.apple.Music'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Music.app is scriptable: `tell application "Music" to play` / `pause` / `next track`.',
-    },
-    {
-      pattern: /\b(imessage|send\s+message|chat|sms)\b/i,
-      bundleIdHints: ['com.apple.iChat'],
-      approach: 'scripting' as AutomationApproach,
-      toolSequence: ['run_script'],
-      explanation:
-        'Messages is scriptable. Use AppleScript to send messages to a buddy without UI.',
-    },
-  ] as ToolGuidePattern[] : []),
-  // ── Cross-platform entries ─────────────────────────────────────────────
-  {
-    pattern: /\b(fill|enter|type)\b.*\b(form|field|input)\b/i,
-    approach: 'accessibility',
-    toolSequence: ['get_ui_tree', 'fill_form'],
-    explanation:
-      'Batch-set form fields by accessibility label — one fill_form call instead of click+type per field.',
-  },
-  {
-    pattern: /\b(menu|menubar|file\s*(menu)?|edit\s*menu)\b/i,
-    approach: 'accessibility',
-    toolSequence: ['select_menu_item'],
-    explanation:
-      'Use select_menu_item — walks the menu bar programmatically, faster and more reliable than visual navigation.',
-  },
-  {
-    pattern: /\b(click|press|tap)\b.*\b(button|link)\b/i,
-    approach: 'accessibility',
-    toolSequence: ['find_element', 'press_button'],
-    explanation:
-      'press_button finds buttons by label — avoids pixel-coordinate drift across window moves and resolution changes.',
-  },
-  {
-    pattern: /\b(read|inspect|verify|check|examine|zoom|detail|small\s*text|tiny|pixel|magnif|enlarge|close.?up)\b/i,
-    approach: 'coordinate' as AutomationApproach,
-    toolSequence: ['zoom'],
-    explanation:
-      'Use the zoom tool to inspect a specific screen region at full native resolution. Pass region: [x1, y1, x2, y2] to crop without downscaling. Best for reading small text, verifying values, or checking pixel-level details. Default output is lossless PNG. Tip: take a screenshot first to identify the region coordinates, then zoom into the area of interest.',
-  },
-  {
-    pattern: /\b(text|value|number|label|title|heading|content|status|what\s*does\s*it\s*say|read\s*the|what\s*is\s*written|what\s*does.*say)\b/i,
-    approach: 'accessibility' as AutomationApproach,
-    toolSequence: ['get_ui_tree', 'zoom'],
-    explanation:
-      'To read text on screen: first try get_ui_tree which returns element labels and values as structured data (fastest, no image needed). If the text is in an image or non-accessible element, use zoom with a tight region around the text for a full-resolution lossless PNG crop.',
-  },
-  {
-    pattern: /\b(screenshot|see|show|look|observe|capture|screen)\b/i,
-    approach: 'accessibility' as AutomationApproach,
-    toolSequence: ['screenshot', 'zoom'],
-    explanation:
-      'Use screenshot for a full-screen overview (resized for efficiency). If you need to read specific text or inspect details, follow up with zoom on the region of interest — it returns full native resolution without downscaling. For structured UI data without an image, use get_ui_tree instead.',
-  },
-  {
-    pattern: /.*/,
-    approach: 'accessibility',
-    toolSequence: ['get_app_capabilities', 'get_ui_tree', 'find_element', 'click_element'],
-    explanation:
-      'No specific pattern matched. Probe capabilities, then prefer accessibility — fall back to coordinate input only as a last resort.',
-  },
-]
-
-function lookupToolGuide(taskDescription: string): ToolGuideEntry {
-  for (const entry of TOOL_GUIDE_TABLE) {
-    if (entry.pattern.test(taskDescription)) {
-      return {
-        approach: entry.approach,
-        toolSequence: entry.toolSequence,
-        explanation: entry.explanation,
-        ...(entry.bundleIdHints ? { bundleIdHints: entry.bundleIdHints } : {}),
-      }
-    }
-  }
-  // Unreachable — the final `.*` entry matches everything.
-  return {
-    approach: 'accessibility',
-    toolSequence: ['get_ui_tree'],
-    explanation: 'Default fallback.',
-  }
+  /**
+   * Optional host elicitation callback for policy approval (PR-10).
+   * Invoked only when approval is required and no valid approval_token is present.
+   * Token wins over elicitation (K13).
+   */
+  elicitApproval?: ElicitApproval
+  /** Active tool profile name (for guide unavailableInProfile). Init-time only (K18). */
+  profile?: string
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
-
-class FocusError extends Error {
-  constructor(readonly details: FocusFailure) {
-    super(`Failed to focus ${details.requestedBundleId}`)
-    this.name = 'FocusError'
-  }
-}
-
-class WindowNotFoundError extends Error {
-  constructor(readonly windowId: number) {
-    super(`Window not found: ${windowId}`)
-    this.name = 'WindowNotFoundError'
-  }
-}
 
 // ── v5.2: Session lock + runloop pump ─────────────────────────────────────────
 //
@@ -427,6 +138,7 @@ class WindowNotFoundError extends Error {
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { createHash } from 'crypto'
 
 const IS_WINDOWS = process.platform === 'win32'
 const IS_MACOS = process.platform === 'darwin'
@@ -576,27 +288,8 @@ function makeLockPumpController(
   }
 }
 
-// ── Tools that mutate system state (take the session lock + pump) ─────────────
-//
-// Observation tools (screenshot, list_*, get_*) do not take the lock — they
-// must be callable concurrently (e.g. screenshots during a session held by
-// another process for diagnostics).
-const MUTATING_TOOLS = new Set([
-  // Pointer + keyboard CGEvent
-  'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
-  'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up', 'scroll',
-  'type', 'key', 'hold_key', 'write_clipboard', 'multi_select', 'multi_edit',
-  // App / window activation
-  'activate_app', 'activate_window', 'open_application', 'hide_app', 'unhide_app',
-  // Semantic AX mutations
-  'click_element', 'set_value', 'press_button', 'select_menu_item', 'fill_form',
-  // Space/desktop mutation
-  'create_agent_space', 'move_window_to_space', 'remove_window_from_space', 'destroy_space',
-  // Files, processes, registry, and notifications can all mutate host state
-  'filesystem', 'process_kill', 'registry', 'notification',
-  // Scripting bridge (can mutate via AppleScript — treat conservatively)
-  'run_script',
-])
+// MUTATING_TOOLS imported from tool-catalog.ts (SSOT with ToolMeta.mutates; includes resize_window).
+// Observation tools (screenshot, list_*, get_*) do not take the lock.
 
 // ── Session factory ───────────────────────────────────────────────────────────
 
@@ -605,6 +298,9 @@ export function createSession(opts: SessionOptions = {}): Session {
   const spawnBounded: SpawnBounded = opts.spawnBounded ?? defaultSpawnBounded
   let targetState: TargetState | undefined
   const visionEnabled = opts.vision !== false
+  const elicitApproval = opts.elicitApproval
+  const activeProfile = opts.profile ?? process.env.COMPUTER_USE_PROFILE ?? 'full'
+  let lastScreenshot: { mimeType: string; data: string; capturedAt: number } | undefined
 
   // v5.2: cross-process lock + main-runloop pump. Mutating tool dispatch
   // acquires before running and releases in `finally`; observation tools
@@ -648,6 +344,195 @@ export function createSession(opts: SessionOptions = {}): Session {
   const dictionaryCache = new Map<string, { pid: number; dict: ScriptingDictionary }>()
   // Cached space_id from the most recent successful create_agent_space.
   let cachedAgentSpaceId: number | undefined
+  // Virtual pointer state. This is intentionally independent of the OS cursor.
+  let agentPointer: { x: number; y: number; visible: boolean; updatedAt: number } | undefined
+
+  // ── Policy + audit configuration ───────────────────────────────────────
+
+  const defaultSensitiveApps = IS_WINDOWS
+    ? ['1Password.exe', 'CredentialUIBroker.exe', 'KeePassXC.exe']
+    : ['com.apple.keychainaccess', 'com.apple.Passwords', 'com.1password.1password', 'com.agilebits.onepassword7']
+
+  function envList(name: string, fallback: string[] = []): string[] {
+    const raw = process.env[name]
+    if (!raw) return fallback
+    return raw.split(',').map(s => s.trim()).filter(Boolean)
+  }
+
+  const policyConfig = {
+    allowedApps: envList('COMPUTER_USE_ALLOWED_APPS'),
+    blockedApps: envList('COMPUTER_USE_BLOCKED_APPS'),
+    sensitiveApps: envList('COMPUTER_USE_CREDENTIAL_APPS', defaultSensitiveApps),
+    requireApprovalFor: envList('COMPUTER_USE_REQUIRE_APPROVAL_FOR'),
+    approvalRequiredForAll: process.env.COMPUTER_USE_REQUIRE_APPROVAL === 'true',
+    destructiveRequiresApproval: process.env.COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL === 'true',
+    approvalTokenConfigured: Boolean(process.env.COMPUTER_USE_APPROVAL_TOKEN),
+  }
+
+  const auditLogSetting = process.env.COMPUTER_USE_AUDIT_LOG
+  const auditEnabled = auditLogSetting === 'false'
+    ? false
+    : auditLogSetting
+      ? true
+      : opts.native == null
+  const auditLogPath = auditLogSetting && auditLogSetting !== 'true' && auditLogSetting !== 'false'
+    ? auditLogSetting
+    : path.join(os.homedir(), '.computer-use-mcp', 'audit.jsonl')
+
+  type PolicyDecision =
+    | { allowed: true; approval: 'not_required' | 'approved'; reasons: string[]; targetApp?: string; destructive: boolean }
+    | { allowed: false; approval: 'required' | 'denied'; reasons: string[]; targetApp?: string; destructive: boolean; remediation: string[] }
+
+  function policyStatus(): Record<string, unknown> {
+    return {
+      allowed_apps: policyConfig.allowedApps,
+      blocked_apps: policyConfig.blockedApps,
+      sensitive_apps: policyConfig.sensitiveApps,
+      require_approval_for: policyConfig.requireApprovalFor,
+      approval_required_for_all: policyConfig.approvalRequiredForAll,
+      destructive_requires_approval: policyConfig.destructiveRequiresApproval,
+      approval_token_configured: policyConfig.approvalTokenConfigured,
+      audit: {
+        enabled: auditEnabled,
+        path: auditEnabled ? auditLogPath : null,
+      },
+      profile: activeProfile,
+    }
+  }
+
+  // Session-scoped approval memory when elicit returns remember_session semantics
+  const sessionApprovals = new Set<string>()
+
+  function targetAppForPolicy(args: Record<string, unknown>): string | undefined {
+    if (typeof args.target_app === 'string' && args.target_app) return args.target_app
+    if (typeof args.bundle_id === 'string' && args.bundle_id) return args.bundle_id
+    const wid = typeof args.window_id === 'number' ? args.window_id
+              : typeof args.target_window_id === 'number' ? args.target_window_id
+              : undefined
+    if (wid !== undefined) {
+      try { return n.getWindow(wid)?.bundleId ?? undefined } catch { return undefined }
+    }
+    return targetState?.bundleId
+  }
+
+  function isDestructiveTool(tool: string, args: Record<string, unknown>): boolean {
+    if (tool === 'run_script') return true
+    if (tool === 'process_kill') return args.mode === 'kill'
+    if (tool === 'registry') return args.mode === 'set' || args.mode === 'delete'
+    if (tool === 'filesystem') {
+      return args.mode === 'write' || args.mode === 'move' || args.mode === 'delete'
+    }
+    return false
+  }
+
+  function evaluatePolicy(tool: string, args: Record<string, unknown>, mutates: boolean): PolicyDecision {
+    const targetApp = targetAppForPolicy(args)
+    const destructive = isDestructiveTool(tool, args)
+    const reasons: string[] = []
+
+    if (targetApp && policyConfig.blockedApps.includes(targetApp)) {
+      return {
+        allowed: false,
+        approval: 'denied',
+        reasons: [`target_app_blocked:${targetApp}`],
+        targetApp,
+        destructive,
+        remediation: [`Remove ${targetApp} from COMPUTER_USE_BLOCKED_APPS only if this app should be controllable.`],
+      }
+    }
+
+    if (mutates && targetApp && policyConfig.allowedApps.length > 0 && !policyConfig.allowedApps.includes(targetApp)) {
+      return {
+        allowed: false,
+        approval: 'denied',
+        reasons: [`target_app_not_allowed:${targetApp}`],
+        targetApp,
+        destructive,
+        remediation: [`Add ${targetApp} to COMPUTER_USE_ALLOWED_APPS if this app should be controllable.`],
+      }
+    }
+
+    const needsApproval =
+      policyConfig.approvalRequiredForAll ||
+      policyConfig.requireApprovalFor.includes(tool) ||
+      (destructive && policyConfig.destructiveRequiresApproval) ||
+      Boolean(targetApp && policyConfig.sensitiveApps.includes(targetApp))
+
+    if (!needsApproval) {
+      return { allowed: true, approval: 'not_required', reasons, targetApp, destructive }
+    }
+
+    reasons.push(
+      policyConfig.approvalRequiredForAll ? 'approval_required_for_all' :
+      policyConfig.requireApprovalFor.includes(tool) ? `tool_requires_approval:${tool}` :
+      destructive && policyConfig.destructiveRequiresApproval ? 'destructive_requires_approval' :
+      targetApp ? `sensitive_app:${targetApp}` : 'approval_required',
+    )
+
+    // K13: token wins when present and valid
+    const expected = process.env.COMPUTER_USE_APPROVAL_TOKEN
+    if (expected && args.approval_token === expected) {
+      return { allowed: true, approval: 'approved', reasons, targetApp, destructive }
+    }
+
+    const approvalKey = `${tool}:${targetApp ?? ''}`
+    if (sessionApprovals.has(approvalKey) || sessionApprovals.has('*')) {
+      return { allowed: true, approval: 'approved', reasons: [...reasons, 'session_remembered'], targetApp, destructive }
+    }
+
+    // Elicitation is async — evaluatePolicy stays sync; dispatch handles elicit before lock.
+    return {
+      allowed: false,
+      approval: 'required',
+      reasons,
+      targetApp,
+      destructive,
+      remediation: expected
+        ? ['Pass the configured approval_token for this call after user approval, or approve via host elicitation.']
+        : elicitApproval
+          ? ['Host will request interactive approval, or set COMPUTER_USE_APPROVAL_TOKEN for headless use.']
+          : ['Set COMPUTER_USE_APPROVAL_TOKEN to a private token, then pass approval_token after user approval.'],
+    }
+  }
+
+  function hashText(value: string): string {
+    return createHash('sha256').update(value).digest('hex')
+  }
+
+  function redactAuditValue(key: string, value: unknown): unknown {
+    const lower = key.toLowerCase()
+    if (typeof value === 'string' && (
+      lower.includes('token') ||
+      lower === 'text' ||
+      lower === 'content' ||
+      lower === 'script' ||
+      lower === 'value' ||
+      lower === 'message'
+    )) {
+      return { redacted: true, length: value.length, sha256: hashText(value) }
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry, i) => redactAuditValue(String(i), entry))
+    }
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        out[k] = redactAuditValue(k, v)
+      }
+      return out
+    }
+    return value
+  }
+
+  function writeAudit(record: Record<string, unknown>): void {
+    if (!auditEnabled) return
+    try {
+      fs.mkdirSync(path.dirname(auditLogPath), { recursive: true })
+      fs.appendFileSync(auditLogPath, JSON.stringify(record) + '\n', 'utf8')
+    } catch {
+      // Audit must not break control flow. doctor() reports path/config.
+    }
+  }
 
   // ── Target resolution ───────────────────────────────────────────────────
 
@@ -1169,6 +1054,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     language: string,
     script: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<SpawnResult> {
     if (IS_WINDOWS) {
       if (language === 'applescript' || language === 'javascript') {
@@ -1186,9 +1072,9 @@ export function createSession(opts: SessionOptions = {}): Session {
       if (needsEncoding) {
         const buf = Buffer.from(script, 'utf16le')
         const encoded = buf.toString('base64')
-        return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], timeoutMs)
+        return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], timeoutMs, signal)
       }
-      return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+      return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs, signal)
     }
     if (IS_LINUX) {
       if (language === 'applescript' || language === 'javascript') {
@@ -1200,16 +1086,16 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
       }
       if (language === 'powershell') {
-        return spawnBounded('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+        return spawnBounded('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs, signal)
       }
       // Default to bash on Linux
-      return spawnBounded('bash', ['-c', script], timeoutMs)
+      return spawnBounded('bash', ['-c', script], timeoutMs, signal)
     }
     // macOS: osascript
     const args = language === 'javascript'
       ? ['-l', 'JavaScript', '-e', script]
       : ['-e', script]
-    return spawnBounded('osascript', args, timeoutMs)
+    return spawnBounded('osascript', args, timeoutMs, signal)
   }
 
   function powershellLiteral(value: string): string {
@@ -1246,6 +1132,304 @@ export function createSession(opts: SessionOptions = {}): Session {
     }
   }
 
+  function defaultAgentPointer(): { x: number; y: number; visible: boolean; updatedAt: number } {
+    if (agentPointer) return agentPointer
+    const display = n.getDisplaySize()
+    agentPointer = {
+      x: Math.round(display.width / 2),
+      y: Math.round(display.height / 2),
+      visible: false,
+      updatedAt: Date.now(),
+    }
+    return agentPointer
+  }
+
+  function syncNativeAgentPointerOverlay(
+    pointer: { x: number; y: number; visible: boolean },
+    requested: boolean,
+  ): Record<string, unknown> {
+    if (!requested) {
+      return { requested: false, available: typeof n.agentPointerOverlayStatus === 'function' }
+    }
+    try {
+      if (pointer.visible) {
+        const show = n.agentPointerOverlayShow ?? n.agentPointerOverlayMove
+        if (!show) return { requested: true, available: false }
+        return { requested: true, available: true, status: show(pointer.x, pointer.y) }
+      }
+      if (n.agentPointerOverlayHide) {
+        return { requested: true, available: true, status: n.agentPointerOverlayHide() }
+      }
+      return { requested: true, available: false }
+    } catch (err) {
+      return {
+        requested: true,
+        available: true,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
+
+  function renderAgentPointerOnScreenshot(r: {
+    base64?: string
+    width: number
+    height: number
+    mimeType: string
+    hash: string
+    unchanged: boolean
+  }): {
+    base64?: string
+    width: number
+    height: number
+    mimeType: string
+    hash: string
+    unchanged: boolean
+  } {
+    const pointer = agentPointer
+    if (!pointer?.visible || !r.base64 || typeof n.annotateImage !== 'function') return r
+    const display = n.getDisplaySize()
+    const scaleX = r.width / display.width
+    const scaleY = r.height / display.height
+    const size = Math.max(10, Math.round(18 * Math.min(scaleX, scaleY)))
+    const x = Math.round(pointer.x * scaleX - size / 2)
+    const y = Math.round(pointer.y * scaleY - size / 2)
+    const annotated = n.annotateImage(
+      r.base64,
+      JSON.stringify([{ x, y, width: size, height: size }]),
+      null,
+      null,
+      85,
+    )
+    return {
+      ...r,
+      base64: annotated.base64,
+      width: annotated.width,
+      height: annotated.height,
+      mimeType: annotated.mimeType,
+      hash: `${r.hash}:agent-pointer:${pointer.x},${pointer.y}`,
+      unchanged: false,
+    }
+  }
+
+  type DoctorStatus = 'pass' | 'warn' | 'fail' | 'skip'
+  interface DoctorCheck {
+    id: string
+    status: DoctorStatus
+    summary: string
+    details?: Record<string, unknown>
+    remediation?: string[]
+  }
+
+  async function runDoctor(includeRemediation: boolean): Promise<Record<string, unknown>> {
+    const checks: DoctorCheck[] = []
+    const add = (check: DoctorCheck) => {
+      if (!includeRemediation) delete check.remediation
+      checks.push(check)
+    }
+
+    add({
+      id: 'platform',
+      status: (IS_MACOS || IS_WINDOWS) ? 'pass' : 'fail',
+      summary: `${process.platform}-${process.arch} on Node ${process.version}`,
+      remediation: ['Use macOS arm64/x64 or Windows x64 with Node.js 18+.'],
+    })
+
+    try {
+      const display = n.getDisplaySize()
+      add({
+        id: 'native_binary',
+        status: 'pass',
+        summary: 'Native NAPI module loaded and display APIs responded.',
+        details: display,
+      })
+    } catch (err) {
+      add({
+        id: 'native_binary',
+        status: 'fail',
+        summary: err instanceof Error ? err.message : String(err),
+        remediation: ['Run npm run build for source checkouts, or reinstall @zavora-ai/computer-use-mcp for your platform.'],
+      })
+    }
+
+    try {
+      const shot = n.takeScreenshot(320, undefined, 80, undefined, undefined)
+      add({
+        id: 'display_capture',
+        status: shot.base64 ? 'pass' : 'fail',
+        summary: shot.base64 ? `Captured ${shot.width}x${shot.height}.` : 'Screenshot returned no image payload.',
+        details: { width: shot.width, height: shot.height, mimeType: shot.mimeType },
+        remediation: IS_MACOS
+          ? ['Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
+          : ['Run from an interactive desktop session. If using RDP/VMs, ensure Desktop Duplication or GDI capture is available.'],
+      })
+    } catch (err) {
+      add({
+        id: 'display_capture',
+        status: 'fail',
+        summary: err instanceof Error ? err.message : String(err),
+        remediation: IS_MACOS
+          ? ['Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
+          : ['Run from an interactive desktop session. If using RDP/VMs, ensure Desktop Duplication or GDI capture is available.'],
+      })
+    }
+
+    try {
+      const marker = `computer-use-mcp-doctor-${Date.now()}`
+      let saved = ''
+      try {
+        saved = IS_WINDOWS && n.readClipboard ? n.readClipboard() : execFileSync('pbpaste', []).toString()
+      } catch { /* empty or unavailable clipboard */ }
+      if (IS_WINDOWS && n.writeClipboard && n.readClipboard) {
+        n.writeClipboard(marker)
+        const roundTrip = n.readClipboard()
+        if (saved) n.writeClipboard(saved)
+        add({ id: 'clipboard', status: roundTrip === marker ? 'pass' : 'fail', summary: 'Clipboard read/write round trip completed.' })
+      } else {
+        execFileSync('pbcopy', [], { input: marker })
+        const roundTrip = execFileSync('pbpaste', []).toString()
+        execFileSync('pbcopy', [], { input: saved })
+        add({ id: 'clipboard', status: roundTrip === marker ? 'pass' : 'fail', summary: 'Clipboard read/write round trip completed.' })
+      }
+    } catch (err) {
+      add({
+        id: 'clipboard',
+        status: 'fail',
+        summary: err instanceof Error ? err.message : String(err),
+        remediation: ['Ensure the agent host can access the user clipboard and is running in an interactive desktop session.'],
+      })
+    }
+
+    try {
+      const front = n.getFrontmostApp()
+      const wins = n.listWindows(front?.bundleId)
+      add({
+        id: IS_WINDOWS ? 'ui_automation' : 'accessibility',
+        status: front ? 'pass' : 'warn',
+        summary: front ? `Frontmost app detected: ${front.bundleId}.` : 'No frontmost app detected.',
+        details: { frontmost: front, topLevelWindows: wins.length },
+        remediation: IS_MACOS
+          ? ['Open System Settings > Privacy & Security > Accessibility and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
+          : ['UI Automation is built into Windows. If controls are missing, run the agent at the same integrity level as the target app.'],
+      })
+    } catch (err) {
+      add({
+        id: IS_WINDOWS ? 'ui_automation' : 'accessibility',
+        status: 'fail',
+        summary: err instanceof Error ? err.message : String(err),
+        remediation: IS_MACOS
+          ? ['Open System Settings > Privacy & Security > Accessibility and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
+          : ['Run the agent from an interactive desktop session and avoid crossing elevated/non-elevated integrity boundaries.'],
+      })
+    }
+
+    if (IS_MACOS) {
+      const r = await runScriptHelper('applescript', 'tell application "System Events" to count processes', 5_000)
+      add({
+        id: 'automation',
+        status: r.code === 0 ? 'pass' : 'warn',
+        summary: r.code === 0 ? 'System Events automation responded.' : (r.stderr || r.stdout || 'System Events automation did not respond.').trim(),
+        remediation: ['Open System Settings > Privacy & Security > Automation and allow your terminal, IDE, or agent host to control System Events and target apps when prompted.'],
+      })
+    } else {
+      add({ id: 'automation', status: 'skip', summary: 'macOS Automation permissions do not apply on Windows.' })
+    }
+
+    if (IS_WINDOWS) {
+      try {
+        const exe = getPowerShellExe()
+        const r = await spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'], 5_000)
+        add({
+          id: 'powershell',
+          status: r.code === 0 ? 'pass' : 'fail',
+          summary: r.code === 0 ? `${exe}: ${r.stdout.trim()}` : (r.stderr || r.stdout).trim(),
+          remediation: ['Install PowerShell 7 or ensure Windows PowerShell is available on PATH.'],
+        })
+      } catch (err) {
+        add({
+          id: 'powershell',
+          status: 'fail',
+          summary: err instanceof Error ? err.message : String(err),
+          remediation: ['Install PowerShell 7 or ensure Windows PowerShell is available on PATH.'],
+        })
+      }
+    } else {
+      add({ id: 'powershell', status: 'skip', summary: 'PowerShell is only required for Windows-specific scripting.' })
+    }
+
+    add({
+      id: 'policy',
+      status: policyConfig.approvalTokenConfigured ||
+        (!policyConfig.approvalRequiredForAll && policyConfig.requireApprovalFor.length === 0 && !policyConfig.destructiveRequiresApproval)
+        ? 'pass'
+        : 'warn',
+      summary: 'Policy configuration loaded.',
+      details: policyStatus(),
+      remediation: ['Set COMPUTER_USE_APPROVAL_TOKEN when enabling approval-gated tools. Use COMPUTER_USE_ALLOWED_APPS / COMPUTER_USE_BLOCKED_APPS to constrain app control.'],
+    })
+
+    add({
+      id: 'audit',
+      status: auditEnabled ? 'pass' : 'warn',
+      summary: auditEnabled ? `Audit JSONL enabled at ${auditLogPath}.` : 'Audit logging disabled.',
+      remediation: ['Set COMPUTER_USE_AUDIT_LOG=/path/to/audit.jsonl to enable structured audit logging, or COMPUTER_USE_AUDIT_LOG=false to disable explicitly.'],
+    })
+
+    try {
+      const overlayStatus = n.agentPointerOverlayStatus?.()
+      add({
+        id: 'native_agent_pointer_overlay',
+        status: overlayStatus ? 'pass' : 'warn',
+        summary: overlayStatus ? 'Native non-activating overlay pointer is available.' : 'Native overlay pointer is not exposed by this native binary.',
+        details: overlayStatus,
+        remediation: ['Rebuild or reinstall the native module. The virtual pointer state and screenshot overlay remain available as a fallback.'],
+      })
+    } catch (err) {
+      add({
+        id: 'native_agent_pointer_overlay',
+        status: 'warn',
+        summary: err instanceof Error ? err.message : String(err),
+        remediation: ['Rebuild or reinstall the native module. The virtual pointer state and screenshot overlay remain available as a fallback.'],
+      })
+    }
+
+    const failed = checks.filter(c => c.status === 'fail').length
+    const warned = checks.filter(c => c.status === 'warn').length
+    return {
+      ok: failed === 0,
+      summary: { passed: checks.filter(c => c.status === 'pass').length, warned, failed, skipped: checks.filter(c => c.status === 'skip').length },
+      platform: { os: process.platform, arch: process.arch, node: process.version },
+      checks,
+    }
+  }
+
+  function numberFromAction(action: Record<string, unknown>, keys: string[]): number | undefined {
+    for (const key of keys) {
+      const value = action[key]
+      if (typeof value === 'number') return value
+    }
+    return undefined
+  }
+
+  function coordinateFromAction(action: Record<string, unknown>): [number, number] {
+    const coordValue = action.coordinate ?? action.coordinates ?? action.pos ?? action.position
+    if (Array.isArray(coordValue) && coordValue.length >= 2 && typeof coordValue[0] === 'number' && typeof coordValue[1] === 'number') {
+      return [coordValue[0], coordValue[1]]
+    }
+    const x = numberFromAction(action, ['x'])
+    const y = numberFromAction(action, ['y'])
+    if (x === undefined || y === undefined) throw new Error('OpenAI computer action requires x/y or coordinate')
+    return [x, y]
+  }
+
+  function keypressText(action: Record<string, unknown>): string {
+    if (typeof action.text === 'string') return action.text
+    if (typeof action.key === 'string') return action.key
+    if (Array.isArray(action.keys) && action.keys.every(k => typeof k === 'string')) {
+      return (action.keys as string[]).map(k => k.toLowerCase().replace(/^ctrl$/, 'control')).join('+')
+    }
+    throw new Error('keypress action requires text, key, or keys[]')
+  }
+
   // ── Click helper ────────────────────────────────────────────────────────
 
   async function doClick(
@@ -1271,7 +1455,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 
   // ── Dispatch ────────────────────────────────────────────────────────────
 
-  async function dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async function dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal, onProgress?: ProgressReporter): Promise<ToolResult> {
     const coord = (key = 'coordinate'): [number, number] => {
       const v = args[key]
       if (!Array.isArray(v) || v.length < 2 || typeof v[0] !== 'number' || typeof v[1] !== 'number')
@@ -1289,7 +1473,51 @@ export function createSession(opts: SessionOptions = {}): Session {
 
     // v5.2: Only mutating tools take the session lock and start the pump.
     // Observation tools stay concurrent and cheap.
+    const startedAt = Date.now()
+    const startedAtIso = new Date(startedAt).toISOString()
     const mutates = MUTATING_TOOLS.has(tool)
+    let policyDecision = evaluatePolicy(tool, args, mutates)
+
+    // PR-10: elicitation before lock when approval required (K13 token already checked in evaluatePolicy)
+    if (!policyDecision.allowed && policyDecision.approval === 'required' && elicitApproval) {
+      try {
+        const approved = await elicitApproval({
+          tool,
+          args,
+          reasons: policyDecision.reasons,
+          targetApp: policyDecision.targetApp,
+          destructive: policyDecision.destructive,
+        })
+        if (approved) {
+          sessionApprovals.add(`${tool}:${policyDecision.targetApp ?? ''}`)
+          policyDecision = { allowed: true, approval: 'approved', reasons: policyDecision.reasons, targetApp: policyDecision.targetApp, destructive: policyDecision.destructive }
+        }
+      } catch {
+        // treat as denied / timeout
+      }
+    }
+
+    if (!policyDecision.allowed) {
+      const payload = {
+        error: policyDecision.approval === 'required' ? 'approval_required' : 'policy_denied',
+        reasons: policyDecision.reasons,
+        target_app: policyDecision.targetApp,
+        destructive: policyDecision.destructive,
+        remediation: policyDecision.remediation,
+      }
+      const result = errJson(payload)
+      writeAudit({
+        timestamp: startedAtIso,
+        duration_ms: Date.now() - startedAt,
+        tool,
+        mutates,
+        args: redactAuditValue('args', args),
+        policy: policyDecision,
+        result: { isError: true, text: result.content[0].type === 'text' ? result.content[0].text : undefined },
+      })
+      return result
+    }
+
     let acquired = false
     if (mutates) {
       try {
@@ -1317,6 +1545,212 @@ export function createSession(opts: SessionOptions = {}): Session {
     try {
       result = await (async (): Promise<ToolResult> => {
       switch (tool) {
+
+        case 'doctor': {
+          const includeRemediation = args.include_remediation !== false
+          return okJson(await runDoctor(includeRemediation) as Record<string, unknown>)
+        }
+
+        case 'policy_status': {
+          return okJson(policyStatus())
+        }
+
+        case 'agent_pointer': {
+          const action = str('action')
+          const pointer = defaultAgentPointer()
+          const nativeOverlayRequested = typeof args.native_overlay === 'boolean'
+            ? args.native_overlay
+            : action !== 'get'
+          if (action === 'move') {
+            const [x, y] = coord()
+            validateCoordinates(x, y)
+            agentPointer = {
+              x,
+              y,
+              visible: typeof args.visible === 'boolean' ? args.visible : true,
+              updatedAt: Date.now(),
+            }
+          } else if (action === 'show') {
+            agentPointer = { ...pointer, visible: true, updatedAt: Date.now() }
+          } else if (action === 'hide') {
+            agentPointer = { ...pointer, visible: false, updatedAt: Date.now() }
+          } else if (action === 'reset') {
+            const display = n.getDisplaySize()
+            agentPointer = {
+              x: Math.round(display.width / 2),
+              y: Math.round(display.height / 2),
+              visible: typeof args.visible === 'boolean' ? args.visible : false,
+              updatedAt: Date.now(),
+            }
+          } else if (action !== 'get') {
+            return { content: [{ type: 'text', text: `Unknown agent_pointer action: ${action}` }], isError: true }
+          }
+          const currentPointer = defaultAgentPointer()
+          const nativeOverlay = syncNativeAgentPointerOverlay(currentPointer, nativeOverlayRequested)
+          return ok(JSON.stringify({
+            ...currentPointer,
+            nativeOverlay,
+            note: 'Virtual pointer only; the OS cursor and app focus were not changed.',
+          }))
+        }
+
+        case 'openai_computer': {
+          const rawActions = Array.isArray(args.actions)
+            ? args.actions
+            : args.action && typeof args.action === 'object'
+              ? [args.action]
+              : [{ ...args }]
+          const common = {
+            ...(typeof args.target_app === 'string' ? { target_app: args.target_app } : {}),
+            ...(typeof args.target_window_id === 'number' ? { target_window_id: args.target_window_id } : {}),
+            ...(typeof args.focus_strategy === 'string' ? { focus_strategy: args.focus_strategy } : {}),
+            ...(typeof args.approval_token === 'string' ? { approval_token: args.approval_token } : {}),
+          }
+          const summaries: Array<Record<string, unknown>> = []
+          const content: ToolResult['content'] = []
+
+          for (let i = 0; i < rawActions.length; i++) {
+            const action = rawActions[i]
+            if (!action || typeof action !== 'object' || Array.isArray(action)) {
+              summaries.push({ index: i, ok: false, error: 'invalid_action' })
+              continue
+            }
+            const a = action as Record<string, unknown>
+            const type = String(a.type ?? a.action ?? '').toLowerCase()
+            let mappedTool = ''
+            let mappedArgs: Record<string, unknown> = {}
+
+            try {
+              switch (type) {
+                case 'screenshot':
+                  mappedTool = 'screenshot'
+                  mappedArgs = {
+                    ...(typeof args.width === 'number' ? { width: args.width } : {}),
+                    ...(typeof args.quality === 'number' ? { quality: args.quality } : {}),
+                    ...(typeof args.provider === 'string' ? { provider: args.provider } : {}),
+                    show_agent_pointer: a.show_agent_pointer === true || args.use_virtual_pointer === true,
+                  }
+                  break
+                case 'click':
+                case 'left_click':
+                  mappedTool = 'left_click'
+                  mappedArgs = { coordinate: coordinateFromAction(a), ...common }
+                  break
+                case 'double_click':
+                  mappedTool = 'double_click'
+                  mappedArgs = { coordinate: coordinateFromAction(a), ...common }
+                  break
+                case 'right_click':
+                  mappedTool = 'right_click'
+                  mappedArgs = { coordinate: coordinateFromAction(a), ...common }
+                  break
+                case 'move':
+                case 'mouse_move':
+                  if (args.use_virtual_pointer === true || a.virtual === true) {
+                    mappedTool = 'agent_pointer'
+                    mappedArgs = {
+                      action: 'move',
+                      coordinate: coordinateFromAction(a),
+                      visible: true,
+                      ...(typeof args.native_overlay === 'boolean' ? { native_overlay: args.native_overlay } : {}),
+                      ...(typeof a.native_overlay === 'boolean' ? { native_overlay: a.native_overlay } : {}),
+                      ...common,
+                    }
+                  } else {
+                    mappedTool = 'mouse_move'
+                    mappedArgs = { coordinate: coordinateFromAction(a), ...common }
+                  }
+                  break
+                case 'drag': {
+                  mappedTool = 'left_click_drag'
+                  const pathValue = a.path
+                  if (Array.isArray(pathValue) && pathValue.length >= 2) {
+                    const first = pathValue[0] as unknown
+                    const last = pathValue[pathValue.length - 1] as unknown
+                    if (!Array.isArray(first) || !Array.isArray(last) || typeof first[0] !== 'number' || typeof first[1] !== 'number' || typeof last[0] !== 'number' || typeof last[1] !== 'number') {
+                      throw new Error('drag path must contain [x,y] points')
+                    }
+                    mappedArgs = { start_coordinate: [first[0], first[1]], coordinate: [last[0], last[1]], ...common }
+                  } else {
+                    const start = a.start_coordinate ?? a.start
+                    const end = a.coordinate ?? a.end
+                    if (!Array.isArray(start) || !Array.isArray(end) || typeof start[0] !== 'number' || typeof start[1] !== 'number' || typeof end[0] !== 'number' || typeof end[1] !== 'number') {
+                      throw new Error('drag requires path[] or start/end coordinates')
+                    }
+                    mappedArgs = { start_coordinate: [start[0], start[1]], coordinate: [end[0], end[1]], ...common }
+                  }
+                  break
+                }
+                case 'scroll': {
+                  mappedTool = 'scroll'
+                  const [x, y] = coordinateFromAction(a)
+                  const dx = numberFromAction(a, ['scroll_x', 'dx'])
+                  const dy = numberFromAction(a, ['scroll_y', 'dy'])
+                  const direction = typeof a.direction === 'string'
+                    ? a.direction
+                    : Math.abs(dx ?? 0) > Math.abs(dy ?? 0)
+                      ? ((dx ?? 0) > 0 ? 'right' : 'left')
+                      : ((dy ?? 0) > 0 ? 'down' : 'up')
+                  const amount = Math.max(1, Math.round(Math.abs(dx ?? dy ?? numberFromAction(a, ['amount']) ?? 3)))
+                  mappedArgs = { coordinate: [x, y], direction, amount, ...common }
+                  break
+                }
+                case 'type':
+                  mappedTool = 'type'
+                  mappedArgs = { text: typeof a.text === 'string' ? a.text : '', ...common }
+                  break
+                case 'keypress':
+                case 'key':
+                  mappedTool = 'key'
+                  mappedArgs = { text: keypressText(a), ...common }
+                  break
+                case 'wait':
+                  mappedTool = 'wait'
+                  mappedArgs = { duration: numberFromAction(a, ['duration', 'seconds', 'time']) ?? 1 }
+                  break
+                default:
+                  throw new Error(`unsupported OpenAI computer action: ${type || '(missing type)'}`)
+              }
+
+              const r = await dispatch(mappedTool, mappedArgs)
+              summaries.push({ index: i, action: type, tool: mappedTool, ok: !r.isError })
+              content.push(...r.content)
+              if (r.isError) {
+                return {
+                  content: [
+                    { type: 'text', text: JSON.stringify({ ok: false, failed_index: i, summaries }) },
+                    ...r.content,
+                  ],
+                  isError: true,
+                }
+              }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err)
+              summaries.push({ index: i, action: type, ok: false, error: message })
+              return {
+                content: [{ type: 'text', text: JSON.stringify({ ok: false, failed_index: i, summaries }) }],
+                isError: true,
+              }
+            }
+          }
+
+          if (args.return_screenshot === true) {
+            const r = await dispatch('screenshot', {
+              ...(typeof args.width === 'number' ? { width: args.width } : {}),
+              ...(typeof args.quality === 'number' ? { quality: args.quality } : {}),
+              ...(typeof args.provider === 'string' ? { provider: args.provider } : {}),
+              show_agent_pointer: args.use_virtual_pointer === true,
+            })
+            content.push(...r.content)
+          }
+
+          return {
+            content: [
+              { type: 'text', text: JSON.stringify({ ok: true, count: summaries.length, summaries }) },
+              ...content,
+            ],
+          }
+        }
 
         // ── Screenshot (observation — never mutates TargetState) ──────────
         case 'screenshot': {
@@ -1358,10 +1792,16 @@ export function createSession(opts: SessionOptions = {}): Session {
             return ok(`Screen: ${display.width}×${display.height} | Frontmost: ${front?.bundleId ?? 'unknown'} (${front?.displayName ?? ''})`)
           }
 
-          const r = n.takeScreenshot(w, app, q, _lastHash, windowId)
-          if (r.unchanged && _lastResult) return _lastResult
+          const showAgentPointer = args.show_agent_pointer === true
+          let r = n.takeScreenshot(w, app, q, showAgentPointer ? undefined : _lastHash, windowId)
+          if (!showAgentPointer && r.unchanged && _lastResult) return _lastResult
+          if (!r.base64) throw new Error('Screenshot capture missing image payload')
+          if (showAgentPointer) {
+            r = renderAgentPointerOnScreenshot(r)
+          }
           if (!r.base64) throw new Error('Screenshot capture missing image payload')
           _lastHash = r.hash
+          lastScreenshot = { mimeType: r.mimeType, data: r.base64, capturedAt: Date.now() }
           _lastResult = {
             content: [
               { type: 'image', data: r.base64, mimeType: r.mimeType },
@@ -1512,7 +1952,10 @@ export function createSession(opts: SessionOptions = {}): Session {
             await sleep(30)
           }
 
-          if (text.length > 100) {
+          // Long text OR anything with a newline goes via the clipboard.
+          // Native key injection drops/garbles newlines on UWP controls
+          // (e.g. Windows 11 Notepad); clipboard paste is reliable there.
+          if (text.length > 100 || text.includes('\n')) {
             // Clipboard-based typing: faster and more reliable for long text
             if ((IS_WINDOWS || IS_LINUX) && n.readClipboard && n.writeClipboard) {
               let saved: string | undefined
@@ -1602,7 +2045,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           if (!win) {
             return { content: [{ type: 'text', text: `Window not found: ${wid}` }], isError: true }
           }
-          return ok(JSON.stringify(win))
+          return okJson(win as unknown as Record<string, unknown>)
         }
 
         case 'get_cursor_window': {
@@ -1713,10 +2156,15 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         // ── Observation tools (never mutate TargetState) ─────────────────
-        case 'get_frontmost_app':
-          return ok(JSON.stringify(n.getFrontmostApp()))
-        case 'list_windows':
-          return ok(JSON.stringify(n.listWindows(typeof args.bundle_id === 'string' ? args.bundle_id : undefined)))
+        // Class B wire wraps (K21): list_windows / get_frontmost_app use object envelopes.
+        case 'get_frontmost_app': {
+          const app = n.getFrontmostApp()
+          return okJson({ app: app ?? null })
+        }
+        case 'list_windows': {
+          const windows = n.listWindows(typeof args.bundle_id === 'string' ? args.bundle_id : undefined)
+          return okJsonWrappedArray('windows', windows)
+        }
         case 'list_running_apps':
           return ok(JSON.stringify(n.listRunningApps()))
         case 'hide_app':
@@ -1724,11 +2172,12 @@ export function createSession(opts: SessionOptions = {}): Session {
         case 'unhide_app':
           return ok(n.unhideApp(str('bundle_id')) ? 'Unhidden' : 'App not found')
         case 'get_display_size':
-          return ok(JSON.stringify(n.getDisplaySize(typeof args.display_id === 'number' ? args.display_id : undefined)))
+          return okJson(n.getDisplaySize(typeof args.display_id === 'number' ? args.display_id : undefined) as unknown as Record<string, unknown>)
         case 'list_displays':
           return ok(JSON.stringify(n.listDisplays()))
         case 'wait': {
-          await sleep(num('duration', 1) * 1000)
+          const cancelled = await sleepAbortable(num('duration', 1) * 1000, signal)
+          if (cancelled) return ok(`Wait cancelled after ${args.duration}s request (aborted)`)
           return ok(`Waited ${args.duration}s`)
         }
 
@@ -2081,7 +2530,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           const script = str('script')
           const requested = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000
           const timeoutMs = Math.max(100, Math.min(requested, 120_000))
-          const r = await runScriptHelper(lang, script, timeoutMs)
+          const r = await runScriptHelper(lang, script, timeoutMs, signal)
           if (r.timedOut) {
             return { content: [{ type: 'text', text: `script timed out after ${timeoutMs}ms` }], isError: true }
           }
@@ -2107,7 +2556,7 @@ export function createSession(opts: SessionOptions = {}): Session {
         // ── v5: Strategy advisor + capabilities (never mutate state) ─────
         case 'get_tool_guide': {
           const taskDescription = str('task_description')
-          return ok(JSON.stringify(lookupToolGuide(taskDescription)))
+          return okJson(lookupToolGuide(taskDescription, activeProfile) as unknown as Record<string, unknown>)
         }
 
         case 'get_app_capabilities': {
@@ -2116,7 +2565,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           const wins = n.listWindows(bundleId)
 
           if (IS_WINDOWS) {
-            return ok(JSON.stringify({
+            return okJson({
               bundle_id: bundleId,
               scriptable: false, // No AppleScript on Windows
               suites: [],
@@ -2125,14 +2574,14 @@ export function createSession(opts: SessionOptions = {}): Session {
               topLevelCount: wins.length,
               running: Boolean(running),
               hidden: running?.isHidden ?? false,
-            }))
+            })
           }
 
           const dictResult = await getAppDictionary(bundleId)
           const scriptable = !('error' in dictResult)
           const suites: string[] = scriptable ? dictResult.dict.suites.map(s => s.name) : []
 
-          return ok(JSON.stringify({
+          return okJson({
             bundle_id: bundleId,
             scriptable,
             suites,
@@ -2140,7 +2589,7 @@ export function createSession(opts: SessionOptions = {}): Session {
             topLevelCount: wins.length,
             running: Boolean(running),
             hidden: running?.isHidden ?? false,
-          }))
+          })
         }
 
         // ── v5: Spaces ─────────────────────────────────────────────────────
@@ -2149,7 +2598,8 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
 
         case 'get_active_space': {
-          return ok(JSON.stringify(n.getActiveSpace()))
+          // Class B wrap (K21): was bare number|null
+          return okJsonWrappedScalar('active_space_id', n.getActiveSpace())
         }
 
         case 'create_agent_space': {
@@ -2319,6 +2769,12 @@ export function createSession(opts: SessionOptions = {}): Session {
           if (dest && !path.isAbsolute(dest)) {
             dest = path.join(os.homedir(), 'Desktop', dest)
           }
+          // PR-11b: optional filesystem jail (COMPUTER_USE_FS_ROOTS). No-op when unset.
+          for (const p of [filePath, dest]) {
+            if (!p) continue
+            const violation = fsRootsViolation(p)
+            if (violation) return errJson(violation)
+          }
           const encoding = (typeof args.encoding === 'string' ? args.encoding : 'utf-8') as BufferEncoding
 
           switch (mode) {
@@ -2372,10 +2828,17 @@ export function createSession(opts: SessionOptions = {}): Session {
               const pattern = typeof args.pattern === 'string' ? args.pattern : '*'
               // Simple glob: just list recursively and filter
               const results: string[] = []
+              let scanned = 0
               const walk = (dir: string) => {
+                if (signal?.aborted) return
                 try {
                   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                    if (signal?.aborted) return
                     const full = path.join(dir, e.name)
+                    scanned++
+                    if (onProgress && scanned % 25 === 0) {
+                      onProgress({ progress: scanned, message: `scanned ${scanned} entries, ${results.length} matches` })
+                    }
                     if (e.name.includes(pattern.replace(/\*/g, '')) || pattern === '*') results.push(full)
                     if (e.isDirectory() && args.recursive) walk(full)
                   }
@@ -2571,7 +3034,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
           }
           try {
             const resp = await fetch(url, {
-              headers: { 'User-Agent': 'computer-use-mcp/6.1.0' },
+              headers: { 'User-Agent': 'computer-use-mcp/7.0.0' },
               signal: AbortSignal.timeout(15000),
             })
             if (!resp.ok) {
@@ -2636,14 +3099,30 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
     if (pendingHiddenBundleIds != null) {
       result = decorateWithHiddenBundleIds(result, pendingHiddenBundleIds)
     }
+    writeAudit({
+      timestamp: startedAtIso,
+      duration_ms: Date.now() - startedAt,
+      tool,
+      mutates,
+      args: redactAuditValue('args', args),
+      target_app: policyDecision.targetApp,
+      focus_strategy: typeof args.focus_strategy === 'string' ? args.focus_strategy : undefined,
+      policy: policyDecision,
+      screenshot_hash: tool === 'screenshot' ? _lastHash : undefined,
+      result: {
+        isError: Boolean(result.isError),
+        content: result.content.map(c => c.type === 'image'
+          ? { type: 'image', mimeType: c.mimeType, bytesBase64: c.data.length }
+          : { type: 'text', length: c.text.length, sha256: hashText(c.text) }),
+      },
+    })
     return result
   }
 
-  return { dispatch }
-}
-
-function ok(text: string): ToolResult {
-  return { content: [{ type: 'text', text }] }
+  return {
+    dispatch,
+    getLastScreenshot: () => lastScreenshot,
+  }
 }
 
 /**

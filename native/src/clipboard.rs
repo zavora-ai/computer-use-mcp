@@ -104,7 +104,20 @@ mod win {
 
     #[napi]
     pub fn write_clipboard(text: String) -> napi::Result<()> {
-        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        // Windows clipboard text (CF_UNICODETEXT) uses CRLF line endings. Editors
+        // like Notepad render a lone LF inconsistently (often as no break), so
+        // normalize: turn every LF that is not already preceded by CR into CRLF
+        // without doubling existing CRLF pairs.
+        let mut normalized = String::with_capacity(text.len() + 8);
+        let mut prev = '\0';
+        for ch in text.chars() {
+            if ch == '\n' && prev != '\r' {
+                normalized.push('\r');
+            }
+            normalized.push(ch);
+            prev = ch;
+        }
+        let wide: Vec<u16> = normalized.encode_utf16().chain(std::iter::once(0)).collect();
         let byte_len = wide.len() * 2;
 
         unsafe {

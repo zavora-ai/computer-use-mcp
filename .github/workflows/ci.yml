@@ -2,9 +2,13 @@ name: CI — Build & Test
 
 on:
   push:
-    branches: [main, 'feat/**']
+    branches: [main]
   pull_request:
     branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -110,9 +114,9 @@ jobs:
       - name: Build TypeScript
         run: npx tsc
 
-      - name: Run tests (macOS)
-        if: runner.os == 'macOS'
-        run: node --test test/stdio.test.mjs
+      - name: Run full test suite (all platforms)
+        shell: bash
+        run: node --test test/*.test.mjs
 
       - name: Run smoke test (Windows)
         if: runner.os == 'Windows'
@@ -125,9 +129,58 @@ jobs:
       - name: Run new tools smoke test
         run: node test/smoke-new-tools.mjs
 
+  package:
+    name: Verify package contents
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --force
+
+      - name: Build TypeScript
+        run: npx tsc
+
+      - name: Assert published tarball includes runtime, docs, and skills
+        shell: bash
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const fs = require("fs");
+            const entries = JSON.parse(fs.readFileSync("pack.json", "utf8"));
+            const files = (entries[0]?.files ?? []).map(f => f.path);
+            const required = [
+              "AGENTS.md", "README.md", "LICENSE",
+              "dist/server.js", "dist/client.js",
+              "dist/result.js", "dist/tool-catalog.js",
+              "dist/output-schemas.js", "dist/prompts.js", "dist/resources.js",
+              "dist/session/tool-guide.js",
+              "dist/session/fs-jail.js",
+              "dist/session/scripting-dictionary.js",
+              "dist/session/spawn.js",
+              "dist/session/errors.js",
+              "dist/session/constants.js",
+            ];
+            const missing = required.filter(r => !files.includes(r));
+            const skillFiles = files.filter(f => /^skills\/.+\/SKILL\.md$/.test(f));
+            const problems = [];
+            if (missing.length) problems.push("Missing required files: " + missing.join(", "));
+            if (skillFiles.length < 1) problems.push("No skills/**/SKILL.md packed");
+            if (problems.length) { console.error("PACKAGE CONTENT ASSERTION FAILED:\n" + problems.join("\n")); process.exit(1); }
+            console.log("Package content OK: " + files.length + " files, " + skillFiles.length + " skill(s):");
+            for (const s of skillFiles) console.log("  - " + s);
+          '
+
   publish:
     name: Publish to npm
-    needs: [build-native, test]
+    needs: [build-native, test, package]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
@@ -159,6 +212,29 @@ jobs:
 
       - name: Build TypeScript
         run: npx tsc
+
+      - name: Prepare platform packages (stamp version + copy binaries)
+        run: node scripts/prepare-platform-packages.mjs
+
+      - name: Pack platform packages (dry run)
+        run: |
+          for d in packages/computer-use-mcp-*; do
+            echo "--- $d ---"
+            ( cd "$d" && npm pack --dry-run )
+          done
+
+      - name: Publish platform packages (lockstep, before main so optionalDependencies resolve)
+        run: |
+          for d in packages/computer-use-mcp-*; do
+            target="${d#packages/computer-use-mcp-}"
+            if [ -f "$d/computer-use-napi.${target}.node" ]; then
+              ( cd "$d" && npm publish --access public )
+            else
+              echo "skip $d — binary computer-use-napi.${target}.node not built on this matrix"
+            fi
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish (dry run)
         run: npm publish --dry-run --ignore-scripts

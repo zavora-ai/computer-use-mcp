@@ -6,6 +6,8 @@
  */
 import { createComputerUseServer } from '../../dist/server.js'
 import { connectInProcess } from '../../dist/client.js'
+import * as os from 'os'
+import * as path from 'path'
 
 async function main() {
   const server = createComputerUseServer()
@@ -22,9 +24,10 @@ async function main() {
   const displays = JSON.parse((await client.listDisplays()).content[0].text)
   console.log('Monitors: ' + displays.length)
 
-  // Frontmost app
+  // Frontmost app — v7 wraps it as { app: {...} }
   console.log('\n=== Frontmost App ===')
-  const front = JSON.parse((await client.getFrontmostApp()).content[0].text)
+  const frontRaw = JSON.parse((await client.getFrontmostApp()).content[0].text)
+  const front = frontRaw.app ?? frontRaw
   console.log(front.bundleId + ' -- ' + front.displayName + ' (PID ' + front.pid + ')')
 
   // Running apps
@@ -33,9 +36,10 @@ async function main() {
   apps.slice(0, 8).forEach(function(a) { console.log('  ' + a.bundleId + ' (PID ' + a.pid + ')' + (a.isHidden ? ' [hidden]' : '')) })
   console.log('  ... ' + apps.length + ' total')
 
-  // Windows
+  // Windows — v7 returns { windows: [...] }
   console.log('\n=== Windows ===')
-  const wins = JSON.parse((await client.listWindows()).content[0].text)
+  const winsRaw = JSON.parse((await client.listWindows()).content[0].text)
+  const wins = Array.isArray(winsRaw) ? winsRaw : (winsRaw.windows ?? [])
   wins.filter(function(w) { return w.title }).slice(0, 8).forEach(function(w) {
     console.log('  [' + w.windowId + '] ' + w.bundleId + ' -- ' + w.title)
   })
@@ -64,7 +68,7 @@ async function main() {
   console.log('\n=== Desktop Files ===')
   const desktop = await client.callTool('filesystem', {
     mode: 'list',
-    path: 'C:\\Users\\Administrator\\Desktop'
+    path: path.join(os.homedir(), 'Desktop')
   })
   console.log(desktop.content[0].text.split('\n').slice(0, 10).join('\n'))
 

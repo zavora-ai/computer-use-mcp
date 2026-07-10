@@ -40,7 +40,6 @@ async function main() {
 
   // 3. Zoom into the page content
   console.log('3. Zooming into page content...')
-  const disp = JSON.parse((await client.getDisplaySize()).content[0].text)
   save('02-zoom-content', await client.callTool('zoom', {
     region: [100, 200, 800, 500]
   }))

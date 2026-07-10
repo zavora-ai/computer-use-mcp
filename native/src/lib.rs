@@ -5,6 +5,7 @@ mod clipboard;
 mod display;
 mod keyboard;
 mod mouse;
+mod overlay;
 mod screenshot;
 mod spaces;
 mod windows;
