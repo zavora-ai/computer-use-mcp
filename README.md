@@ -834,6 +834,7 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_AUDIT_LOG` | JSONL audit destination. Set `false` to disable, `true` for the default `~/.computer-use-mcp/audit.jsonl`, or an explicit path. |
 | `COMPUTER_USE_FS_ROOTS` | Optional filesystem jail. Comma-separated absolute roots; when set, the `filesystem` tool may only touch paths inside a root. Blocks `..` traversal and symlink escapes (resolved via `realpath`). Unset = unrestricted (legacy). |
 | `COMPUTER_USE_NATIVE_PATH` | Explicit path to the native `.node` addon, overriding automatic resolution (optional platform package → legacy root binary). Useful for custom builds or non-standard install layouts. |
+| `COMPUTER_USE_LEGACY_FOCUS_TAG` | Append the legacy `[focusRequired: X]` suffix to tool descriptions. **Off by default in v7** (`focusRequired` is still available via `_meta` and `get_tool_metadata`). Set `true` to restore the suffix. |
 
 Audit records redact text, scripts, values, messages, and tokens, replacing them with length and SHA-256 hashes. Use `policy_status` to inspect the active policy without exposing the approval token.
 

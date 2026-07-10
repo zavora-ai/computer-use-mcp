@@ -55,12 +55,21 @@ export interface ServerOptions extends SessionOptions {
    * When false, both are omitted for legacy text-only compatibility.
    */
   structuredContent?: boolean
+  /**
+   * v7 deprecation: append the legacy `[focusRequired: X]` suffix to tool
+   * descriptions. Defaults to the `COMPUTER_USE_LEGACY_FOCUS_TAG` env var,
+   * which is **off by default in v7** (focusRequired remains in `_meta`).
+   * Set to `true` (or the env var to "true") to restore the legacy suffix.
+   */
+  legacyFocusTag?: boolean
 }
 
 export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   const profile = parseProfile(opts.profile ?? process.env.COMPUTER_USE_PROFILE)
   const structuredContentEnabled =
     opts.structuredContent ?? (process.env.COMPUTER_USE_STRUCTURED_CONTENT !== 'false')
+  const legacyFocusTag =
+    opts.legacyFocusTag ?? (process.env.COMPUTER_USE_LEGACY_FOCUS_TAG === 'true')
 
   const server = new McpServer(
     { name: 'computer-use', version: '6.2.1' },
@@ -124,7 +133,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       return // init-time profile filter (K18) — no list_changed
     }
     toolMeta.set(name, catalogMeta)
-    const tagged = `${desc} [focusRequired: ${catalogMeta.focusRequired}]`
+    const tagged = legacyFocusTag ? `${desc} [focusRequired: ${catalogMeta.focusRequired}]` : desc
     const inputSchema = catalogMeta.mutates ? { ...schema, approval_token: approvalTokenParam } : schema
     const outputSchema = structuredContentEnabled ? PRIORITY_OUTPUT_SCHEMAS[name] : undefined
     const annotations = toMcpAnnotations(catalogMeta)
@@ -402,7 +411,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       server.registerTool(
         name,
         {
-          description: 'Get structured metadata for a tool: focusRequired (scripting|ax|cgevent|none) and mutates (bool). Useful for agents that want to filter tools by their focus requirements — e.g. "show me only tools I can use while Safari is backgrounded". [focusRequired: none]',
+          description: `Get structured metadata for a tool: focusRequired (scripting|ax|cgevent|none) and mutates (bool). Useful for agents that want to filter tools by their focus requirements — e.g. "show me only tools I can use while Safari is backgrounded".${legacyFocusTag ? ' [focusRequired: none]' : ''}`,
           inputSchema: { tool_name: z.string().describe('Name of the tool to inspect') },
           ...(outSchema ? { outputSchema: outSchema } : {}),
           annotations: toMcpAnnotations(catalogMeta),

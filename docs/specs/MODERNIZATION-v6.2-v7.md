@@ -217,7 +217,7 @@ _meta: {
 }
 ```
 
-Keep `[focusRequired: X]` description suffix through v6.3; deprecate in v7 (`COMPUTER_USE_LEGACY_FOCUS_TAG=false`).
+Kept the `[focusRequired: X]` description suffix through v6.x; **deprecated in v7** — off by default, opt back in with `COMPUTER_USE_LEGACY_FOCUS_TAG=true` (or `legacyFocusTag: true`). `focusRequired` remains in `_meta` and `get_tool_metadata`.
 
 **Implementation** — migrate to `registerTool` (SDK 1.29; `server.tool()` is deprecated but still accepts annotations):
 
@@ -690,7 +690,7 @@ export interface ComputerUseClient {
 | `COMPUTER_USE_PROFILE` | `full` | Init-time tool profile |
 | `COMPUTER_USE_ELICITATION` | host-dependent | Allow elicitation when supported |
 | `COMPUTER_USE_ELICITATION_TIMEOUT_MS` | `60000` | Elicitation timeout |
-| `COMPUTER_USE_LEGACY_FOCUS_TAG` | `true` until v7 | Description focus suffix |
+| `COMPUTER_USE_LEGACY_FOCUS_TAG` | **`false` in v7** (opt-in) | Description focus suffix; off by default, `focusRequired` remains in `_meta` |
 | `COMPUTER_USE_STRUCTURED_CONTENT` | `true` | Dual-write structuredContent; when false omit outputSchema too |
 | `COMPUTER_USE_FS_ROOTS` | unset | Optional FS jail roots (PR-11b) |
 | Existing `COMPUTER_USE_*` policy | unchanged | |
