@@ -33,7 +33,7 @@ The branch has already shipped work originally scheduled across v6.2–v6.4: `re
 | `COMPUTER_USE_STRUCTURED_CONTENT=false` | Resolved (v6.2.1) | Both `outputSchema` **and** `structuredContent` are now omitted when disabled; positive + negative tests added (`test/v6.2-modernization.test.mjs`) |
 | SDK dependency | Resolved (v6.2.1) | Pinned to exact `1.29.0` in `package.json` (K11); CHANGELOG/spec wording reconciled |
 | Prompts, resources, profiles, elicitation, skills | Resolved (v6.2.1) | Regression coverage added in `test/v6.2-regression.test.mjs`: all profile tiers + nesting, all six resource reads incl. `screenshot/latest` cache-only (K15), and elicitation accept/decline/timeout + token-wins (K13) |
-| Session split | Not started | Mechanical move with no behavior changes; all existing tests remain green |
+| Session split | In progress (v7.0) | `src/session/tool-guide.ts` + `src/session/fs-jail.ts` extracted verbatim; `session.ts` re-exports. Lock-pump/policy/focus/doctor/dispatch handlers remain (PR-13b) — deferred to avoid destabilizing the green 7.0.0 release |
 | Registry SSOT | Partial | One definition owns name, input schema, output schema, metadata, profile, description, and handler routing |
 | CI/release assurance | Resolved (v6.2.1) | macOS + Windows CI run the full Node suite; native build matrix; package-content assertion job; stdio protocol smoke included in the suite |
 | Filesystem containment | Implemented (opt-in) | `COMPUTER_USE_FS_ROOTS` jail in `src/session/fs-jail.ts`; `realpath`/symlink/`..` escape tests in `test/fs-jail.test.mjs` prove no root escape; unset = legacy |
@@ -1515,7 +1515,7 @@ flowchart TB
 | **6.2.1** | **PR-19 required** — structured-content compatibility, exact SDK decision, full CI/package/stdio release gates |
 | **6.3.0** | PR-13a, PR-7, remaining documentation/skill hygiene |
 | **6.4.0** | PR-12, PR-11 (+ optional 11b), profile/resource/elicitation regression hardening |
-| **7.0.0** | PR-13b, PR-14, PR-15, PR-16 parity report |
+| **7.0.0** | PR-14 (cancel+progress) ✅, PR-15 (optionalDeps packaging) ✅, PR-16 (rmcp NO-GO) ✅, focus-tag deprecation ✅; PR-13b handler split in progress |
 | **Not in 6.2–7.0 minimum** | **PR-17** (`mouse_click`) — deferred (K24) |
 
 ---
