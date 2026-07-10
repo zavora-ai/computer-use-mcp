@@ -176,7 +176,7 @@ const PROVIDER_QUALITY: Record<string, number> = {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Session {
-  dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>
+  dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal, onProgress?: ProgressReporter): Promise<ToolResult>
   /** Last screenshot from this session, if any (for cache-only resource; K15). */
   getLastScreenshot?(): { mimeType: string; data: string; capturedAt: number } | undefined
 }
@@ -188,6 +188,13 @@ export type ElicitApproval = (ctx: {
   targetApp?: string
   destructive: boolean
 }) => Promise<boolean>
+
+/**
+ * Progress reporter for long-running tools (PR-14 progress half). Only wired by
+ * the server when the MCP request carries a progressToken — no token, no reporter,
+ * no notifications (avoids spam). Best-effort; handlers ignore a missing reporter.
+ */
+export type ProgressReporter = (update: { progress: number; total?: number; message?: string }) => void
 
 export interface TargetState {
   bundleId?: string
@@ -1601,7 +1608,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 
   // ── Dispatch ────────────────────────────────────────────────────────────
 
-  async function dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  async function dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal, onProgress?: ProgressReporter): Promise<ToolResult> {
     const coord = (key = 'coordinate'): [number, number] => {
       const v = args[key]
       if (!Array.isArray(v) || v.length < 2 || typeof v[0] !== 'number' || typeof v[1] !== 'number')
@@ -2971,10 +2978,17 @@ export function createSession(opts: SessionOptions = {}): Session {
               const pattern = typeof args.pattern === 'string' ? args.pattern : '*'
               // Simple glob: just list recursively and filter
               const results: string[] = []
+              let scanned = 0
               const walk = (dir: string) => {
+                if (signal?.aborted) return
                 try {
                   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                    if (signal?.aborted) return
                     const full = path.join(dir, e.name)
+                    scanned++
+                    if (onProgress && scanned % 25 === 0) {
+                      onProgress({ progress: scanned, message: `scanned ${scanned} entries, ${results.length} matches` })
+                    }
                     if (e.name.includes(pattern.replace(/\*/g, '')) || pattern === '*') results.push(full)
                     if (e.isDirectory() && args.recursive) walk(full)
                   }

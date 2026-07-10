@@ -156,8 +156,27 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
         annotations,
         _meta,
       },
-      async (args: Record<string, unknown>, extra?: { signal?: AbortSignal }) => {
-        const result = await session.dispatch(name, args, extra?.signal)
+      async (args: Record<string, unknown>, extra) => {
+        // PR-14 progress: only report when the request carries a progressToken (no token → no spam).
+        const progressToken = extra?._meta?.progressToken
+        let onProgress: ((u: { progress: number; total?: number; message?: string }) => void) | undefined
+        if (progressToken !== undefined && extra?.sendNotification) {
+          const send = extra.sendNotification as unknown as (n: { method: string; params: Record<string, unknown> }) => Promise<void>
+          onProgress = (u) => {
+            try {
+              void send({
+                method: 'notifications/progress',
+                params: {
+                  progressToken,
+                  progress: u.progress,
+                  ...(u.total !== undefined ? { total: u.total } : {}),
+                  ...(u.message ? { message: u.message } : {}),
+                },
+              })
+            } catch { /* best-effort progress */ }
+          }
+        }
+        const result = await session.dispatch(name, args, extra?.signal, onProgress)
         return toMcpToolResult(result, structuredContentEnabled)
       },
     )
