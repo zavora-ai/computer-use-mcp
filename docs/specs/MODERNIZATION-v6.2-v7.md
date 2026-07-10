@@ -37,7 +37,7 @@ The branch has already shipped work originally scheduled across v6.2–v6.4: `re
 | Registry SSOT | Partial | One definition owns name, input schema, output schema, metadata, profile, description, and handler routing |
 | CI/release assurance | Resolved (v6.2.1) | macOS + Windows CI run the full Node suite; native build matrix; package-content assertion job; stdio protocol smoke included in the suite |
 | Filesystem containment | Implemented (opt-in) | `COMPUTER_USE_FS_ROOTS` jail in `src/session/fs-jail.ts`; `realpath`/symlink/`..` escape tests in `test/fs-jail.test.mjs` prove no root escape; unset = legacy |
-| rmcp | Not started; v7 evaluation | Runnable parity spike and written go/no-go report; no production rewrite implied |
+| rmcp | Evaluated — **NO-GO** | Desk parity evaluation + go/no-go recorded in `docs/specs/SPIKE-rmcp.md`; keep TS/NAPI (no perf win, would lose in-process transport + typed TS client). No production rewrite. |
 
 ---
 
