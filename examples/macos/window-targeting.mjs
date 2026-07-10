@@ -9,6 +9,8 @@ import { writeFile } from 'fs/promises'
 
 function text(r) { return r.content.find(c => c.type === 'text')?.text || '' }
 function json(r) { return JSON.parse(text(r)) }
+// v7: list_windows returns { windows: [...] }; tolerate the legacy bare array too.
+function windowsOf(r) { const b = json(r); return Array.isArray(b) ? b : (b.windows ?? []) }
 async function saveImg(r, p) {
   const img = r.content.find(c => c.type === 'image')
   if (img) { await writeFile(p, Buffer.from(img.data, 'base64')); console.log(`   → ${p}`) }
@@ -28,10 +30,10 @@ async function main() {
   await client.wait(1.5)
 
   console.log('2. Listing windows...')
-  const wins = json(await client.listWindows())
+  const wins = windowsOf(await client.listWindows())
   wins.slice(0, 5).forEach(w => console.log(`   [${w.windowId}] ${w.bundleId} — "${w.title || ''}"`))
 
-  const teWin = json(await client.listWindows('com.apple.TextEdit'))[0]
+  const teWin = windowsOf(await client.listWindows('com.apple.TextEdit'))[0]
   if (teWin) {
     console.log(`\n3. Typing into TextEdit [${teWin.windowId}] with strict focus...`)
     await client.type('Hello from v4 window targeting!\n', undefined, { targetWindowId: teWin.windowId, focusStrategy: 'strict' })

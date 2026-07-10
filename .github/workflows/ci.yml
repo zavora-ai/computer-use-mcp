@@ -223,15 +223,22 @@ jobs:
             ( cd "$d" && npm pack --dry-run )
           done
 
-      - name: Publish platform packages (lockstep, before main so optionalDependencies resolve)
+      - name: Publish platform packages (best-effort — main bundles binaries as fallback)
         run: |
           for d in packages/computer-use-mcp-*; do
             target="${d#packages/computer-use-mcp-}"
-            if [ -f "$d/computer-use-napi.${target}.node" ]; then
-              ( cd "$d" && npm publish --access public )
-            else
-              echo "skip $d — binary computer-use-napi.${target}.node not built on this matrix"
+            pkg=$(node -p "require('./$d/package.json').name")
+            ver=$(node -p "require('./$d/package.json').version")
+            if [ ! -f "$d/computer-use-napi.${target}.node" ]; then
+              echo "skip $pkg — binary computer-use-napi.${target}.node not built on this matrix"
+              continue
             fi
+            if npm view "$pkg@$ver" version >/dev/null 2>&1; then
+              echo "skip $pkg@$ver — already published"
+              continue
+            fi
+            ( cd "$d" && npm publish --access public ) \
+              || echo "::warning::could not publish $pkg@$ver — first-time creation may need a broader NPM_TOKEN scope. The main package bundles all platform binaries, so installs still work via the resolver fallback."
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -241,7 +248,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish to npm
-        run: npm publish --ignore-scripts --access public
+      - name: Publish main package to npm (idempotent)
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          if npm view "@zavora-ai/computer-use-mcp@$ver" version >/dev/null 2>&1; then
+            echo "@zavora-ai/computer-use-mcp@$ver already published — skipping"
+          else
+            npm publish --ignore-scripts --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

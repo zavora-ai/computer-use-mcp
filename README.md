@@ -251,6 +251,18 @@ npm install
 npm run build
 ```
 
+### Native binaries
+
+The published `@zavora-ai/computer-use-mcp` package **bundles prebuilt Rust native binaries for every supported target** (`darwin-arm64`, `darwin-x64`, `win32-x64`, `linux-x64`, `linux-arm64`), so it works out of the box on any of them with no build step.
+
+At load time the native module is resolved in this order (v7):
+
+1. `COMPUTER_USE_NATIVE_PATH` — an explicit path override (custom builds / non-standard layouts).
+2. An optional per-platform package `@zavora-ai/computer-use-mcp-${platform}-${arch}` (a slimmer install, when present).
+3. The bundled binary in the main package (default — always available).
+
+The optional per-platform packages are an install-size optimization; when they are absent, resolution transparently falls back to the bundled binary, so installs never fail on the native layer.
+
 ---
 
 ## Permissions setup
