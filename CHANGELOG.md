@@ -28,6 +28,10 @@ Release-completion gate for the v6.2 modernization (see `docs/specs/MODERNIZATIO
 - `run_script` (and the bounded spawner) `SIGKILL`s the child process on abort.
 - Best-effort: many stdio hosts never send cancellation; unaborted behavior is unchanged. Covered by `test/cancellation.test.mjs`.
 
+### Native loader (PR-15, resolver)
+- `src/native.ts` now resolves the native binary via an ordered dual resolver: `COMPUTER_USE_NATIVE_PATH` → optional platform package `@zavora-ai/computer-use-mcp-${platform}-${arch}` → legacy package-root `computer-use-napi.${platform}-${arch}.node` → generic `computer-use-napi.node`, with a doctor-friendly error listing every attempt. Resolution is lazy (first `loadNative`).
+- Additive/back-compatible: with the optional packages unpublished, resolution falls through to the legacy root binary (unchanged behavior). Publishing the platform packages + declaring `optionalDependencies` remains a follow-up. Covered by `test/native-resolver.test.mjs`.
+
 ### v6.2 MCP protocol modernization (ships in this 6.2.1 release)
 
 Annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.

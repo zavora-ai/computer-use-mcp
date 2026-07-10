@@ -20,11 +20,23 @@ const SUPPORTED_TARGETS: ReadonlyArray<{ platform: string; arch: string }> = [
   { platform: 'linux', arch: 'arm64' },
 ]
 
+const require = createRequire(import.meta.url)
+
 /**
  * Resolve the path to the platform-specific native binary.
- * Throws a descriptive error on unsupported platforms or missing binaries.
+ *
+ * Resolution order (Appendix D — additive, back-compatible):
+ *   1. `COMPUTER_USE_NATIVE_PATH` env override
+ *   2. optional platform package `@zavora-ai/computer-use-mcp-${platform}-${arch}`
+ *   3. legacy package-root `computer-use-napi.${platform}-${arch}.node`
+ *   4. legacy package-root generic `computer-use-napi.node`
+ * Throws a doctor-friendly error when none resolve.
+ *
+ * Exported for tests. When the optional packages are unpublished (current
+ * state), resolution falls through to the legacy root binary — identical to
+ * prior behavior.
  */
-function resolveAddonPath(): string {
+export function resolveAddonPath(): string {
   const platform = process.platform
   const arch = process.arch
 
@@ -41,21 +53,48 @@ function resolveAddonPath(): string {
   }
 
   const binaryName = `computer-use-napi.${platform}-${arch}.node`
-  const binaryPath = join(fileURLToPath(import.meta.url), '..', '..', binaryName)
+  const pkgRoot = join(fileURLToPath(import.meta.url), '..', '..')
+  const attempts: string[] = []
 
-  if (!existsSync(binaryPath)) {
-    throw new Error(
-      `Native binary not found: ${binaryName}. ` +
-      `Expected at ${binaryPath}. ` +
-      `Run the appropriate build script to compile the native module for ${platform}-${arch}.`,
-    )
+  // 1. Explicit override.
+  const override = process.env.COMPUTER_USE_NATIVE_PATH
+  if (override) {
+    attempts.push(override)
+    if (existsSync(override)) return override
   }
 
-  return binaryPath
+  // 2. Optional platform package (npm optionalDependencies pattern).
+  try {
+    const resolved = require.resolve(`@zavora-ai/computer-use-mcp-${platform}-${arch}/${binaryName}`)
+    attempts.push(resolved)
+    if (existsSync(resolved)) return resolved
+  } catch {
+    // optional package not installed — fall through to legacy resolution
+  }
+
+  // 3. Legacy package-root platform-specific binary.
+  const legacy = join(pkgRoot, binaryName)
+  attempts.push(legacy)
+  if (existsSync(legacy)) return legacy
+
+  // 4. Legacy package-root generic binary (build copies here too).
+  const generic = join(pkgRoot, 'computer-use-napi.node')
+  attempts.push(generic)
+  if (existsSync(generic)) return generic
+
+  throw new Error(
+    `Native binary missing for ${platform}-${arch}. ` +
+    `Install @zavora-ai/computer-use-mcp-${platform}-${arch} at the matching version, ` +
+    `rebuild via \`npm run build:native\`, or set COMPUTER_USE_NATIVE_PATH to an explicit .node path. ` +
+    `Tried: ${attempts.join(', ')}.`,
+  )
 }
 
-const require = createRequire(import.meta.url)
-const ADDON_PATH = resolveAddonPath()
+let cachedPath: string | undefined
+function addonPath(): string {
+  if (cachedPath === undefined) cachedPath = resolveAddonPath()
+  return cachedPath
+}
 
 // ── v5 Accessibility shapes ───────────────────────────────────────────────────
 
@@ -267,6 +306,6 @@ let cached: NativeModule | undefined
 
 export function loadNative(): NativeModule {
   if (cached) return cached
-  cached = require(ADDON_PATH) as NativeModule
+  cached = require(addonPath()) as NativeModule
   return cached
 }
