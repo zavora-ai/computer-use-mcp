@@ -207,3 +207,41 @@ test('structured content DISABLED via COMPUTER_USE_STRUCTURED_CONTENT=false env 
     else process.env.COMPUTER_USE_STRUCTURED_CONTENT = prev
   }
 })
+
+// ── get_tool_guide additive fields (PR-7) ────────────────────────────────
+
+test('get_tool_guide keeps core fields and adds confidence/platform/fallbackSequence', async () => {
+  const server = createComputerUseServer({ native: createMockNative() })
+  const client = await connectInProcess(server)
+  try {
+    const r = await client.callTool('get_tool_guide', { task_description: 'reply to the selected email' })
+    const guide = r.structuredContent ?? JSON.parse(r.content.find(c => c.type === 'text').text)
+    // core fields preserved
+    assert.ok(['scripting', 'accessibility', 'keyboard', 'coordinate'].includes(guide.approach), 'approach present')
+    assert.ok(Array.isArray(guide.toolSequence) && guide.toolSequence.length > 0, 'toolSequence present')
+    assert.equal(typeof guide.explanation, 'string')
+    // additive fields present
+    assert.equal(typeof guide.confidence, 'number', 'confidence additive field')
+    assert.ok(guide.confidence >= 0 && guide.confidence <= 1, 'confidence in [0,1]')
+    assert.ok(['darwin', 'win32', 'any'].includes(guide.platform), 'platform additive field')
+    assert.ok(Array.isArray(guide.fallbackSequence), 'fallbackSequence additive field')
+  } finally {
+    await client.close()
+  }
+})
+
+test('get_tool_guide flags unavailableInProfile + remediation under profile=core', async () => {
+  const server = createComputerUseServer({ native: createMockNative(), profile: 'core' })
+  const client = await connectInProcess(server)
+  try {
+    // "send an email" maps to a scripting sequence that includes run_script (not in core)
+    const r = await client.callTool('get_tool_guide', { task_description: 'send an email' })
+    const guide = r.structuredContent ?? JSON.parse(r.content.find(c => c.type === 'text').text)
+    assert.ok(Array.isArray(guide.unavailableInProfile), 'unavailableInProfile present under core')
+    assert.ok(guide.unavailableInProfile.includes('run_script'), 'run_script flagged unavailable in core profile')
+    assert.equal(typeof guide.remediation, 'string')
+    assert.ok(/COMPUTER_USE_PROFILE/.test(guide.remediation), 'remediation mentions the profile env var')
+  } finally {
+    await client.close()
+  }
+})
