@@ -104,7 +104,7 @@ Mouse, keyboard, focus, window enumeration, and display operations run in-proces
 | **Platform** | macOS + Windows | Windows only | Windows only | Linux (Docker) | Linux (Docker) |
 | **Language** | Rust NAPI + TypeScript | Python | Python | Python (reference) | Python (reference) |
 | **Protocol** | MCP (stdio + in-process) | MCP (stdio) | MCP (stdio) | Claude API built-in | OpenAI API built-in |
-| **Tools** | 58 | 14 | 10 | 3 (computer, bash, editor) | 1 (computer) |
+| **Tools** | 64 | 14 | 10 | 3 (computer, bash, editor) | 1 (computer) |
 | **Screenshot** | DXGI + GDI + PNG/JPEG | dxcam + PIL | mss + PIL | Xvfb screenshot | Xvfb screenshot |
 | **Mouse input** | SendInput (Rust) | ctypes→SendInput | pyautogui | xdotool | xdotool |
 | **Keyboard** | SendInput Unicode (Rust) | SendKeys wrapper | pyautogui.write | xdotool | xdotool |
@@ -161,7 +161,7 @@ Your AI client (Claude, Cursor, etc.)
         │  MCP protocol (JSON-RPC over stdio or in-memory)
         ▼
   MCP Server  (src/server.ts)
-  ├── Registers 46 tools with Zod schemas
+  ├── Registers 64 tools with Zod schemas
   ├── Validates all inputs at the boundary
   └── Delegates to Session
         │

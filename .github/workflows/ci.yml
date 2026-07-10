@@ -98,9 +98,9 @@ jobs:
       - name: Build TypeScript
         run: npx tsc
 
-      - name: Run tests (macOS)
-        if: runner.os == 'macOS'
-        run: node --test test/stdio.test.mjs
+      - name: Run full test suite (all platforms)
+        shell: bash
+        run: node --test test/*.test.mjs
 
       - name: Run smoke test (Windows)
         if: runner.os == 'Windows'
@@ -109,9 +109,52 @@ jobs:
       - name: Run new tools smoke test
         run: node test/smoke-new-tools.mjs
 
+  package:
+    name: Verify package contents
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --force
+
+      - name: Build TypeScript
+        run: npx tsc
+
+      - name: Assert published tarball includes runtime, docs, and skills
+        shell: bash
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const fs = require("fs");
+            const entries = JSON.parse(fs.readFileSync("pack.json", "utf8"));
+            const files = (entries[0]?.files ?? []).map(f => f.path);
+            const required = [
+              "AGENTS.md", "README.md", "LICENSE",
+              "dist/server.js", "dist/client.js",
+              "dist/result.js", "dist/tool-catalog.js",
+              "dist/output-schemas.js", "dist/prompts.js", "dist/resources.js",
+            ];
+            const missing = required.filter(r => !files.includes(r));
+            const skillFiles = files.filter(f => /^skills\/.+\/SKILL\.md$/.test(f));
+            const problems = [];
+            if (missing.length) problems.push("Missing required files: " + missing.join(", "));
+            if (skillFiles.length < 1) problems.push("No skills/**/SKILL.md packed");
+            if (problems.length) { console.error("PACKAGE CONTENT ASSERTION FAILED:\n" + problems.join("\n")); process.exit(1); }
+            console.log("Package content OK: " + files.length + " files, " + skillFiles.length + " skill(s):");
+            for (const s of skillFiles) console.log("  - " + s);
+          '
+
   publish:
     name: Publish to npm
-    needs: [build-native, test]
+    needs: [build-native, test, package]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:

@@ -42,7 +42,18 @@ export function errJson(data: Record<string, unknown>): ToolResult {
   }
 }
 
-export function toMcpToolResult(result: ToolResult): {
+/**
+ * Map an internal ToolResult to the MCP wire shape.
+ *
+ * When `includeStructuredContent` is false (the `COMPUTER_USE_STRUCTURED_CONTENT=false`
+ * opt-out), the `structuredContent` field is stripped so results are legacy text-only.
+ * The caller is responsible for also suppressing `outputSchema` advertisement, since a
+ * registered outputSchema without structuredContent would fail SDK output validation.
+ */
+export function toMcpToolResult(
+  result: ToolResult,
+  includeStructuredContent = true,
+): {
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'image'; data: string; mimeType: string }
@@ -60,7 +71,7 @@ export function toMcpToolResult(result: ToolResult): {
     structuredContent?: Record<string, unknown>
     isError?: boolean
   } = { content }
-  if (result.structuredContent !== undefined) {
+  if (includeStructuredContent && result.structuredContent !== undefined) {
     out.structuredContent = result.structuredContent
   }
   if (result.isError) out.isError = true

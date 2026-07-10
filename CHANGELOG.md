@@ -1,11 +1,33 @@
 # Changelog
 
+## v6.2.1 (2026-07-10)
+
+Release-completion gate for the v6.2 modernization (see `docs/specs/MODERNIZATION-v6.2-v7.md`, PR-19).
+
+### Fixed
+- **`COMPUTER_USE_STRUCTURED_CONTENT=false` now omits both `outputSchema` and `structuredContent`.** Previously only the `outputSchema` advertisement was suppressed while results still carried `structuredContent`, so the documented legacy text-only mode did not actually take effect. The flag is now evaluated per `createComputerUseServer` (also overridable via `ServerOptions.structuredContent`) and threaded through every result-mapping path, including the server-local `get_tool_metadata` handler.
+
+### Changed
+- **Pinned `@modelcontextprotocol/sdk` to exact `1.29.0`** (no caret range) for reproducible release builds (K11).
+
+### Docs
+- Corrected stale tool counts in README (feature matrix and architecture diagram) to **64**.
+- Reconciled contradictory SDK "pin" wording in the CHANGELOG and modernization spec.
+
+### CI / release assurance
+- CI now runs the **full Node test suite on both macOS and Windows** (previously only `stdio.test.mjs` on macOS).
+- Added a **package-content assertion** that the published tarball includes `dist/**`, `AGENTS.md`, `README`, `LICENSE`, and `skills/**/SKILL.md`.
+- The stdio initialize/list/version smoke runs as part of the full suite on both platforms.
+
+### Tests
+- Added positive/negative coverage for the structured-content opt-out (enabled, disabled via option, disabled via env var), asserting both the result field and the `outputSchema` advertisement.
+
 ## v6.2.0 (2026-07-09)
 
 MCP protocol modernization: annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
 
 ### Protocol
-- **Pin** `@modelcontextprotocol/sdk` to `^1.29.0`; migrate tool registration to `registerTool`
+- **Pin** `@modelcontextprotocol/sdk` to exact `1.29.0` (K11: exact tested version, no caret); migrate tool registration to `registerTool`
 - **Tool annotations:** `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` on all 64 tools (Appendix A)
 - **`_meta`:** `computer-use/focusRequired`, mutates, and related fields for hosts that understand them
 - **Server instructions** injected at initialize (tool priority hierarchy)

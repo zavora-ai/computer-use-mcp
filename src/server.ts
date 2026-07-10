@@ -43,20 +43,26 @@ const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
 
 const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'phi', 'auto'] as const
 
-const structuredContentEnabled = process.env.COMPUTER_USE_STRUCTURED_CONTENT !== 'false'
-
 export interface ServerOptions extends SessionOptions {
   /** Override session instance for tests */
   session?: Session
   /** Init-time tool profile (K18). Default full. */
   profile?: ProfileName | string
+  /**
+   * Emit `structuredContent` + advertise `outputSchema`. Defaults to the
+   * `COMPUTER_USE_STRUCTURED_CONTENT` env var (true unless explicitly "false").
+   * When false, both are omitted for legacy text-only compatibility.
+   */
+  structuredContent?: boolean
 }
 
 export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   const profile = parseProfile(opts.profile ?? process.env.COMPUTER_USE_PROFILE)
+  const structuredContentEnabled =
+    opts.structuredContent ?? (process.env.COMPUTER_USE_STRUCTURED_CONTENT !== 'false')
 
   const server = new McpServer(
-    { name: 'computer-use', version: '6.2.0' },
+    { name: 'computer-use', version: '6.2.1' },
     { instructions: SERVER_INSTRUCTIONS },
   )
 
@@ -142,7 +148,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       },
       async (args: Record<string, unknown>) => {
         const result = await session.dispatch(name, args)
-        return toMcpToolResult(result)
+        return toMcpToolResult(result, structuredContentEnabled)
       },
     )
   }
@@ -413,13 +419,13 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
               content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', tool_name: toolName }) }],
               structuredContent: { error: 'unknown_tool', tool_name: toolName },
               isError: true,
-            })
+            }, structuredContentEnabled)
           }
           const payload = { tool_name: toolName, ...toToolMetaPublic(meta) }
           return toMcpToolResult({
             content: [{ type: 'text', text: JSON.stringify(payload) }],
             structuredContent: payload,
-          })
+          }, structuredContentEnabled)
         },
       )
     }

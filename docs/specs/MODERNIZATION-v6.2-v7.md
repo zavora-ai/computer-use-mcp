@@ -6,7 +6,7 @@
 | **Author** | TBD (Zavora / maintainers) |
 | **Date** | 2026-07-10 |
 | **Status** | **Revision 3 — implementation in progress; completion plan below is authoritative** |
-| **Current version** | 6.2.0 (`package.json`) |
+| **Current version** | 6.2.1 (`package.json`) |
 | **Target versions** | v6.2 → v6.3 → v6.4 → v7.0 |
 | **Primary distribution** | npm + stdio MCP (`npx @zavora-ai/computer-use-mcp`) |
 | **Tool count** | **64** MCP tools, registered through `registerTool` |
@@ -19,7 +19,7 @@
 
 The product is feature-rich (AX/UIA, scripting, spaces, filesystem, snapshot, OpenAI computer adapter, policy/audit) and now exposes modern MCP surfaces: annotations, priority `structuredContent`/`outputSchema`, instructions, prompts, resources, profiles, and elicitation. The remaining protocol work is compatibility verification and cancellation/progress. The remaining architecture work is to replace the parallel catalog, inline schemas, and dispatcher with a true registry.
 
-**SDK note:** the branch uses `@modelcontextprotocol/sdk` `^1.29.0` and `registerTool`. Before release, PR-19 must either use an exact version or correct every use of “pin” to mean a tested minimum.
+**SDK note:** the package pins `@modelcontextprotocol/sdk` to exact `1.29.0` (no caret) and uses `registerTool`. Resolved in v6.2.1 per K11 — release builds use an exact tested SDK version rather than a caret range.
 
 This design is an **incremental, PR-ordered modernization**: ship protocol correctness first, then reduce the session/registry maintenance burden and harden packaging/security. The TypeScript/N-API server remains the product; rmcp is a bounded evaluation, not a rewrite commitment.
 
@@ -30,12 +30,12 @@ The branch has already shipped work originally scheduled across v6.2–v6.4: `re
 | Area | State | Required completion evidence |
 |---|---|---|
 | MCP registration, annotations, priority schemas | Implemented | SDK integration tests cover annotations, text/structured equality, and every output-schema success path |
-| `COMPUTER_USE_STRUCTURED_CONTENT=false` | **Gap / release blocker** | Both `outputSchema` **and** `structuredContent` are absent from every result when disabled; add positive and negative tests |
-| SDK dependency | **Gap** | Pin an exact tested SDK version, or change documentation to call `^1.29.0` a minimum version rather than a pin |
+| `COMPUTER_USE_STRUCTURED_CONTENT=false` | Resolved (v6.2.1) | Both `outputSchema` **and** `structuredContent` are now omitted when disabled; positive + negative tests added (`test/v6.2-modernization.test.mjs`) |
+| SDK dependency | Resolved (v6.2.1) | Pinned to exact `1.29.0` in `package.json` (K11); CHANGELOG/spec wording reconciled |
 | Prompts, resources, profiles, elicitation, skills | Implemented ahead of release mapping | Test every profile plus resource reads and approval accept/decline/timeout behavior |
 | Session split | Not started | Mechanical move with no behavior changes; all existing tests remain green |
 | Registry SSOT | Partial | One definition owns name, input schema, output schema, metadata, profile, description, and handler routing |
-| CI/release assurance | **Gap** | macOS and Windows CI run the full Node suite, native build/check, package-content test, and stdio protocol smoke |
+| CI/release assurance | Resolved (v6.2.1) | macOS + Windows CI run the full Node suite; native build matrix; package-content assertion job; stdio protocol smoke included in the suite |
 | Filesystem containment | Optional hardening | If enabled, realpath/symlink/`..` escape tests prove no root escape |
 | rmcp | Not started; v7 evaluation | Runnable parity spike and written go/no-go report; no production rewrite implied |
 

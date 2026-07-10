@@ -145,3 +145,65 @@ test('session list_windows wire is { windows: [...] }', async () => {
   assert.ok(Array.isArray(body.windows))
   assert.ok(r.structuredContent?.windows)
 })
+
+// ── Structured-content opt-out (PR-19 release blocker) ───────────────────
+
+test('structured content ENABLED: results carry structuredContent + outputSchema advertised', async () => {
+  const server = createComputerUseServer({ native: createMockNative(), structuredContent: true })
+  const client = await connectInProcess(server)
+  try {
+    const r = await client.callTool('policy_status')
+    assert.ok(r.structuredContent !== undefined, 'structuredContent should be present when enabled')
+
+    const tools = await client.listTools()
+    const ps = tools.find(t => t.name === 'policy_status')
+    assert.ok(ps?.outputSchema !== undefined, 'outputSchema should be advertised when enabled')
+  } finally {
+    await client.close()
+  }
+})
+
+test('structured content DISABLED: strips BOTH structuredContent and outputSchema (opts override)', async () => {
+  const server = createComputerUseServer({ native: createMockNative(), structuredContent: false })
+  const client = await connectInProcess(server)
+  try {
+    const r = await client.callTool('policy_status')
+    assert.equal(r.structuredContent, undefined, 'structuredContent must be absent when disabled')
+    // Text content is still present and parseable (legacy shape preserved)
+    const text = r.content.find(c => c.type === 'text')?.text
+    assert.ok(text, 'text content should remain')
+    const body = JSON.parse(text)
+    assert.equal(typeof body.approval_token_configured, 'boolean')
+
+    const tools = await client.listTools()
+    const withSchema = tools.filter(t => t.outputSchema !== undefined)
+    assert.equal(withSchema.length, 0, `no outputSchema should be advertised when disabled, got ${withSchema.map(t => t.name).join(',')}`)
+
+    // Server-local handler (get_tool_metadata) must also honor the opt-out
+    const meta = await client.callTool('get_tool_metadata', { tool_name: 'run_script' })
+    assert.equal(meta.structuredContent, undefined, 'get_tool_metadata must not emit structuredContent when disabled')
+    assert.ok(meta.content.find(c => c.type === 'text')?.text, 'get_tool_metadata text content should remain')
+  } finally {
+    await client.close()
+  }
+})
+
+test('structured content DISABLED via COMPUTER_USE_STRUCTURED_CONTENT=false env var', async () => {
+  const prev = process.env.COMPUTER_USE_STRUCTURED_CONTENT
+  process.env.COMPUTER_USE_STRUCTURED_CONTENT = 'false'
+  try {
+    const server = createComputerUseServer({ native: createMockNative() })
+    const client = await connectInProcess(server)
+    try {
+      const r = await client.callTool('policy_status')
+      assert.equal(r.structuredContent, undefined, 'env opt-out must strip structuredContent')
+      const tools = await client.listTools()
+      assert.equal(tools.filter(t => t.outputSchema !== undefined).length, 0, 'env opt-out must strip outputSchema')
+    } finally {
+      await client.close()
+    }
+  } finally {
+    if (prev === undefined) delete process.env.COMPUTER_USE_STRUCTURED_CONTENT
+    else process.env.COMPUTER_USE_STRUCTURED_CONTENT = prev
+  }
+})
