@@ -374,10 +374,11 @@ mod win {
                     None,
                     hinstance,
                     None,
-                );
-                if hwnd.0 != 0 {
-                    SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY);
-                    ShowWindow(hwnd, SW_HIDE);
+                )
+                .unwrap_or_default();
+                if !hwnd.0.is_null() {
+                    let _ = SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY);
+                    let _ = ShowWindow(hwnd, SW_HIDE);
                     OVERLAY.lock().unwrap().hwnd = hwnd.0 as isize;
                 }
 
