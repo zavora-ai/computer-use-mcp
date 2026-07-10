@@ -59,6 +59,7 @@
     "dist/server.js",
     "dist/session.d.ts",
     "dist/session.js",
+    "dist/session/",
     "dist/tool-catalog.d.ts",
     "dist/tool-catalog.js",
     "skills"
