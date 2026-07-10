@@ -12,6 +12,14 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
 **Profiles:** `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default `full`)
 
+**v7 environment & behaviors:**
+- `COMPUTER_USE_FS_ROOTS` — confine the `filesystem` tool to comma-separated absolute roots (blocks `..`/symlink escape). Unset = unrestricted.
+- `COMPUTER_USE_NATIVE_PATH` — override native `.node` resolution (else: optional platform package → bundled binary).
+- `COMPUTER_USE_LEGACY_FOCUS_TAG=true` — restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`).
+- `COMPUTER_USE_STRUCTURED_CONTENT=false` — legacy text-only results (omits `structuredContent` + `outputSchema`).
+- **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` kills its child).
+- **Progress:** long `filesystem` searches emit `notifications/progress` when a progress token is present.
+
 ## Tool priority guidance
 
 Desktop computer use should be your **last resort**. Always prefer more precise tools:

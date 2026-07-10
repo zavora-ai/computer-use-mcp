@@ -45,6 +45,19 @@ It also ships a typed TypeScript client so you can drive your Mac programmatical
 
 ---
 
+## What's new in v7.0
+
+- **Cancellation** — tool calls honor the MCP host `AbortSignal`: `wait` returns early and `run_script` kills its child process when the host cancels.
+- **Progress notifications** — long `filesystem` searches emit `notifications/progress` when the request carries a progress token (silent otherwise).
+- **Filesystem jail** — `COMPUTER_USE_FS_ROOTS` confines the `filesystem` tool to allowlisted roots, blocking `..` traversal and symlink escapes.
+- **Native binary resolver + packaging** — `COMPUTER_USE_NATIVE_PATH` override → optional per-platform package → bundled binary; installs never fail on the native layer.
+- **MCP modernization** — tool annotations, `structuredContent` + `outputSchema`, server instructions, prompts, resources, and init-time tool profiles (`COMPUTER_USE_PROFILE`).
+- **Deprecation** — the `[focusRequired: X]` description suffix is off by default (`focusRequired` remains in `_meta` / `get_tool_metadata`); restore it with `COMPUTER_USE_LEGACY_FOCUS_TAG=true`.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+---
+
 ## Tool priority guidance
 
 Desktop computer use is powerful but should be your **last resort**. Prefer more precise tools when they exist:
