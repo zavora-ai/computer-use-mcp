@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -127,11 +127,11 @@ test('Phase 1: lock with dead-PID holder is reclaimed', async () => {
 
 test('Phase 1: mutating tool returns structured locked_by_pid when another live PID holds the lock', async () => {
   const lockPath = newLockPath()
-  // Spawn a truly-detached background process that we can signal later.
-  // `nohup sleep 30 > /dev/null 2>&1 &` detaches under sh job control.
-  // We capture the new child's PID from $!.
-  const out = execFileSync('bash', ['-c', 'nohup sleep 30 >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' }).trim()
-  const foreignPid = parseInt(out, 10)
+  // Spawn a detached, long-lived process as the "foreign" lock holder.
+  // Cross-platform (Node itself) — bash/nohup/sleep are not available on Windows.
+  const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: 'ignore' })
+  sleeper.unref()
+  const foreignPid = sleeper.pid
   assert.ok(Number.isFinite(foreignPid) && foreignPid > 0 && foreignPid !== process.pid,
     `spawned sleeper pid must be real and different from us (got ${foreignPid}, self=${process.pid})`)
 

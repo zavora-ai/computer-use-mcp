@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
+const winSkip = { skip: process.platform === 'win32' && 'macOS/Linux native-spaces path (Windows uses Ctrl+Win+D)' }
 import fc from 'fast-check'
 import { createSession } from '../dist/session.js'
 
@@ -650,7 +651,7 @@ test('run_script non-zero exit surfaces stderr with isError', macOnly, async () 
 
 // ── Property 14: Spaces graceful degradation ─────────────────────────────────
 
-test('Feature: v5-accessible-ui-automation, Property 14: spaces unsupported degrades gracefully', async () => {
+test('Feature: v5-accessible-ui-automation, Property 14: spaces unsupported degrades gracefully', winSkip, async () => {
   const native = createMockNative()
   native._setCreateAgentSpaceResult(() => ({ supported: false, reason: 'api_unavailable' }))
   native._setMoveWindowToSpaceResult(() => ({ moved: false, reason: 'api_unavailable' }))
@@ -668,7 +669,7 @@ test('Feature: v5-accessible-ui-automation, Property 14: spaces unsupported degr
   assert.ok(['api_unavailable', 'mock'].includes(b2.error) || b2.error === 'api_unavailable')
 })
 
-test('create_agent_space caches a supported result', async () => {
+test('create_agent_space caches a supported result', winSkip, async () => {
   const native = createMockNative()
   let invocations = 0
   native._setCreateAgentSpaceResult(() => {
