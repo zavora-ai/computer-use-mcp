@@ -15,6 +15,8 @@ import { fsRootsViolation } from './session/fs-jail.js'
 import { parseSdef } from './session/scripting-dictionary.js'
 import { sleep, sleepAbortable, defaultSpawnBounded } from './session/spawn.js'
 import type { SpawnResult, SpawnBounded } from './session/spawn.js'
+import { FocusError, WindowNotFoundError } from './session/errors.js'
+import type { FocusFailure } from './session/errors.js'
 import type {
   ScriptingDictionary,
   ScriptingDictionaryCommand,
@@ -115,19 +117,6 @@ export interface TargetState {
  */
 export type FocusStrategy = 'strict' | 'best_effort' | 'none' | 'prepare_display'
 
-interface FocusFailure {
-  error: 'focus_failed'
-  requestedBundleId: string
-  requestedWindowId: number | null
-  frontmostBefore: string | null
-  frontmostAfter: string | null
-  targetRunning: boolean
-  targetHidden: boolean
-  targetWindowVisible: boolean | null
-  activationAttempted: boolean
-  suggestedRecovery: 'activate_window' | 'unhide_app' | 'open_application'
-}
-
 export interface SessionOptions {
   /** Disable image output for text-only models (DeepSeek-V3, R1, etc.) */
   vision?: boolean
@@ -156,20 +145,6 @@ export interface SessionOptions {
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
-
-class FocusError extends Error {
-  constructor(readonly details: FocusFailure) {
-    super(`Failed to focus ${details.requestedBundleId}`)
-    this.name = 'FocusError'
-  }
-}
-
-class WindowNotFoundError extends Error {
-  constructor(readonly windowId: number) {
-    super(`Window not found: ${windowId}`)
-    this.name = 'WindowNotFoundError'
-  }
-}
 
 // ── v5.2: Session lock + runloop pump ─────────────────────────────────────────
 //
