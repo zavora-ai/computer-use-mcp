@@ -1,6 +1,6 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "6.2.1",
+  "version": "7.0.0",
   "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
@@ -75,6 +75,7 @@
     "build:native:linux": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.so ../computer-use-napi.linux-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.so ../computer-use-napi.node",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
+    "prepare:packages": "node scripts/prepare-platform-packages.mjs",
     "test": "npm run build:ts && node --test test/*.test.mjs",
     "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
     "prepublishOnly": "npm run build",
@@ -84,6 +85,13 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
     "zod": "^4.0.0"
+  },
+  "optionalDependencies": {
+    "@zavora-ai/computer-use-mcp-darwin-arm64": "7.0.0",
+    "@zavora-ai/computer-use-mcp-darwin-x64": "7.0.0",
+    "@zavora-ai/computer-use-mcp-win32-x64": "7.0.0",
+    "@zavora-ai/computer-use-mcp-linux-x64": "7.0.0",
+    "@zavora-ai/computer-use-mcp-linux-arm64": "7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

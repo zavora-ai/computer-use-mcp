@@ -205,6 +205,29 @@ jobs:
       - name: Build TypeScript
         run: npx tsc
 
+      - name: Prepare platform packages (stamp version + copy binaries)
+        run: node scripts/prepare-platform-packages.mjs
+
+      - name: Pack platform packages (dry run)
+        run: |
+          for d in packages/computer-use-mcp-*; do
+            echo "--- $d ---"
+            ( cd "$d" && npm pack --dry-run )
+          done
+
+      - name: Publish platform packages (lockstep, before main so optionalDependencies resolve)
+        run: |
+          for d in packages/computer-use-mcp-*; do
+            target="${d#packages/computer-use-mcp-}"
+            if [ -f "$d/computer-use-napi.${target}.node" ]; then
+              ( cd "$d" && npm publish --access public )
+            else
+              echo "skip $d — binary computer-use-napi.${target}.node not built on this matrix"
+            fi
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish (dry run)
         run: npm publish --dry-run --ignore-scripts
         env:

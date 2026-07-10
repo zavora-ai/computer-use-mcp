@@ -80,13 +80,13 @@ test('activate_window schema includes window_id and timeout_ms parameters', asyn
   })
 })
 
-// ── Server version is 6.2.1 ─────────────────────────────────────────────────
+// ── Server version is 7.0.0 ─────────────────────────────────────────────────
 
-test('server reports version 6.2.1', async () => {
+test('server reports version 7.0.0', async () => {
   await withClient(async (client) => {
     const info = client.getServerVersion()
     assert.ok(info, 'server version info should be available after connect')
-    assert.equal(info.version, '6.2.1', 'server version should be 6.2.1')
+    assert.equal(info.version, '7.0.0', 'server version should be 7.0.0')
     assert.equal(info.name, 'computer-use', 'server name should be computer-use')
   })
 })

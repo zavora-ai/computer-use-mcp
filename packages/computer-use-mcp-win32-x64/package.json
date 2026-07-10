@@ -1,0 +1,9 @@
+{
+  "name": "@zavora-ai/computer-use-mcp-win32-x64",
+  "version": "7.0.0",
+  "description": "Native binary for @zavora-ai/computer-use-mcp (win32-x64). Installed automatically as an optionalDependency.",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["computer-use-napi.win32-x64.node"]
+}

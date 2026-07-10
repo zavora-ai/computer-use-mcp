@@ -1,0 +1,9 @@
+{
+  "name": "@zavora-ai/computer-use-mcp-linux-x64",
+  "version": "7.0.0",
+  "description": "Native binary for @zavora-ai/computer-use-mcp (linux-x64). Installed automatically as an optionalDependency.",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["computer-use-napi.linux-x64.node"]
+}

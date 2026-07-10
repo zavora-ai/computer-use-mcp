@@ -1,5 +1,26 @@
 # Changelog
 
+## v7.0.0 (2026-07-10)
+
+Architecture-finish release. Builds on the v6.2.1 modernization with cancellation, progress, filesystem containment, a native binary resolver, and a session-layer split. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
+
+### Breaking
+- **`[focusRequired: X]` description suffix is now OFF by default.** `focusRequired` remains available via `_meta` (`computer-use/focusRequired`) and `get_tool_metadata`. Restore the suffix with `COMPUTER_USE_LEGACY_FOCUS_TAG=true` (or `ServerOptions.legacyFocusTag: true`).
+
+### Added
+- **Cancellation** — tool handlers honor the MCP host `AbortSignal`: `wait` returns early, `run_script` `SIGKILL`s the child.
+- **Progress** — `filesystem search` (and the bounded spawner path) emit `notifications/progress` **only when the request carries a progressToken** (no token → no spam).
+- **Filesystem jail** — `COMPUTER_USE_FS_ROOTS` confines the `filesystem` tool to allowlisted roots (blocks `..`/symlink escapes). Unset = legacy unrestricted.
+- **Native binary dual resolver** — `COMPUTER_USE_NATIVE_PATH` → optional platform package → legacy root binary → generic, with a doctor-friendly error. Lazy resolution.
+- **Native `optionalDependencies` packaging** — per-platform packages under `packages/*` (lockstep version); the resolver prefers them, falling back to the legacy root binary shipped in the main tarball through the 7.x line.
+
+### Architecture
+- Session split continues into `src/session/*` (`tool-guide`, `fs-jail`, …); `session.ts` re-exports.
+- rmcp evaluated — **NO-GO** for a rewrite (`docs/specs/SPIKE-rmcp.md`).
+
+### Tests
+- Suite expanded to cover cancellation, progress, FS jail, resolver, profiles/resources/elicitation, and the focus-tag deprecation modes.
+
 ## v6.2.1 (2026-07-10)
 
 Release-completion gate for the v6.2 modernization (see `docs/specs/MODERNIZATION-v6.2-v7.md`, PR-19).

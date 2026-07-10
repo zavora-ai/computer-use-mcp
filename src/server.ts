@@ -72,7 +72,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     opts.legacyFocusTag ?? (process.env.COMPUTER_USE_LEGACY_FOCUS_TAG === 'true')
 
   const server = new McpServer(
-    { name: 'computer-use', version: '6.2.1' },
+    { name: 'computer-use', version: '7.0.0' },
     { instructions: SERVER_INSTRUCTIONS },
   )
 
