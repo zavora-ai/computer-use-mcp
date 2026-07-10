@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createSession } from '../dist/session.js'
@@ -54,7 +55,7 @@ function createMockNative({ prepareResult } = {}) {
 
 // ── prepare_display routes through native.prepareDisplay ────────────────────
 
-test('Phase 2: focus_strategy=prepare_display calls native.prepareDisplay with terminal in keep list', async () => {
+test('Phase 2: focus_strategy=prepare_display calls native.prepareDisplay with terminal in keep list', macOnly, async () => {
   // Simulate running inside Terminal.app (macOS) or use Windows default
   const originalBundle = process.env.__CFBundleIdentifier
   process.env.__CFBundleIdentifier = 'com.apple.Terminal'

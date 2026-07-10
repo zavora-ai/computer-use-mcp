@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 import { MUTATING_TOOLS, TOOL_CATALOG, toToolMetaPublic } from '../dist/tool-catalog.js'
@@ -230,7 +231,7 @@ test('get_tool_guide keeps core fields and adds confidence/platform/fallbackSequ
   }
 })
 
-test('get_tool_guide flags unavailableInProfile + remediation under profile=core', async () => {
+test('get_tool_guide flags unavailableInProfile + remediation under profile=core', macOnly, async () => {
   const server = createComputerUseServer({ native: createMockNative(), profile: 'core' })
   const client = await connectInProcess(server)
   try {

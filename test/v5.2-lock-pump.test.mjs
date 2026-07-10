@@ -6,6 +6,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
@@ -153,7 +154,7 @@ test('Phase 1: mutating tool returns structured locked_by_pid when another live 
 
 // ── Pump drains the runloop while a mutating call is in flight ──────────────
 
-test('Phase 1: pump fires drainRunloop while a mutating tool runs', async () => {
+test('Phase 1: pump fires drainRunloop while a mutating tool runs', macOnly, async () => {
   const lockPath = newLockPath()
   // 30ms delay in mouseClick gives the 1ms pump plenty of ticks.
   const mock = createMockNative({ mouseClickDelayMs: 30 })

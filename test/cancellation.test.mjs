@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import { createSession } from '../dist/session.js'
 
 test('wait returns early when the signal aborts mid-flight', async () => {
@@ -36,7 +37,7 @@ test('wait without a signal still waits the full (short) duration', async () => 
   assert.match(r.content.find(c => c.type === 'text').text, /Waited/)
 })
 
-test('run_script threads the abort signal into spawnBounded', async () => {
+test('run_script threads the abort signal into spawnBounded', macOnly, async () => {
   let capturedSignal = 'not-called'
   const spawnBounded = (_cmd, _args, _timeoutMs, signal) => {
     capturedSignal = signal
@@ -49,7 +50,7 @@ test('run_script threads the abort signal into spawnBounded', async () => {
   assert.equal(capturedSignal, ctrl.signal, 'the same AbortSignal must reach spawnBounded')
 })
 
-test('run_script without a signal passes undefined to spawnBounded (back-compat)', async () => {
+test('run_script without a signal passes undefined to spawnBounded (back-compat)', macOnly, async () => {
   let sawArgCount = -1
   const spawnBounded = (...a) => {
     sawArgCount = a.length >= 4 ? (a[3] === undefined ? 3 : 4) : a.length
