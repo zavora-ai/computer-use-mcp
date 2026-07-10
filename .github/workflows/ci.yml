@@ -158,6 +158,7 @@ jobs:
               "dist/result.js", "dist/tool-catalog.js",
               "dist/output-schemas.js", "dist/prompts.js", "dist/resources.js",
               "dist/session/tool-guide.js",
+              "dist/session/fs-jail.js",
             ];
             const missing = required.filter(r => !files.includes(r));
             const skillFiles = files.filter(f => /^skills\/.+\/SKILL\.md$/.test(f));

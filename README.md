@@ -832,6 +832,7 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL` | Set `true` to require approval for destructive filesystem/process/registry/script operations. |
 | `COMPUTER_USE_APPROVAL_TOKEN` | Private token callers must pass as `approval_token` after user approval. |
 | `COMPUTER_USE_AUDIT_LOG` | JSONL audit destination. Set `false` to disable, `true` for the default `~/.computer-use-mcp/audit.jsonl`, or an explicit path. |
+| `COMPUTER_USE_FS_ROOTS` | Optional filesystem jail. Comma-separated absolute roots; when set, the `filesystem` tool may only touch paths inside a root. Blocks `..` traversal and symlink escapes (resolved via `realpath`). Unset = unrestricted (legacy). |
 
 Audit records redact text, scripts, values, messages, and tokens, replacing them with length and SHA-256 hashes. Use `policy_status` to inspect the active policy without exposing the approval token.
 

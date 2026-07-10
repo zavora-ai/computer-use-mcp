@@ -67,7 +67,7 @@ In scope:
 
 ### Residual risk (filesystem)
 
-Relative `filesystem` paths resolve under the Desktop. **Absolute paths are unrestricted** by default (no path jail). Treat `mode=delete|write|move` as destructive. An optional root allowlist may be added in a future release (`COMPUTER_USE_FS_ROOTS`).
+Relative `filesystem` paths resolve under the Desktop. **Absolute paths are unrestricted by default** (no path jail) — treat `mode=delete|write|move` as destructive and admin-equivalent. To contain the tool, set `COMPUTER_USE_FS_ROOTS` to a comma-separated list of absolute roots: the `filesystem` tool then refuses any path outside those roots, including `..` traversal and symlink escapes (paths are normalized and `realpath`-resolved before the containment check). When unset, behavior is unchanged (legacy). Combine with `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL` and app allowlists for defense in depth.
 
 ### Residual risk (scrape + desktop)
 

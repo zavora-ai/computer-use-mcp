@@ -36,7 +36,7 @@ The branch has already shipped work originally scheduled across v6.2–v6.4: `re
 | Session split | Not started | Mechanical move with no behavior changes; all existing tests remain green |
 | Registry SSOT | Partial | One definition owns name, input schema, output schema, metadata, profile, description, and handler routing |
 | CI/release assurance | Resolved (v6.2.1) | macOS + Windows CI run the full Node suite; native build matrix; package-content assertion job; stdio protocol smoke included in the suite |
-| Filesystem containment | Optional hardening | If enabled, realpath/symlink/`..` escape tests prove no root escape |
+| Filesystem containment | Implemented (opt-in) | `COMPUTER_USE_FS_ROOTS` jail in `src/session/fs-jail.ts`; `realpath`/symlink/`..` escape tests in `test/fs-jail.test.mjs` prove no root escape; unset = legacy |
 | rmcp | Not started; v7 evaluation | Runnable parity spike and written go/no-go report; no production rewrite implied |
 
 ---

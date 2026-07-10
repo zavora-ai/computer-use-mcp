@@ -11,6 +11,7 @@ import { loadNative, type NativeModule } from './native.js'
 import { execFile, execFileSync } from 'child_process'
 import { MUTATING_TOOLS } from './tool-catalog.js'
 import { lookupToolGuide } from './session/tool-guide.js'
+import { fsRootsViolation } from './session/fs-jail.js'
 import {
   ok,
   okJson,
@@ -2880,6 +2881,12 @@ export function createSession(opts: SessionOptions = {}): Session {
           let dest = typeof args.destination === 'string' ? args.destination : undefined
           if (dest && !path.isAbsolute(dest)) {
             dest = path.join(os.homedir(), 'Desktop', dest)
+          }
+          // PR-11b: optional filesystem jail (COMPUTER_USE_FS_ROOTS). No-op when unset.
+          for (const p of [filePath, dest]) {
+            if (!p) continue
+            const violation = fsRootsViolation(p)
+            if (violation) return errJson(violation)
           }
           const encoding = (typeof args.encoding === 'string' ? args.encoding : 'utf-8') as BufferEncoding
 
