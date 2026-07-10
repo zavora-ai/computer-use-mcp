@@ -147,8 +147,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
         annotations,
         _meta,
       },
-      async (args: Record<string, unknown>) => {
-        const result = await session.dispatch(name, args)
+      async (args: Record<string, unknown>, extra?: { signal?: AbortSignal }) => {
+        const result = await session.dispatch(name, args, extra?.signal)
         return toMcpToolResult(result, structuredContentEnabled)
       },
     )

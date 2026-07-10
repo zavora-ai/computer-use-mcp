@@ -22,6 +22,12 @@ Release-completion gate for the v6.2 modernization (see `docs/specs/MODERNIZATIO
 ### Tests
 - Added positive/negative coverage for the structured-content opt-out (enabled, disabled via option, disabled via env var), asserting both the result field and the `outputSchema` advertisement.
 
+### Cancellation (PR-14)
+- Tool handlers now honor the MCP host `AbortSignal` (`extra.signal`), threaded through `Session.dispatch`.
+- `wait` returns early on abort instead of blocking the full duration.
+- `run_script` (and the bounded spawner) `SIGKILL`s the child process on abort.
+- Best-effort: many stdio hosts never send cancellation; unaborted behavior is unchanged. Covered by `test/cancellation.test.mjs`.
+
 ### v6.2 MCP protocol modernization (ships in this 6.2.1 release)
 
 Annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.

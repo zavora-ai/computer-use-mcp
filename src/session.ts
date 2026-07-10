@@ -26,6 +26,20 @@ export type { AutomationApproach, ToolGuideEntry } from './session/tool-guide.js
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
+/**
+ * Sleep that resolves early if the signal aborts. Resolves `true` when it was
+ * cut short by an abort, `false` when the full duration elapsed. (PR-14 cancellation.)
+ */
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(true)
+  return new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => { cleanup(); resolve(false) }, ms)
+    const onAbort = () => { clearTimeout(timer); cleanup(); resolve(true) }
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 // ── Scripting bridge ──────────────────────────────────────────────────────────
 
 export interface SpawnResult {
@@ -39,28 +53,42 @@ export type SpawnBounded = (
   cmd: string,
   args: string[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ) => Promise<SpawnResult>
 
-/** Spawn a process with a hard timeout. Kills the child on overrun. */
-const defaultSpawnBounded: SpawnBounded = (cmd, args, timeoutMs) =>
+/** Spawn a process with a hard timeout. Kills the child on overrun or abort. */
+const defaultSpawnBounded: SpawnBounded = (cmd, args, timeoutMs, signal) =>
   new Promise<SpawnResult>(resolve => {
+    if (signal?.aborted) {
+      resolve({ stdout: '', stderr: 'aborted', code: -1, timedOut: false })
+      return
+    }
     const child = execFile(cmd, args, { timeout: 0, maxBuffer: 8 * 1024 * 1024 })
     let stdout = ''
     let stderr = ''
     child.stdout?.on('data', chunk => { stdout += chunk.toString() })
     child.stderr?.on('data', chunk => { stderr += chunk.toString() })
     let timedOut = false
+    let aborted = false
+    const onAbort = () => {
+      aborted = true
+      try { child.kill('SIGKILL') } catch { /* ignore */ }
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
     const killer = setTimeout(() => {
       timedOut = true
       try { child.kill('SIGKILL') } catch { /* ignore */ }
     }, Math.max(timeoutMs, 100))
     child.on('error', err => {
       clearTimeout(killer)
+      cleanup()
       resolve({ stdout, stderr: stderr || String(err), code: -1, timedOut })
     })
     child.on('close', code => {
       clearTimeout(killer)
-      resolve({ stdout, stderr, code: code ?? -1, timedOut })
+      cleanup()
+      resolve({ stdout, stderr: aborted ? (stderr || 'aborted') : stderr, code: code ?? -1, timedOut })
     })
   })
 
@@ -148,7 +176,7 @@ const PROVIDER_QUALITY: Record<string, number> = {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Session {
-  dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult>
+  dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>
   /** Last screenshot from this session, if any (for cache-only resource; K15). */
   getLastScreenshot?(): { mimeType: string; data: string; capturedAt: number } | undefined
 }
@@ -1172,6 +1200,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     language: string,
     script: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<SpawnResult> {
     if (IS_WINDOWS) {
       if (language === 'applescript' || language === 'javascript') {
@@ -1189,9 +1218,9 @@ export function createSession(opts: SessionOptions = {}): Session {
       if (needsEncoding) {
         const buf = Buffer.from(script, 'utf16le')
         const encoded = buf.toString('base64')
-        return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], timeoutMs)
+        return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], timeoutMs, signal)
       }
-      return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+      return spawnBounded(exe, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs, signal)
     }
     if (IS_LINUX) {
       if (language === 'applescript' || language === 'javascript') {
@@ -1203,16 +1232,16 @@ export function createSession(opts: SessionOptions = {}): Session {
         }
       }
       if (language === 'powershell') {
-        return spawnBounded('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs)
+        return spawnBounded('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs, signal)
       }
       // Default to bash on Linux
-      return spawnBounded('bash', ['-c', script], timeoutMs)
+      return spawnBounded('bash', ['-c', script], timeoutMs, signal)
     }
     // macOS: osascript
     const args = language === 'javascript'
       ? ['-l', 'JavaScript', '-e', script]
       : ['-e', script]
-    return spawnBounded('osascript', args, timeoutMs)
+    return spawnBounded('osascript', args, timeoutMs, signal)
   }
 
   function powershellLiteral(value: string): string {
@@ -1572,7 +1601,7 @@ export function createSession(opts: SessionOptions = {}): Session {
 
   // ── Dispatch ────────────────────────────────────────────────────────────
 
-  async function dispatch(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async function dispatch(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const coord = (key = 'coordinate'): [number, number] => {
       const v = args[key]
       if (!Array.isArray(v) || v.length < 2 || typeof v[0] !== 'number' || typeof v[1] !== 'number')
@@ -2290,7 +2319,8 @@ export function createSession(opts: SessionOptions = {}): Session {
         case 'list_displays':
           return ok(JSON.stringify(n.listDisplays()))
         case 'wait': {
-          await sleep(num('duration', 1) * 1000)
+          const cancelled = await sleepAbortable(num('duration', 1) * 1000, signal)
+          if (cancelled) return ok(`Wait cancelled after ${args.duration}s request (aborted)`)
           return ok(`Waited ${args.duration}s`)
         }
 
@@ -2643,7 +2673,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           const script = str('script')
           const requested = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000
           const timeoutMs = Math.max(100, Math.min(requested, 120_000))
-          const r = await runScriptHelper(lang, script, timeoutMs)
+          const r = await runScriptHelper(lang, script, timeoutMs, signal)
           if (r.timedOut) {
             return { content: [{ type: 'text', text: `script timed out after ${timeoutMs}ms` }], isError: true }
           }
