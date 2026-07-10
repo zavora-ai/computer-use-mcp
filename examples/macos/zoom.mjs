@@ -92,7 +92,9 @@ saveImage('08-zoom-apple-menu', z6.content)
 console.log('9. Zoom: frontmost app title bar area:')
 const front = await client.getFrontmostApp()
 const frontData = JSON.parse(front.content[0]?.text || '{}')
-const wins = JSON.parse((await client.listWindows(frontData.bundleId)).content[0]?.text || '[]')
+const frontApp = frontData.app ?? frontData  // v7: { app: {...} }; tolerate legacy flat
+const winsBody = JSON.parse((await client.listWindows(frontApp?.bundleId)).content[0]?.text || '{}')
+const wins = Array.isArray(winsBody) ? winsBody : (winsBody.windows ?? [])
 if (wins.length > 0 && wins[0].bounds) {
   const b = wins[0].bounds
   // Zoom into the title bar of the frontmost window

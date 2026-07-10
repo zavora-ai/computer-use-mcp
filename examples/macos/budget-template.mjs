@@ -40,7 +40,8 @@ async function main() {
 
   // 5. Try to find and click the Simple Budget template
   console.log('3. Looking for Simple Budget template...')
-  const wins = JSON.parse((await client.listWindows(numbers)).content[0]?.text || '[]')
+  const winsBody = JSON.parse((await client.listWindows(numbers)).content[0]?.text || '{}')
+  const wins = Array.isArray(winsBody) ? winsBody : (winsBody.windows ?? [])
   // Use the main document window (not the "Save" sheet)
   const numbersWin = wins.find(w => w.title && !w.title.includes('Save'))
 
