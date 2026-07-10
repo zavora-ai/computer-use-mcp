@@ -60,14 +60,18 @@ await check('get_display_size returns dimensions', async () => {
 
 await check('list_windows returns windows', async () => {
   const r = await client.listWindows()
-  const wins = JSON.parse(r.content[0]?.text)
+  // v7 wire shape is { windows: [...] }; tolerate a bare array too.
+  const parsed = JSON.parse(r.content[0]?.text)
+  const wins = Array.isArray(parsed) ? parsed : (parsed.windows ?? [])
   assert(Array.isArray(wins) && wins.length > 0, `expected windows, got ${wins.length}`)
 })
 
 await check('get_frontmost_app returns app info', async () => {
   const r = await client.getFrontmostApp()
-  const app = JSON.parse(r.content[0]?.text)
-  assert(app && app.bundleId, `no bundleId: ${JSON.stringify(app)}`)
+  // v7 wire shape is { app: {...} }; tolerate a flat object too.
+  const parsed = JSON.parse(r.content[0]?.text)
+  const app = parsed?.app ?? parsed
+  assert(app && app.bundleId, `no bundleId: ${JSON.stringify(parsed)}`)
 })
 
 await check('list_running_apps returns apps', async () => {
