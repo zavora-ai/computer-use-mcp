@@ -26,6 +26,7 @@ import { SERVER_INSTRUCTIONS } from './instructions.js'
 import { registerPrompts } from './prompts.js'
 import { registerResources } from './resources.js'
 import { PRIORITY_OUTPUT_SCHEMAS } from './output-schemas.js'
+import { isStdioEntrypoint } from './entrypoint.js'
 
 export type { FocusRequired, ToolMeta }
 
@@ -526,8 +527,9 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   return server
 }
 
-// Standalone stdio entrypoint
-if (process.argv[1]?.endsWith('/server.ts') || process.argv[1]?.endsWith('/server.js') || process.argv[1]?.endsWith('/computer-use-mcp')) {
+// Standalone stdio entrypoint. Detection lives in ./entrypoint.ts so it is
+// unit-testable without loading the native NAPI binary.
+if (isStdioEntrypoint(process.argv[1])) {
   const server = createComputerUseServer()
   const transport = new StdioServerTransport()
   server.connect(transport).then(() => console.error('[computer-use-mcp] Server running'))

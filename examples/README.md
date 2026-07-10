@@ -63,3 +63,28 @@ node examples/macos/open-vscode.mjs            # VS Code + TypeScript code
 node examples/macos/terminal-disk-space.mjs    # Disk space via Terminal
 node examples/macos/zoom.mjs                  # Region inspection at native resolution
 ```
+
+## Linux
+
+Linux examples work on both X11 and Wayland (GNOME, KDE, wlroots). The server auto-detects the session type.
+
+```bash
+# All cross-platform tools work on Linux:
+# screenshot, mouse, keyboard, clipboard, type, key, scroll, wait, display, workspaces
+
+# Example: open terminal, run commands, take screenshot
+node -e "
+import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
+import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
+const server = createComputerUseServer()
+const client = await connectInProcess(server)
+await client.callTool('key', { text: 'ctrl+alt+t' })  // open terminal
+await client.callTool('wait', { duration: 2 })
+await client.callTool('type', { text: 'uname -a' })
+await client.callTool('key', { text: 'return' })
+await client.screenshot({ width: 1024 })
+await client.close()
+"
+```
+
+**Requirements:** `xdotool`, `wmctrl`, `xclip`, `scrot` (X11) or `ydotool`, `wl-clipboard`, `grim` (Wayland).

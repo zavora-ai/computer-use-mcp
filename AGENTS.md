@@ -1,6 +1,6 @@
 # Using computer-use-mcp with AI Agents
 
-This guide covers how to integrate `computer-use-mcp` into AI agent frameworks and agentic workflows. Works on both **macOS** and **Windows**.
+This guide covers how to integrate `computer-use-mcp` into AI agent frameworks and agentic workflows. Works on **macOS**, **Windows**, and **Linux**.
 
 **Skills (recommended):** copy from `skills/` in this package into your agent skills directory:
 - `skills/computer-use` — when/how to use desktop control

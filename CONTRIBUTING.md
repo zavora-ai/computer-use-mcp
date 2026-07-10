@@ -29,6 +29,22 @@ node test/smoke-windows.mjs # verify everything works
 - Visual Studio Build Tools (C++ workload) or Visual Studio with C++ support
 - Windows SDK (included with VS Build Tools)
 
+### Linux
+```bash
+git clone https://github.com/zavora-ai/computer-use-mcp
+cd computer-use-mcp
+npm install
+npm run build:native:linux  # builds Rust native module
+npm run build:ts             # compiles TypeScript
+```
+
+**Linux prerequisites:**
+- [Rust](https://rustup.rs) (stable, 1.70+)
+- [Node.js](https://nodejs.org) 18+
+- X11 dev libraries: `sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev`
+- Runtime tools: `sudo apt-get install -y xdotool wmctrl xclip scrot`
+- For Wayland: `sudo apt-get install -y wl-clipboard ydotool grim`
+
 ## Project structure
 
 ```

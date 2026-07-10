@@ -1,3 +1,157 @@
+// ── Linux implementation ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod linux {
+    use base64::Engine;
+    use napi_derive::napi;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::OnceLock;
+
+    static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
+    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
+
+    fn is_wayland() -> bool {
+        *IS_WAYLAND.get_or_init(|| {
+            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        })
+    }
+
+    fn capture_wayland(tmp_path: &str, _window_id: Option<u32>) -> bool {
+        // Try gnome-screenshot first (works on some GNOME Wayland versions)
+        if Command::new("gnome-screenshot").args(["-f", tmp_path]).status()
+            .map(|s| s.success()).unwrap_or(false) {
+            if std::path::Path::new(tmp_path).exists() { return true; }
+        }
+        // Try grim (works on wlroots compositors)
+        if Command::new("grim").arg(tmp_path).status()
+            .map(|s| s.success()).unwrap_or(false) {
+            if std::path::Path::new(tmp_path).exists() { return true; }
+        }
+        // Use XDG Desktop Portal (works on GNOME 50+ Wayland)
+        let portal_result = Command::new("gdbus").args([
+            "call", "--session",
+            "--dest", "org.freedesktop.portal.Desktop",
+            "--object-path", "/org/freedesktop/portal/desktop",
+            "--method", "org.freedesktop.portal.Screenshot.Screenshot",
+            "", "{'interactive': <false>}",
+        ]).output();
+        if portal_result.is_ok() {
+            // Portal saves to ~/Pictures/Screenshot*.png — wait and find it
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let pictures_dir = std::env::var("HOME").unwrap_or_default() + "/Pictures";
+            if let Ok(entries) = std::fs::read_dir(&pictures_dir) {
+                let mut screenshots: Vec<_> = entries.filter_map(|e| e.ok())
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("Screenshot"))
+                    .collect();
+                screenshots.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+                if let Some(latest) = screenshots.first() {
+                    if let Ok(_) = std::fs::copy(latest.path(), tmp_path) {
+                        let _ = std::fs::remove_file(latest.path());
+                        return true;
+                    }
+                }
+            }
+        }
+        // Fall back to scrot via XWayland
+        Command::new("scrot").arg(tmp_path).status()
+            .map(|s| s.success()).unwrap_or(false)
+    }
+
+    fn capture_x11(tmp_path: &str, window_id: Option<u32>, target_app: &Option<String>) -> bool {
+        if let Some(wid) = window_id {
+            if Command::new("import").args(["-window", &wid.to_string(), tmp_path]).status()
+                .map(|s| s.success()).unwrap_or(false) { return true; }
+        }
+        if target_app.is_some() {
+            if Command::new("scrot").args(["-u", tmp_path]).status()
+                .map(|s| s.success()).unwrap_or(false) { return true; }
+        }
+        Command::new("scrot").arg(tmp_path).status()
+            .map(|s| s.success()).unwrap_or(false)
+            || Command::new("gnome-screenshot").args(["-f", tmp_path]).status()
+                .map(|s| s.success()).unwrap_or(false)
+            || Command::new("import").args(["-window", "root", tmp_path]).status()
+                .map(|s| s.success()).unwrap_or(false)
+    }
+
+    #[napi]
+    pub fn take_screenshot(
+        width: Option<u32>,
+        target_app: Option<String>,
+        quality: Option<u32>,
+        previous_hash: Option<String>,
+        window_id: Option<u32>,
+    ) -> napi::Result<serde_json::Value> {
+        let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp_path = format!("/tmp/cu-mcp-shot-{}-{}.png", std::process::id(), seq);
+
+        let captured = if is_wayland() {
+            capture_wayland(&tmp_path, window_id)
+        } else {
+            capture_x11(&tmp_path, window_id, &target_app)
+        };
+
+        if !captured || !std::path::Path::new(&tmp_path).exists() {
+            return Err(napi::Error::from_reason(
+                "Screenshot failed: install scrot, gnome-screenshot, or grim"));
+        }
+
+        let raw = std::fs::read(&tmp_path).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
+        let _ = std::fs::remove_file(&tmp_path);
+
+        let img = image::load_from_memory(&raw)
+            .map_err(|e| napi::Error::from_reason(format!("decode: {e}")))?;
+
+        let target_width = width.unwrap_or(1024);
+        let resized = if img.width() > target_width {
+            img.resize(target_width, u32::MAX, image::imageops::FilterType::Lanczos3)
+        } else {
+            img
+        };
+
+        let q = quality.unwrap_or(80);
+        let (encoded, mime) = if q == 0 {
+            let mut buf = Vec::new();
+            resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .map_err(|e| napi::Error::from_reason(format!("png encode: {e}")))?;
+            (buf, "image/png")
+        } else {
+            let mut buf = Vec::new();
+            resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+                .map_err(|e| napi::Error::from_reason(format!("jpeg encode: {e}")))?;
+            (buf, "image/jpeg")
+        };
+
+        let mut hasher = DefaultHasher::new();
+        encoded.hash(&mut hasher);
+        let hash = format!("{:x}", hasher.finish());
+
+        if let Some(prev) = previous_hash {
+            if prev == hash {
+                return Ok(serde_json::json!({
+                    "width": resized.width(),
+                    "height": resized.height(),
+                    "mimeType": mime,
+                    "hash": hash,
+                    "unchanged": true,
+                }));
+            }
+        }
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&encoded);
+        Ok(serde_json::json!({
+            "base64": b64,
+            "width": resized.width(),
+            "height": resized.height(),
+            "mimeType": mime,
+            "hash": hash,
+            "unchanged": false,
+        }))
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod macos {

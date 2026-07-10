@@ -1,6 +1,6 @@
 mod accessibility;
 mod apps;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod clipboard;
 mod display;
 mod keyboard;

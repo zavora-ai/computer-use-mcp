@@ -22,9 +22,9 @@ Release-completion gate for the v6.2 modernization (see `docs/specs/MODERNIZATIO
 ### Tests
 - Added positive/negative coverage for the structured-content opt-out (enabled, disabled via option, disabled via env var), asserting both the result field and the `outputSchema` advertisement.
 
-## v6.2.0 (2026-07-09)
+### v6.2 MCP protocol modernization (ships in this 6.2.1 release)
 
-MCP protocol modernization: annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
+Annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
 
 ### Protocol
 - **Pin** `@modelcontextprotocol/sdk` to exact `1.29.0` (K11: exact tested version, no caret); migrate tool registration to `registerTool`
@@ -65,6 +65,33 @@ MCP protocol modernization: annotations, structured content, profiles, prompts, 
 ### Env
 - `COMPUTER_USE_PROFILE` — tool profile (default `full`)
 - `COMPUTER_USE_STRUCTURED_CONTENT=false` — disable structuredContent + outputSchema advertisement
+
+## v6.2.0 (2026-05-16)
+
+v6.1.1 adds **native Linux support** (X11 + Wayland), making computer-use-mcp a true cross-platform desktop automation server for macOS, Windows, and Linux.
+
+### Linux native modules (Rust)
+- **Mouse** — X11/XTest for X11 sessions, `ydotool` for Wayland. Absolute positioning, click, drag, scroll
+- **Keyboard** — X11/XTest keycodes for X11, `ydotool` evdev keycodes for Wayland. Full key map with combos
+- **Text input** — `xdotool type` (X11) or `ydotool type` (Wayland) for reliable Unicode text entry
+- **Screenshot** — XDG Desktop Portal (GNOME Wayland), `gnome-screenshot`, `grim` (wlroots), `scrot` (X11 fallback)
+- **Clipboard** — `wl-copy`/`wl-paste` on Wayland, `xclip`/`xsel` on X11
+- **Window management** — GNOME Shell D-Bus Eval for Wayland, `wmctrl`/`xdotool` for X11
+- **App management** — `/proc` filesystem + `wmctrl` + GNOME D-Bus for listing, activation, hide/unhide
+- **Display** — X11 `XDisplayWidth`/`XDisplayHeight` for resolution and multi-screen
+- **Workspaces** — `wmctrl -d` for listing, `wmctrl -t` for moving windows between desktops
+- **Accessibility** — Stubs (AT-SPI2 integration planned for future release)
+- **Scripting** — `bash` by default, `pwsh` if installed
+
+### Wayland-native support
+- Runtime detection via `XDG_SESSION_TYPE` environment variable
+- Automatic fallback: Wayland tools → X11/XWayland tools
+- Tested on GNOME 50 (Ubuntu 25.04) with Wayland session
+
+### Platform detection
+- `src/native.ts` — added `linux-x64` and `linux-arm64` targets
+- `src/session.ts` — `IS_LINUX` constant, Linux-specific clipboard, scripting, and keyboard handling
+- All Linux code gated behind `#[cfg(target_os = "linux")]` — zero impact on macOS/Windows
 
 ## v6.0.0 (2026-04-26)
 

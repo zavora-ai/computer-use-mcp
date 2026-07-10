@@ -1,3 +1,235 @@
+// ── Linux implementation ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod linux {
+    use napi_derive::napi;
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
+
+    fn is_wayland() -> bool {
+        *IS_WAYLAND.get_or_init(|| {
+            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        })
+    }
+
+    fn ydotool_available() -> bool {
+        Command::new("ydotool").arg("--help").output().is_ok()
+    }
+
+    mod x11_impl {
+        use x11::xlib::*;
+        use x11::xtest::*;
+        use std::ptr;
+
+        pub unsafe fn open_display() -> *mut Display {
+            XOpenDisplay(ptr::null())
+        }
+
+        pub fn mouse_move(x: i32, y: i32) {
+            unsafe {
+                let dpy = open_display();
+                if dpy.is_null() { return; }
+                XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
+                XFlush(dpy);
+                XCloseDisplay(dpy);
+            }
+        }
+
+        pub fn mouse_click(x: i32, y: i32, btn: u32, count: i32) {
+            unsafe {
+                let dpy = open_display();
+                if dpy.is_null() { return; }
+                XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
+                XFlush(dpy);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                for i in 0..count {
+                    XTestFakeButtonEvent(dpy, btn, 1, 0);
+                    XTestFakeButtonEvent(dpy, btn, 0, 0);
+                    if i < count - 1 {
+                        XFlush(dpy);
+                        std::thread::sleep(std::time::Duration::from_millis(30));
+                    }
+                }
+                XFlush(dpy);
+                XCloseDisplay(dpy);
+            }
+        }
+
+        pub fn mouse_button(press: bool, x: i32, y: i32) {
+            unsafe {
+                let dpy = open_display();
+                if dpy.is_null() { return; }
+                XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
+                XTestFakeButtonEvent(dpy, 1, if press { 1 } else { 0 }, 0);
+                XFlush(dpy);
+                XCloseDisplay(dpy);
+            }
+        }
+
+        pub fn mouse_scroll(dy: i32, dx: i32) {
+            unsafe {
+                let dpy = open_display();
+                if dpy.is_null() { return; }
+                if dy != 0 {
+                    let btn = if dy > 0 { 5u32 } else { 4 };
+                    for _ in 0..dy.unsigned_abs() {
+                        XTestFakeButtonEvent(dpy, btn, 1, 0);
+                        XTestFakeButtonEvent(dpy, btn, 0, 0);
+                    }
+                }
+                if dx != 0 {
+                    let btn = if dx > 0 { 7u32 } else { 6 };
+                    for _ in 0..dx.unsigned_abs() {
+                        XTestFakeButtonEvent(dpy, btn, 1, 0);
+                        XTestFakeButtonEvent(dpy, btn, 0, 0);
+                    }
+                }
+                XFlush(dpy);
+                XCloseDisplay(dpy);
+            }
+        }
+
+        pub fn cursor_position() -> (i32, i32) {
+            unsafe {
+                let dpy = open_display();
+                if dpy.is_null() { return (0, 0); }
+                let root = XDefaultRootWindow(dpy);
+                let mut root_ret = 0u64;
+                let mut child_ret = 0u64;
+                let mut rx = 0i32;
+                let mut ry = 0i32;
+                let mut wx = 0i32;
+                let mut wy = 0i32;
+                let mut mask = 0u32;
+                XQueryPointer(dpy, root, &mut root_ret, &mut child_ret, &mut rx, &mut ry, &mut wx, &mut wy, &mut mask);
+                XCloseDisplay(dpy);
+                (rx, ry)
+            }
+        }
+    }
+
+    mod wayland_impl {
+        use std::process::Command;
+
+        pub fn mouse_move(x: i32, y: i32) {
+            let _ = Command::new("ydotool").args(["mousemove", "--absolute", "-x", &x.to_string(), "-y", &y.to_string()]).status();
+        }
+
+        pub fn mouse_click(x: i32, y: i32, btn: u32, count: i32) {
+            // Move first
+            mouse_move(x, y);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            // ydotool button codes: 0x00=left, 0x01=right, 0x02=middle
+            let ydotool_btn = match btn {
+                1 => "0x00",
+                2 => "0x02",
+                3 => "0x01",
+                _ => "0x00",
+            };
+            for i in 0..count {
+                let _ = Command::new("ydotool").args(["click", ydotool_btn]).status();
+                if i < count - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+            }
+        }
+
+        pub fn mouse_button(press: bool, x: i32, y: i32) {
+            mouse_move(x, y);
+            // ydotool click with --down or --up
+            if press {
+                let _ = Command::new("ydotool").args(["click", "--down", "0x00"]).status();
+            } else {
+                let _ = Command::new("ydotool").args(["click", "--up", "0x00"]).status();
+            }
+        }
+
+        pub fn mouse_scroll(dy: i32, dx: i32) {
+            if dy != 0 {
+                // Negative = scroll up in ydotool
+                let _ = Command::new("ydotool").args(["mousemove", "--wheel", "--", "-x", "0", "-y", &(-dy * 15).to_string()]).status();
+            }
+            if dx != 0 {
+                let _ = Command::new("ydotool").args(["mousemove", "--wheel", "--", "-x", &(dx * 15).to_string(), "-y", "0"]).status();
+            }
+        }
+
+        pub fn cursor_position() -> (i32, i32) {
+            // Wayland doesn't expose cursor position easily; fall back to X11 via XWayland
+            super::x11_impl::cursor_position()
+        }
+    }
+
+    #[napi]
+    pub fn mouse_move(x: f64, y: f64) {
+        if is_wayland() && ydotool_available() {
+            wayland_impl::mouse_move(x as i32, y as i32);
+        } else {
+            x11_impl::mouse_move(x as i32, y as i32);
+        }
+    }
+
+    #[napi]
+    pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        let btn = match button.as_str() {
+            "left" => 1u32,
+            "middle" => 2,
+            "right" => 3,
+            _ => return Err(napi::Error::from_reason(format!("Invalid button: {button}"))),
+        };
+        if is_wayland() && ydotool_available() {
+            wayland_impl::mouse_click(x as i32, y as i32, btn, count);
+        } else {
+            x11_impl::mouse_click(x as i32, y as i32, btn, count);
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
+        let press = match action.as_str() {
+            "press" => true,
+            "release" => false,
+            _ => return Err(napi::Error::from_reason(format!("Invalid action: {action}"))),
+        };
+        if is_wayland() && ydotool_available() {
+            wayland_impl::mouse_button(press, x as i32, y as i32);
+        } else {
+            x11_impl::mouse_button(press, x as i32, y as i32);
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub fn mouse_scroll(dy: i32, dx: i32) {
+        if is_wayland() && ydotool_available() {
+            wayland_impl::mouse_scroll(dy, dx);
+        } else {
+            x11_impl::mouse_scroll(dy, dx);
+        }
+    }
+
+    #[napi]
+    pub fn mouse_drag(x: f64, y: f64) {
+        if is_wayland() && ydotool_available() {
+            wayland_impl::mouse_move(x as i32, y as i32);
+        } else {
+            x11_impl::mouse_move(x as i32, y as i32);
+        }
+    }
+
+    #[napi]
+    pub fn cursor_position() -> napi::Result<serde_json::Value> {
+        let (rx, ry) = if is_wayland() && ydotool_available() {
+            wayland_impl::cursor_position()
+        } else {
+            x11_impl::cursor_position()
+        };
+        Ok(serde_json::json!({"x": rx, "y": ry}))
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod macos {

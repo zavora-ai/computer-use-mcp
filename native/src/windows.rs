@@ -1,3 +1,187 @@
+// ── Linux implementation ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod platform {
+    use napi_derive::napi;
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
+
+    fn is_wayland() -> bool {
+        *IS_WAYLAND.get_or_init(|| {
+            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+        })
+    }
+
+    fn gdbus_eval(js: &str) -> Option<String> {
+        let output = Command::new("gdbus").args([
+            "call", "--session",
+            "--dest", "org.gnome.Shell",
+            "--object-path", "/org/gnome/Shell",
+            "--method", "org.gnome.Shell.Eval",
+            js,
+        ]).output().ok()?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        // Format: (true, 'json_string')
+        if text.starts_with("(true,") {
+            let start = text.find('\'')?;
+            let end = text.rfind('\'')?;
+            if start < end {
+                return Some(text[start+1..end].replace("\\'", "'"));
+            }
+        }
+        None
+    }
+
+    fn list_windows_wayland(bundle_id: &Option<String>) -> Vec<serde_json::Value> {
+        let js = r#"JSON.stringify(global.get_window_actors().map(a=>{let w=a.meta_window;let r=w.get_frame_rect();return{windowId:w.get_id(),bundleId:w.get_wm_class()||'',displayName:w.get_wm_class()||'',pid:w.get_pid(),title:w.get_title()||'',bounds:{x:r.x,y:r.y,width:r.width,height:r.height},isOnScreen:!w.minimized,isFocused:w.has_focus(),displayId:0}}))"#;
+        let json_str = match gdbus_eval(js) {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let windows: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
+        if let Some(ref filter) = bundle_id {
+            windows.into_iter().filter(|w| {
+                let bid = w.get("bundleId").and_then(|v| v.as_str()).unwrap_or("");
+                bid.to_lowercase() == filter.to_lowercase()
+            }).collect()
+        } else {
+            windows
+        }
+    }
+
+    fn list_windows_x11(bundle_id: &Option<String>) -> Vec<serde_json::Value> {
+        let output = Command::new("wmctrl").args(["-l", "-p"]).output().unwrap_or_else(|_| {
+            Command::new("true").output().unwrap()
+        });
+        let text = String::from_utf8_lossy(&output.stdout);
+        let active = Command::new("xdotool").args(["getactivewindow"]).output().ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        let mut result = Vec::new();
+        for line in text.lines() {
+            let parts: Vec<&str> = line.splitn(5, char::is_whitespace).filter(|s| !s.is_empty()).collect();
+            if parts.len() < 4 { continue; }
+            let wid = u32::from_str_radix(parts[0].trim_start_matches("0x"), 16).unwrap_or(0);
+            let pid = parts[2].parse::<i32>().unwrap_or(0);
+            let title = if parts.len() >= 5 { parts[4].to_string() } else { String::new() };
+            let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .unwrap_or_default().trim().to_string();
+
+            if let Some(ref filter) = bundle_id {
+                if proc_name.to_lowercase() != filter.to_lowercase() { continue; }
+            }
+
+            result.push(serde_json::json!({
+                "windowId": wid,
+                "bundleId": proc_name,
+                "displayName": proc_name,
+                "pid": pid,
+                "title": title,
+                "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+                "isOnScreen": true,
+                "isFocused": wid == active,
+                "displayId": 0,
+            }));
+        }
+        result
+    }
+
+    #[napi]
+    pub fn list_windows(bundle_id: Option<String>) -> napi::Result<serde_json::Value> {
+        let result = if is_wayland() {
+            let mut wins = list_windows_wayland(&bundle_id);
+            if wins.is_empty() {
+                // Fall back to X11 tools via XWayland
+                wins = list_windows_x11(&bundle_id);
+            }
+            wins
+        } else {
+            list_windows_x11(&bundle_id)
+        };
+        Ok(serde_json::json!(result))
+    }
+
+    #[napi]
+    pub fn get_window(window_id: u32) -> napi::Result<serde_json::Value> {
+        if is_wayland() {
+            let js = format!(
+                r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>w.get_id()==={wid});w?JSON.stringify({{windowId:w.get_id(),bundleId:w.get_wm_class()||'',displayName:w.get_wm_class()||'',pid:w.get_pid(),title:w.get_title()||'',bounds:(()=>{{let r=w.get_frame_rect();return{{x:r.x,y:r.y,width:r.width,height:r.height}}}})(),isOnScreen:!w.minimized,isFocused:w.has_focus(),displayId:0}}):'null'"#,
+                wid = window_id
+            );
+            if let Some(json_str) = gdbus_eval(&js) {
+                if json_str != "null" {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        return Ok(val);
+                    }
+                }
+            }
+        }
+        // X11 fallback
+        let output = Command::new("xdotool").args(["getwindowname", &window_id.to_string()]).output();
+        let title = output.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let pid_out = Command::new("xdotool").args(["getwindowpid", &window_id.to_string()]).output();
+        let pid = pid_out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<i32>().ok()).unwrap_or(0);
+        let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default().trim().to_string();
+        if title.is_empty() && pid == 0 { return Ok(serde_json::json!(null)); }
+        Ok(serde_json::json!({
+            "windowId": window_id, "bundleId": proc_name, "displayName": proc_name,
+            "pid": pid, "title": title,
+            "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+            "isOnScreen": true, "isFocused": false, "displayId": 0,
+        }))
+    }
+
+    #[napi]
+    pub fn get_cursor_window() -> napi::Result<serde_json::Value> {
+        if is_wayland() {
+            let js = r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>w.has_focus());w?JSON.stringify({windowId:w.get_id(),bundleId:w.get_wm_class()||'',displayName:w.get_wm_class()||'',pid:w.get_pid(),title:w.get_title()||'',bounds:(()=>{let r=w.get_frame_rect();return{x:r.x,y:r.y,width:r.width,height:r.height}})(),isOnScreen:!w.minimized,isFocused:true,displayId:0}):'null'"#;
+            if let Some(json_str) = gdbus_eval(js) {
+                if json_str != "null" {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        return Ok(val);
+                    }
+                }
+            }
+        }
+        // X11 fallback
+        let output = Command::new("xdotool").args(["getmouselocation", "--shell"]).output()
+            .map_err(|e| napi::Error::from_reason(format!("xdotool: {e}")))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let wid = text.lines()
+            .find(|l| l.starts_with("WINDOW="))
+            .and_then(|l| l.strip_prefix("WINDOW="))
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        if wid == 0 { return Ok(serde_json::json!(null)); }
+        get_window(wid)
+    }
+
+    #[napi]
+    pub fn activate_window(window_id: u32, _timeout_ms: Option<i32>) -> napi::Result<serde_json::Value> {
+        if is_wayland() {
+            let js = format!(
+                r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>w.get_id()==={wid});if(w){{w.activate(global.get_current_time());'true'}}else{{'false'}}"#,
+                wid = window_id
+            );
+            let activated = gdbus_eval(&js).map(|s| s == "true").unwrap_or(false);
+            return Ok(serde_json::json!({
+                "windowId": window_id,
+                "activated": activated,
+                "reason": if activated { serde_json::Value::Null } else { serde_json::json!("window_not_found") },
+            }));
+        }
+        let status = Command::new("xdotool").args(["windowactivate", "--sync", &window_id.to_string()]).status();
+        let activated = status.map(|s| s.success()).unwrap_or(false);
+        Ok(serde_json::json!({
+            "windowId": window_id,
+            "activated": activated,
+            "reason": if activated { serde_json::Value::Null } else { serde_json::json!("raise_failed") },
+        }))
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 #[path = "windows_macos.rs"]

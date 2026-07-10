@@ -1,3 +1,52 @@
+// ── Linux implementation ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod linux {
+    use napi_derive::napi;
+    use x11::xlib::*;
+    use std::ptr;
+
+    #[napi]
+    pub fn get_display_size(display_id: Option<u32>) -> napi::Result<serde_json::Value> {
+        unsafe {
+            let dpy = XOpenDisplay(ptr::null());
+            if dpy.is_null() { return Err(napi::Error::from_reason("Cannot open X display")); }
+            let screen = display_id.unwrap_or(0) as i32;
+            let screen = if screen < XScreenCount(dpy) { screen } else { XDefaultScreen(dpy) };
+            let w = XDisplayWidth(dpy, screen) as u64;
+            let h = XDisplayHeight(dpy, screen) as u64;
+            XCloseDisplay(dpy);
+            Ok(serde_json::json!({
+                "width": w, "height": h,
+                "pixelWidth": w, "pixelHeight": h,
+                "scaleFactor": 1.0,
+                "displayId": screen,
+            }))
+        }
+    }
+
+    #[napi]
+    pub fn list_displays() -> napi::Result<serde_json::Value> {
+        unsafe {
+            let dpy = XOpenDisplay(ptr::null());
+            if dpy.is_null() { return Err(napi::Error::from_reason("Cannot open X display")); }
+            let count = XScreenCount(dpy);
+            let mut result = Vec::new();
+            for i in 0..count {
+                let w = XDisplayWidth(dpy, i) as u64;
+                let h = XDisplayHeight(dpy, i) as u64;
+                result.push(serde_json::json!({
+                    "width": w, "height": h,
+                    "pixelWidth": w, "pixelHeight": h,
+                    "scaleFactor": 1.0,
+                    "displayId": i,
+                }));
+            }
+            XCloseDisplay(dpy);
+            Ok(serde_json::json!(result))
+        }
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 mod macos {

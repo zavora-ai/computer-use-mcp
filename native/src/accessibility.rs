@@ -1,3 +1,76 @@
+// ── Linux implementation — AT-SPI2 stub ──────────────────────────────────────
+#[cfg(target_os = "linux")]
+mod platform {
+    use napi_derive::napi;
+
+    // AT-SPI2 integration would go here. For now, provide stubs that return
+    // meaningful errors so the rest of the system works.
+
+    #[napi]
+    pub fn get_ui_tree(_window_id: u32, _max_depth: Option<u32>) -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "role": "AXWindow",
+            "label": null,
+            "value": null,
+            "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
+            "actions": [],
+            "children": [],
+            "truncated": true,
+        }))
+    }
+
+    #[napi]
+    pub fn get_focused_element() -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!(null))
+    }
+
+    #[napi]
+    pub fn find_element(
+        _window_id: u32,
+        _role: Option<String>,
+        _label: Option<String>,
+        _value: Option<String>,
+        _max_results: Option<u32>,
+    ) -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!([]))
+    }
+
+    #[napi]
+    pub fn perform_action(
+        _window_id: u32,
+        _role: String,
+        _label: String,
+        _action: String,
+    ) -> napi::Result<serde_json::Value> {
+        Err(napi::Error::from_reason("AT-SPI2 accessibility not yet implemented on Linux"))
+    }
+
+    #[napi]
+    pub fn set_element_value(
+        _window_id: u32,
+        _role: String,
+        _label: String,
+        _value: String,
+    ) -> napi::Result<serde_json::Value> {
+        Err(napi::Error::from_reason("AT-SPI2 accessibility not yet implemented on Linux"))
+    }
+
+    #[napi]
+    pub fn get_menu_bar(_bundle_id: String) -> napi::Result<serde_json::Value> {
+        Ok(serde_json::json!([]))
+    }
+
+    #[napi]
+    pub fn press_menu_item(
+        _bundle_id: String,
+        _menu: String,
+        _item: String,
+        _submenu: Option<String>,
+    ) -> napi::Result<serde_json::Value> {
+        Err(napi::Error::from_reason("Menu bar access not yet implemented on Linux"))
+    }
+}
+
 // ── macOS implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 #[path = "accessibility_macos.rs"]

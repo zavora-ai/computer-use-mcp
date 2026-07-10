@@ -32,6 +32,11 @@ jobs:
             rust-target: x86_64-pc-windows-msvc
             artifact: computer-use-napi.win32-x64.node
             copy-from: target/x86_64-pc-windows-msvc/release/computer_use_napi.dll
+          - name: Linux x64
+            runner: ubuntu-latest
+            rust-target: x86_64-unknown-linux-gnu
+            artifact: computer-use-napi.linux-x64.node
+            copy-from: target/x86_64-unknown-linux-gnu/release/libcomputer_use_napi.so
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +44,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.rust-target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -74,6 +83,9 @@ jobs:
           - name: Windows x64
             runner: windows-latest
             binary: computer-use-napi.win32-x64.node
+          - name: Linux x64
+            runner: ubuntu-latest
+            binary: computer-use-napi.linux-x64.node
     steps:
       - uses: actions/checkout@v4
 
@@ -105,6 +117,10 @@ jobs:
       - name: Run smoke test (Windows)
         if: runner.os == 'Windows'
         run: node test/smoke-windows.mjs
+
+      - name: Run smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: node -e "const { loadNative } = await import('./dist/native.js'); const n = loadNative(); console.log('Native module loaded:', Object.keys(n).length, 'functions')"
 
       - name: Run new tools smoke test
         run: node test/smoke-new-tools.mjs
@@ -183,6 +199,7 @@ jobs:
           test -f computer-use-napi.darwin-arm64.node
           test -f computer-use-napi.darwin-x64.node
           test -f computer-use-napi.win32-x64.node
+          test -f computer-use-napi.linux-x64.node
 
       - name: Build TypeScript
         run: npx tsc
