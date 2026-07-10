@@ -36,11 +36,18 @@ async function main() {
   console.log('\n3. Opening Notepad on new desktop...')
   await client.callTool('run_script', { language: 'powershell', script: 'Start-Process notepad' })
   await client.wait(2)
+  const winsRaw = JSON.parse((await client.listWindows()).content[0].text)
+  const wins = Array.isArray(winsRaw) ? winsRaw : (winsRaw.windows ?? [])
+  const winId = wins.find(w => w.bundleId?.toLowerCase().includes('notepad'))?.windowId
+  const opts = { targetWindowId: winId, focusStrategy: 'strict' }
 
-  // 5. Type a message
+  // 5. Type a message (targeted at the Notepad window)
   console.log('4. Typing message...')
-  await client.type('This was written on a virtual desktop created by computer-use-mcp!\n\n')
-  await client.type('Desktop automation across virtual desktops works seamlessly.\n')
+  await client.type(
+    'This was written on a virtual desktop created by computer-use-mcp!\n\n' +
+    'Desktop automation across virtual desktops works seamlessly.\n',
+    undefined, opts,
+  )
   await client.wait(0.5)
 
   // 6. Screenshot on the new desktop
@@ -51,17 +58,19 @@ async function main() {
     console.log('   saved: new-desktop.jpg')
   }
 
-  // 7. Save the file
+  // 7. Save the file via the Save As dialog (accessibility-driven)
   console.log('6. Saving file...')
   const savePath = path.join(outDir, 'vdesktop-note.txt')
-  await client.key('ctrl+s')
-  await client.wait(1)
-  await client.type(savePath, undefined, { focusStrategy: 'none' })
-  await client.key('return')
-  await client.wait(1)
-  await client.key('return') // handle replace dialog
+  await client.key('ctrl+s', undefined, opts)
+  await client.wait(1.2)
+  await client.setValue(winId, 'AXTextField', 'File name:', savePath)
+  await client.wait(0.4)
+  await client.pressButton(winId, 'Save')
+  await client.wait(1.2)
+  await client.pressButton(winId, 'Yes') // confirm overwrite if prompted (no-op otherwise)
   await client.wait(0.5)
-  await client.key('alt+f4')
+  // Close only our tab (preserves any other tabs)
+  await client.key('ctrl+w', undefined, opts)
   await client.wait(0.5)
 
   // 8. Switch back to original desktop

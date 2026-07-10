@@ -4,6 +4,15 @@
 
 Architecture-finish release. Builds on the v6.2.1 modernization with cancellation, progress, filesystem containment, a native binary resolver, and a session-layer split. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
 
+### Fixed (Windows)
+- **Tool input schemas are now valid JSON Schema draft 2020-12.** Coordinate/region/size parameters were emitted as Zod tuples (`"items": [ … ]`), which draft 2020-12 rejects (it requires `prefixItems`). Some MCP hosts (e.g. Anthropic-backed clients) refused the whole tool list with a 400. These parameters now use length-constrained arrays (`{ type: "array", items: {…}, minItems/maxItems }`), valid across drafts, with identical runtime values. Affects `agent_pointer`, `zoom`, all click/mouse tools, `left_click_drag`, `resize_window`, `snapshot`, `multi_select`, `multi_edit`.
+- **`type` no longer drops or garbles characters on Windows.** Native keyboard injection sent one `SendInput` per character, which the Windows 11 (UWP) text stack intermittently dropped/reordered. Characters are now sent as a single batched `SendInput` of `KEYEVENTF_UNICODE` events (atomic, reliably queued).
+- **Multi-line typing preserves line breaks.** `write_clipboard` now normalizes `\n` → `\r\n` for `CF_UNICODETEXT`, and the session `type` handler routes newline-containing (or long) text through the clipboard-paste path, which is reliable on UWP controls.
+
+### Docs / examples (Windows)
+- Windows examples updated for the v7 wire shapes: `list_windows` → `{ windows: [...] }` and `get_frontmost_app` → `{ app: {...} }`.
+- Notepad examples hardened for Windows 11's single-instance/tabbed/session-restoring Notepad: work in a fresh tab (`Ctrl+N`), drive the Save As dialog via accessibility (`set_value` on "File name:" + press "Save"), and close only that tab (`Ctrl+W`) instead of `Alt+F4`. De-hardcoded a `Desktop` path.
+
 ### Breaking
 - **`[focusRequired: X]` description suffix is now OFF by default.** `focusRequired` remains available via `_meta` (`computer-use/focusRequired`) and `get_tool_metadata`. Restore the suffix with `COMPUTER_USE_LEGACY_FOCUS_TAG=true` (or `ServerOptions.legacyFocusTag: true`).
 

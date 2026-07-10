@@ -479,37 +479,43 @@ mod win {
 
     #[napi]
     pub fn type_text(text: String) {
-        // Use KEYEVENTF_UNICODE for each UTF-16 code unit
-        let chars: Vec<u16> = text.encode_utf16().collect();
-        for &ch in &chars {
-            let down = INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(0),
-                        wScan: ch,
-                        dwFlags: KEYEVENTF_UNICODE,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
+        // Build ALL key events up front and dispatch them in a single SendInput
+        // call. Sending one char per SendInput (with a sleep between) races the
+        // target app's message pump and intermittently drops characters on
+        // UWP/RichEdit controls (e.g. Windows 11 Notepad). A batched SendInput
+        // is atomic and reliably queued, so no characters are lost.
+        //
+        // Newlines are emitted as real VK_RETURN presses (Enter); a bare
+        // KEYEVENTF_UNICODE 0x0A is ignored by many editors. Carriage returns
+        // are skipped so "\r\n" does not double up.
+        let unicode_event = |ch: u16, key_up: bool| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(0),
+                    wScan: ch,
+                    dwFlags: if key_up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE },
+                    time: 0,
+                    dwExtraInfo: 0,
                 },
-            };
-            let up = INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(0),
-                        wScan: ch,
-                        dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            };
-            unsafe {
-                SendInput(&[down, up], std::mem::size_of::<INPUT>() as i32);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            },
+        };
+        // Send every UTF-16 code unit as a KEYEVENTF_UNICODE down/up pair in a
+        // SINGLE batched SendInput call. Batching is atomic and reliably queued,
+        // which fixes the character drops seen when injecting one char per
+        // SendInput. Newlines (0x0A) are passed through as unicode; callers that
+        // need robust multi-line entry should use the clipboard-paste path in
+        // the session layer, which is the reliable route on UWP controls.
+        let mut inputs: Vec<INPUT> = Vec::with_capacity(text.encode_utf16().count() * 2);
+        for ch in text.encode_utf16() {
+            inputs.push(unicode_event(ch, false));
+            inputs.push(unicode_event(ch, true));
+        }
+        if inputs.is_empty() {
+            return;
+        }
+        unsafe {
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
     }
 

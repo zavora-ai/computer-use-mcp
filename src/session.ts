@@ -1952,7 +1952,10 @@ export function createSession(opts: SessionOptions = {}): Session {
             await sleep(30)
           }
 
-          if (text.length > 100) {
+          // Long text OR anything with a newline goes via the clipboard.
+          // Native key injection drops/garbles newlines on UWP controls
+          // (e.g. Windows 11 Notepad); clipboard paste is reliable there.
+          if (text.length > 100 || text.includes('\n')) {
             // Clipboard-based typing: faster and more reliable for long text
             if ((IS_WINDOWS || IS_LINUX) && n.readClipboard && n.writeClipboard) {
               let saved: string | undefined

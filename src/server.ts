@@ -34,7 +34,14 @@ const targetAppParam = z.string().optional().describe('App id: macOS bundle ID o
 const targetWindowIdParam = z.number().int().optional().describe('Window ID to target (CGWindowID on macOS, HWND on Windows). Takes precedence over target_app.')
 const focusStrategyParam = z.enum(['strict', 'best_effort', 'none', 'prepare_display']).optional().describe('Focus strategy: strict (fail if unconfirmed), best_effort (try and proceed), none (skip activation), prepare_display (hide every non-target app before acting — v5.2, defeats focus-stealing background apps)')
 const approvalTokenParam = z.string().optional().describe('Policy approval token. Required only when COMPUTER_USE_APPROVAL_TOKEN / approval policy requires it.')
-const coord = { coordinate: z.tuple([z.number(), z.number()]).describe('[x, y] logical pixels') }
+// NOTE: use length-constrained z.array (not z.tuple). Zod tuples serialize to
+// JSON Schema as `items: [ ... ]`, which is valid in draft-07 but REJECTED by
+// JSON Schema draft 2020-12 (Claude API), where tuples must use `prefixItems`.
+// A length-constrained array emits a single `items` schema object + minItems/
+// maxItems, which is valid across drafts. Runtime values are still arrays.
+const numArray = (len: number) => z.array(z.number()).length(len)
+const intArray = (len: number) => z.array(z.number().int()).length(len)
+const coord = { coordinate: numArray(2).describe('[x, y] logical pixels') }
 const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
   ...schema,
   target_app: targetAppParam,
@@ -199,7 +206,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('policy_status', 'Show active policy and audit configuration without revealing approval tokens.', {}, NONE_READ)
   tool('agent_pointer', 'Manage a non-interrupting virtual agent pointer. Moving it does not move the user cursor or focus any app; use screenshot(show_agent_pointer=true) to render it into observations.', {
     action: z.enum(['get', 'move', 'show', 'hide', 'reset']).describe('Virtual pointer operation'),
-    coordinate: z.tuple([z.number(), z.number()]).optional().describe('[x, y] logical pixels for action=move'),
+    coordinate: numArray(2).optional().describe('[x, y] logical pixels for action=move'),
     visible: z.boolean().optional().describe('Optional visibility override for move/reset'),
     native_overlay: z.boolean().optional().describe('Show/update the native always-on-top overlay window when available. Defaults true for visible pointer actions.'),
   }, VIRTUAL_MUT)
@@ -231,7 +238,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
   }, NONE_READ)
   tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling.', {
-    region: z.tuple([z.number().int(), z.number().int(), z.number().int(), z.number().int()])
+    region: intArray(4)
       .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect'),
     quality: z.number().int().min(0).max(100).optional()
       .describe('Image quality. 0 = PNG (lossless, best for text). 1-100 = JPEG. Default: 0 (PNG).'),
@@ -244,8 +251,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('triple_click', 'Triple-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
   tool('mouse_move', 'Move OS cursor to coordinates (last resort — prefer agent_pointer for non-interrupting pointer). Requires target frontmost for subsequent clicks.', withTargeting(coord), CG_MUT)
   tool('left_click_drag', 'Click and drag', withTargeting({
-    coordinate: z.tuple([z.number(), z.number()]),
-    start_coordinate: z.tuple([z.number(), z.number()]).optional(),
+    coordinate: numArray(2),
+    start_coordinate: numArray(2).optional(),
   }), CG_MUT)
   tool('cursor_position', 'Get current cursor position', {}, NONE_READ)
   tool('left_mouse_down', 'Press left mouse button', withTargeting(coord), CG_MUT)
@@ -314,14 +321,14 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('resize_window', 'Resize and/or move a window. Omit window_name to target the foreground window.', {
     window_name: z.string().optional().describe('Window title or process name to target (omit for foreground)'),
     window_id: z.number().int().optional().describe('Window ID to target (takes precedence over window_name)'),
-    window_size: z.tuple([z.number().int(), z.number().int()]).optional().describe('[width, height] in pixels'),
-    window_loc: z.tuple([z.number().int(), z.number().int()]).optional().describe('[x, y] top-left position'),
+    window_size: intArray(2).optional().describe('[width, height] in pixels'),
+    window_loc: intArray(2).optional().describe('[x, y] top-left position'),
   }, AX_MUT)
   tool('wait', 'Wait for N seconds', { duration: z.number().positive().max(300) }, NONE_READ)
   tool('snapshot', 'Combined screenshot + UI tree + window list + desktop info in one call. Returns structured text with all desktop state. Set use_vision=true to include screenshot image. Set use_annotation=true to draw bounding boxes on UI elements. Set grid_lines=[cols,rows] to overlay reference grid.', {
     use_vision: z.boolean().optional().default(false).describe('Include screenshot image in response'),
     use_annotation: z.boolean().optional().default(false).describe('Draw bounding boxes on detected UI elements'),
-    grid_lines: z.tuple([z.number().int(), z.number().int()]).optional().describe('[columns, rows] for reference grid overlay'),
+    grid_lines: intArray(2).optional().describe('[columns, rows] for reference grid overlay'),
     display: z.array(z.number().int()).optional().describe('Monitor indices to capture (omit for all)'),
     width: z.number().int().positive().optional().describe('Resize screenshot width'),
     target_app: targetAppParam,
@@ -516,7 +523,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('multi_select',
     'Select multiple items by clicking coordinates or UI element labels. Set press_ctrl=true for additive selection.',
     {
-      locs: z.array(z.tuple([z.number(), z.number()])).optional().describe('List of [x,y] coordinates'),
+      locs: z.array(numArray(2)).optional().describe('List of [x,y] coordinates'),
       labels: z.array(z.string()).optional().describe('List of UI element labels'),
       press_ctrl: z.boolean().optional().default(true).describe('Hold Ctrl for additive selection'),
       target_app: targetAppParam,
@@ -528,8 +535,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   tool('multi_edit',
     'Enter text into multiple fields. Provide locs as [[x,y,text],...] or labels as [[label,text],...].',
     {
-      locs: z.array(z.tuple([z.number(), z.number(), z.string()])).optional().describe('List of [x,y,text] tuples'),
-      labels: z.array(z.tuple([z.string(), z.string()])).optional().describe('List of [label,text] tuples'),
+      locs: z.array(z.array(z.union([z.number(), z.string()])).length(3)).optional().describe('List of [x,y,text] tuples'),
+      labels: z.array(z.array(z.string()).length(2)).optional().describe('List of [label,text] tuples'),
       target_app: targetAppParam,
       target_window_id: targetWindowIdParam,
       focus_strategy: focusStrategyParam,
