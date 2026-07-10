@@ -162,6 +162,7 @@ jobs:
               "dist/session/scripting-dictionary.js",
               "dist/session/spawn.js",
               "dist/session/errors.js",
+              "dist/session/constants.js",
             ];
             const missing = required.filter(r => !files.includes(r));
             const skillFiles = files.filter(f => /^skills\/.+\/SKILL\.md$/.test(f));
