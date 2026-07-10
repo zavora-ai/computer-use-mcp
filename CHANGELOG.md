@@ -1,5 +1,49 @@
 # Changelog
 
+## v6.2.0 (2026-07-09)
+
+MCP protocol modernization: annotations, structured content, profiles, prompts, resources, skills, and approval elicitation. See `docs/specs/MODERNIZATION-v6.2-v7.md`.
+
+### Protocol
+- **Pin** `@modelcontextprotocol/sdk` to `^1.29.0`; migrate tool registration to `registerTool`
+- **Tool annotations:** `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` on all 64 tools (Appendix A)
+- **`_meta`:** `computer-use/focusRequired`, mutates, and related fields for hosts that understand them
+- **Server instructions** injected at initialize (tool priority hierarchy)
+- **`structuredContent`** dual-write for priority tools (`doctor`, `policy_status`, guide, windows, etc.)
+- **`outputSchema`** only where structured success paths are complete (K17)
+- **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`
+- **MCP resources:** `computer://display/main`, `windows`, `frontmost`, `policy`, `profile/tools`, `screenshot/latest` (**cache-only**, never captures on read)
+
+### Wire format (breaking for text-JSON parsers)
+- `list_windows` text JSON is now `{ "windows": [...] }` (was a top-level array)
+- `get_frontmost_app` text JSON is now `{ "app": ... | null }`
+- `get_active_space` text JSON is now `{ "active_space_id": number | null }`
+- Object-shaped tools keep previous keys; additive fields only (`profile` on `policy_status`, guide confidence fields)
+
+### Agent guidance
+- **Skills** shipped under `skills/**` and included in the npm package
+- **AGENTS.md** packaged; points at skills and prompts
+- `get_tool_guide` returns additive `confidence`, `fallbackSequence`, `platform`, and profile remediation
+
+### Profiles (init-time only)
+- `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default **`full`**)
+- Filters tools at process start; no runtime `list_changed` in this release
+
+### Policy / safety
+- **PR-0:** `resize_window` added to mutating lock set (was missing from `MUTATING_TOOLS`)
+- Tool catalog SSOT for mutates + annotations (`src/tool-catalog.ts`)
+- Elicitation-based approval when the host supports it; **`approval_token` still wins** when valid
+- `SECURITY.md` updated for Windows + 6.x and filesystem residual risk
+
+### Client
+- `listTools` returns annotations / `_meta` / schemas
+- `listResources` / `readResource` / `listPrompts` / `getPrompt` helpers
+- `ToolResult.structuredContent` passthrough
+
+### Env
+- `COMPUTER_USE_PROFILE` — tool profile (default `full`)
+- `COMPUTER_USE_STRUCTURED_CONTENT=false` — disable structuredContent + outputSchema advertisement
+
 ## v6.0.0 (2026-04-26)
 
 v6.0 adds **native Windows support**, transforming computer-use-mcp from a macOS-only tool into a cross-platform desktop automation server. Every Windows API call goes through Rust via `windows-rs` with zero-overhead NAPI bindings — no Python, no pywin32, no subprocess overhead.

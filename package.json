@@ -1,7 +1,7 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "6.1.0",
-  "description": "MCP server + client for cross-platform desktop control (macOS + Windows) — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
+  "version": "6.2.0",
+  "description": "MCP server + client for cross-platform desktop control (macOS + Windows) \u2014 screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
   "type": "module",
@@ -27,26 +27,44 @@
     "./server": {
       "import": "./dist/server.js",
       "types": "./dist/server.d.ts"
+    },
+    "./tool-catalog": {
+      "import": "./dist/tool-catalog.js",
+      "types": "./dist/tool-catalog.d.ts"
     }
   },
   "files": [
-    "dist/server.js",
-    "dist/server.d.ts",
-    "dist/client.js",
-    "dist/client.d.ts",
-    "dist/session.js",
-    "dist/session.d.ts",
-    "dist/native.js",
-    "dist/native.d.ts",
-    "computer-use-napi.node",
+    "AGENTS.md",
+    "LICENSE",
+    "README.md",
     "computer-use-napi.darwin-arm64.node",
     "computer-use-napi.darwin-x64.node",
+    "computer-use-napi.node",
     "computer-use-napi.win32-x64.node",
-    "README.md",
-    "LICENSE"
+    "dist/client.d.ts",
+    "dist/client.js",
+    "dist/instructions.d.ts",
+    "dist/instructions.js",
+    "dist/native.d.ts",
+    "dist/native.js",
+    "dist/output-schemas.d.ts",
+    "dist/output-schemas.js",
+    "dist/prompts.d.ts",
+    "dist/prompts.js",
+    "dist/resources.d.ts",
+    "dist/resources.js",
+    "dist/result.d.ts",
+    "dist/result.js",
+    "dist/server.d.ts",
+    "dist/server.js",
+    "dist/session.d.ts",
+    "dist/session.js",
+    "dist/tool-catalog.d.ts",
+    "dist/tool-catalog.js",
+    "skills"
   ],
   "scripts": {
-    "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node",
+    "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",
     "build:native:win": "cd native && cargo build --release && copy target\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-x64.node",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
@@ -57,7 +75,7 @@
     "demo": "tsx examples/demo.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

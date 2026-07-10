@@ -233,6 +233,16 @@ export interface NativeModule {
   /** Crop a region from a base64 image at full resolution. Cross-platform. */
   cropImage(base64Image: string, x1: number, y1: number, x2: number, y2: number, quality: number | null): { base64: string; width: number; height: number; mimeType: string }
 
+  // ── Native virtual pointer overlay ─────────────────────────────────────
+  /** Show a non-activating, always-on-top native overlay pointer. */
+  agentPointerOverlayShow?(x: number, y: number): Record<string, unknown>
+  /** Move the native overlay pointer without changing visibility. */
+  agentPointerOverlayMove?(x: number, y: number): Record<string, unknown>
+  /** Hide the native overlay pointer. */
+  agentPointerOverlayHide?(): Record<string, unknown>
+  /** Return native overlay status/capability metadata. */
+  agentPointerOverlayStatus?(): Record<string, unknown>
+
   // ── v5.2 prepareDisplay ─────────────────────────────────────────────────
   /**
    * Hide every regular running app except the target and the keep-visible

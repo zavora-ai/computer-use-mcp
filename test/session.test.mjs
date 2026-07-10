@@ -895,7 +895,9 @@ test('Property 13: Window filter correctness', async () => {
       const session = createSession({ native })
 
       const result = await session.dispatch('list_windows', { bundle_id: filterBundleId })
-      const windows = JSON.parse(result.content[0].text)
+      const payload = JSON.parse(result.content[0].text)
+      // v6.2 Class B wrap: { windows: WindowRecord[] }
+      const windows = Array.isArray(payload) ? payload : payload.windows
 
       // All returned windows should match the filter
       for (const win of windows) {

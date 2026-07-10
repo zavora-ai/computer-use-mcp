@@ -12,10 +12,26 @@ export interface ToolResult {
     | { type: 'text'; text: string }
     | { type: 'image'; data: string; mimeType: string }
   >
+  structuredContent?: Record<string, unknown>
   isError?: boolean
 }
 
-export type FocusStrategy = 'strict' | 'best_effort' | 'none'
+export interface ListedTool {
+  name: string
+  description?: string
+  annotations?: {
+    readOnlyHint?: boolean
+    destructiveHint?: boolean
+    idempotentHint?: boolean
+    openWorldHint?: boolean
+    title?: string
+  }
+  _meta?: Record<string, unknown>
+  inputSchema?: unknown
+  outputSchema?: unknown
+}
+
+export type FocusStrategy = 'strict' | 'best_effort' | 'none' | 'prepare_display'
 
 /** Optional window-targeting and focus strategy options for input methods. */
 export interface WindowTargetOpts {
@@ -43,12 +59,26 @@ export interface FillFormField {
   value: string
 }
 
+export type OpenAIComputerAction = {
+  type?: string
+  action?: string
+  [key: string]: unknown
+}
+
 export interface ComputerUseClient {
-  listTools(): Promise<Array<{ name: string; description?: string }>>
+  listTools(): Promise<ListedTool[]>
   callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>
+  listResources?(): Promise<Array<{ uri: string; name: string; description?: string; mimeType?: string }>>
+  readResource?(uri: string): Promise<unknown>
+  listPrompts?(): Promise<Array<{ name: string; description?: string; arguments?: unknown }>>
+  getPrompt?(name: string, args?: Record<string, string>): Promise<unknown>
   close(): Promise<void>
   // Typed convenience
-  screenshot(args?: { width?: number; quality?: number; target_app?: string; target_window_id?: number; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto' }): Promise<ToolResult>
+  doctor(args?: { includeRemediation?: boolean }): Promise<ToolResult>
+  policyStatus(): Promise<ToolResult>
+  agentPointer(action: 'get' | 'move' | 'show' | 'hide' | 'reset', opts?: { coordinate?: [number, number]; visible?: boolean; nativeOverlay?: boolean }): Promise<ToolResult>
+  openaiComputer(args: { action?: OpenAIComputerAction; actions?: OpenAIComputerAction[]; targetApp?: string; targetWindowId?: number; focusStrategy?: FocusStrategy; returnScreenshot?: boolean; useVirtualPointer?: boolean; nativeOverlay?: boolean; width?: number; quality?: number; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto'; approvalToken?: string }): Promise<ToolResult>
+  screenshot(args?: { width?: number; quality?: number; target_app?: string; target_window_id?: number; provider?: 'anthropic' | 'openai' | 'openai-low' | 'gemini' | 'llama' | 'grok' | 'mistral' | 'qwen' | 'nova' | 'deepseek-vl' | 'phi' | 'auto'; show_agent_pointer?: boolean }): Promise<ToolResult>
   zoom(region: [number, number, number, number], quality?: number): Promise<ToolResult>
   click(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
   doubleClick(x: number, y: number, targetApp?: string, opts?: WindowTargetOpts): Promise<ToolResult>
@@ -149,13 +179,73 @@ function targetArgs(app?: string, opts?: WindowTargetOpts): Record<string, unkno
 }
 
 function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
-  const call = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> =>
-    (await client.callTool({ name, arguments: args })) as ToolResult
+  const call = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
+    const raw = await client.callTool({ name, arguments: args }) as ToolResult & { structuredContent?: Record<string, unknown> }
+    return {
+      content: raw.content,
+      ...(raw.structuredContent !== undefined ? { structuredContent: raw.structuredContent } : {}),
+      ...(raw.isError ? { isError: true } : {}),
+    }
+  }
 
   return {
-    async listTools() { return (await client.listTools()).tools.map(t => ({ name: t.name, description: t.description })) },
+    async listTools() {
+      return (await client.listTools()).tools.map(t => ({
+        name: t.name,
+        description: t.description,
+        annotations: t.annotations as ListedTool['annotations'],
+        _meta: (t as { _meta?: Record<string, unknown> })._meta,
+        inputSchema: t.inputSchema,
+        outputSchema: (t as { outputSchema?: unknown }).outputSchema,
+      }))
+    },
     callTool: call,
+    async listResources() {
+      const r = await client.listResources()
+      return r.resources.map(res => ({
+        uri: res.uri,
+        name: res.name,
+        description: res.description,
+        mimeType: res.mimeType,
+      }))
+    },
+    async readResource(uri: string) {
+      return client.readResource({ uri })
+    },
+    async listPrompts() {
+      const r = await client.listPrompts()
+      return r.prompts.map(p => ({
+        name: p.name,
+        description: p.description,
+        arguments: p.arguments,
+      }))
+    },
+    async getPrompt(name: string, args?: Record<string, string>) {
+      return client.getPrompt({ name, arguments: args })
+    },
     close: closeFn,
+    doctor: (args?) => call('doctor', { ...(args?.includeRemediation !== undefined ? { include_remediation: args.includeRemediation } : {}) }),
+    policyStatus: () => call('policy_status'),
+    agentPointer: (action, opts?) => call('agent_pointer', {
+      action,
+      ...(opts?.coordinate ? { coordinate: opts.coordinate } : {}),
+      ...(opts?.visible !== undefined ? { visible: opts.visible } : {}),
+      ...(opts?.nativeOverlay !== undefined ? { native_overlay: opts.nativeOverlay } : {}),
+    }),
+    openaiComputer: (args) => call('openai_computer', {
+      ...(args.action ? { action: args.action } : {}),
+      ...(args.actions ? { actions: args.actions } : {}),
+      ...(args.targetApp ? { target_app: args.targetApp } : {}),
+      ...(args.targetWindowId !== undefined ? { target_window_id: args.targetWindowId } : {}),
+      ...(args.focusStrategy ? { focus_strategy: args.focusStrategy } : {}),
+      ...(args.returnScreenshot !== undefined ? { return_screenshot: args.returnScreenshot } : {}),
+      ...(args.useVirtualPointer !== undefined ? { use_virtual_pointer: args.useVirtualPointer } : {}),
+      ...(args.nativeOverlay !== undefined ? { native_overlay: args.nativeOverlay } : {}),
+      ...(args.width !== undefined ? { width: args.width } : {}),
+      ...(args.quality !== undefined ? { quality: args.quality } : {}),
+      ...(args.provider ? { provider: args.provider } : {}),
+      ...(args.approvalToken ? { approval_token: args.approvalToken } : {}),
+    }),
     screenshot: (args?) => call('screenshot', args ?? {}),
     zoom: (region, quality?) => call('zoom', { region, ...(quality !== undefined ? { quality } : {}) }),
     click: (x, y, app?, opts?) => call('left_click', { coordinate: [x, y], ...targetArgs(app, opts) }),

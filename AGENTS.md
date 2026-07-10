@@ -2,6 +2,16 @@
 
 This guide covers how to integrate `computer-use-mcp` into AI agent frameworks and agentic workflows. Works on both **macOS** and **Windows**.
 
+**Skills (recommended):** copy from `skills/` in this package into your agent skills directory:
+- `skills/computer-use` — when/how to use desktop control
+- `skills/computer-use-forms` — accessibility form fill
+- `skills/computer-use-scripting` — AppleScript / PowerShell first
+- `skills/computer-use-recovery` — FocusFailure recovery
+- `skills/computer-use-windows-admin` — filesystem / registry / process
+
+**MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
+**Profiles:** `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default `full`)
+
 ## Tool priority guidance
 
 Desktop computer use should be your **last resort**. Always prefer more precise tools:
