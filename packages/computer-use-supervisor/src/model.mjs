@@ -111,6 +111,7 @@ export function sanitizeSupervisorMessage(message) {
     for (const field of SAFE_EVENT_PAYLOAD_FIELDS) {
       if (message.event.payload?.[field] !== undefined) payload[field] = message.event.payload[field]
     }
+    if (message.event.payload?.sessionScopeEligible === true) payload.sessionScopeEligible = true
     copySafeSensitivity(message.event.payload, payload)
     event.payload = payload
     return { type: 'event', event }
@@ -192,6 +193,7 @@ export function reduceSupervisorMessage(model, message) {
     for (const field of SAFE_POSTCONDITION_FIELDS) {
       if (event.payload?.[field] !== undefined) safe[field] = event.payload[field]
     }
+    if (event.payload?.sessionScopeEligible === true) safe.sessionScopeEligible = true
     copySafeSensitivity(event.payload, safe)
     next.pendingApproval = safe
     next.state = 'waiting_for_user'

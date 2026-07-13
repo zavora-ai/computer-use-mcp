@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('computerUseSupervisor', Object.freeze({
     return () => ipcRenderer.removeListener('supervisor:event', wrapped)
   },
   command: (command, payload) => ipcRenderer.invoke('supervisor:command', command, payload),
-  approve: actionId => ipcRenderer.invoke('supervisor:approve', actionId),
+  approve: (actionId, scope = 'exact_action') => ipcRenderer.invoke('supervisor:approve', actionId, scope),
   requestEvidenceFrame: frameId => ipcRenderer.invoke('supervisor:get-frame', frameId),
   emergencyStop: () => ipcRenderer.invoke('supervisor:emergency-stop'),
   emergencyReset: () => ipcRenderer.invoke('supervisor:emergency-reset'),

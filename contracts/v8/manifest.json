@@ -4,6 +4,8 @@
   "fixtures": [
     "action-preview.json",
     "action-postcondition.schema.json",
+    "approval-grant.schema.json",
+    "approval-grant.json",
     "target-sensitivity.schema.json",
     "execution-receipt.json",
     "session-event.json",

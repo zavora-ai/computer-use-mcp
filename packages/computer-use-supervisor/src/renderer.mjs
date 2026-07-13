@@ -30,6 +30,7 @@ function render() {
     byId('approval-expected-label').hidden = !expected
     byId('approval-expected').hidden = !expected
     byId('approval-expected').textContent = expected
+    byId('approve-session').hidden = approval.sessionScopeEligible !== true
   }
   for (const phase of ['before', 'after', 'observation']) {
     const frame = model.evidenceFrames[phase]
@@ -63,7 +64,14 @@ for (const button of document.querySelectorAll('[data-command]')) {
   button.addEventListener('click', () => window.computerUseSupervisor.command(button.dataset.command))
 }
 byId('approve').addEventListener('click', () => {
-  if (model.pendingApproval?.actionId) void window.computerUseSupervisor.approve(model.pendingApproval.actionId)
+  if (model.pendingApproval?.actionId) {
+    void window.computerUseSupervisor.approve(model.pendingApproval.actionId, 'exact_action')
+  }
+})
+byId('approve-session').addEventListener('click', () => {
+  if (model.pendingApproval?.actionId && model.pendingApproval.sessionScopeEligible === true) {
+    void window.computerUseSupervisor.approve(model.pendingApproval.actionId, 'session_operation')
+  }
 })
 byId('emergency').addEventListener('click', () => window.computerUseSupervisor.emergencyStop())
 byId('reset-emergency').addEventListener('click', () => window.computerUseSupervisor.emergencyReset())

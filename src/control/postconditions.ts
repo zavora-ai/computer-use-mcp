@@ -89,8 +89,23 @@ async function filesystemState(
   if (!exists) return info.isError === true
   if (info.isError) return false
   if (!digest) return true
-  const read = await session.dispatch('filesystem', { mode: 'read', path })
-  return !read.isError && valueDigest(text(read)) === digest
+  const observed = json(await session.dispatch('filesystem', { mode: 'info', path, include_digest: true }))
+  return Boolean(observed && typeof observed === 'object'
+    && (observed as Record<string, unknown>).contentDigest === digest)
+}
+
+async function filesystemFingerprint(
+  session: Session,
+  path: string,
+): Promise<{ type: string; contentDigest: string } | undefined> {
+  const info = await session.dispatch('filesystem', { mode: 'info', path, include_digest: true })
+  if (info.isError) return undefined
+  const observed = json(info)
+  if (!observed || typeof observed !== 'object') return undefined
+  const record = observed as Record<string, unknown>
+  if ((record.type !== 'file' && record.type !== 'directory')
+      || typeof record.contentDigest !== 'string' || !SHA256.test(record.contentDigest)) return undefined
+  return { type: record.type, contentDigest: record.contentDigest }
 }
 
 async function registryState(
@@ -192,10 +207,20 @@ async function automaticPostcondition(
     if (mode === 'delete') {
       return detail('postcondition.auto_filesystem_delete', await filesystemState(session, args.path, false), 1)
     }
-    if ((mode === 'copy' || mode === 'move') && typeof args.destination === 'string') {
+    if (mode === 'copy' && typeof args.destination === 'string') {
+      const [source, destination] = await Promise.all([
+        filesystemFingerprint(session, args.path),
+        filesystemFingerprint(session, args.destination),
+      ])
+      return detail('postcondition.auto_filesystem_copy_integrity', Boolean(
+        source && destination && source.type === destination.type
+        && source.contentDigest === destination.contentDigest,
+      ), 2)
+    }
+    if (mode === 'move' && typeof args.destination === 'string') {
       const destinationExists = await filesystemState(session, args.destination, true)
-      const sourceState = mode === 'move' ? await filesystemState(session, args.path, false) : true
-      return detail(`postcondition.auto_filesystem_${mode}`, destinationExists && sourceState, 2)
+      const sourceAbsent = await filesystemState(session, args.path, false)
+      return detail('postcondition.auto_filesystem_move', destinationExists && sourceAbsent, 2)
     }
   }
   if (envelope.tool === 'registry' && typeof args.path === 'string' && typeof args.name === 'string') {

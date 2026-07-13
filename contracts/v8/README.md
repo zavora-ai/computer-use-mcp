@@ -9,6 +9,7 @@ Rules:
 - `indeterminate` is terminal for automatic execution and routes to fresh observation plus review.
 - `action-postcondition.schema.json` defines optional digest-only expected state. It is included in `actionDigest`, must bind to the action target/resource, and is independently read back after mutation. Supported UI value/form, filesystem, registry, and PID-kill operations derive strict postconditions automatically even when the caller omits one.
 - `target-sensitivity.schema.json` defines value-free native AX/UIA sensitivity evidence. Protected values are nulled before the accessibility tool boundary; semantic mutations require a conclusive assessment, bind it into action identity, and revalidate it immediately before effect.
+- `approval-grant.schema.json` and `approval-grant.json` define exact-action and bounded session-operation authority. Reusable grants contain only scope digests plus tool/operation metadata; mutable field values and labels never enter the grant.
 - Image blocks remain image blocks. Adapters must not replace bytes with text placeholders.
 - `principalId` comes from authenticated host context, never model-produced arguments.
 - Session deletion is terminal-state-only and principal-bound. Retention rewrites are represented by an opaque marker, never by retained private payload bytes.

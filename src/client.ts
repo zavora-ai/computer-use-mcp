@@ -195,7 +195,10 @@ export interface ComputerUseClient {
   resumeSession(sessionId: string): Promise<ToolResult>
   takeOver(sessionId: string): Promise<ToolResult>
   stopSession(sessionId: string, reason?: string): Promise<ToolResult>
-  approveAction(sessionId: string, actionId: string, ttlMs?: number): Promise<ToolResult>
+  approveAction(sessionId: string, actionId: string, ttlMs?: number, opts?: {
+    scope?: 'exact_action' | 'session_operation'
+    uses?: number
+  }): Promise<ToolResult>
   completeSession(sessionId: string, evidence: { summary: string; postconditions: Array<{ description: string; satisfied: boolean; evidenceHash?: string }>; lastAppId?: string; lastWindowId?: string | number; actionCounts: Record<string, number>; reason?: string }): Promise<ToolResult>
   getSessionEvents(sessionId: string, opts?: { afterSequence?: number; limit?: number }): Promise<ToolResult>
   submitFollowUp(sessionId: string, instruction: string): Promise<ToolResult>
@@ -512,8 +515,10 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     resumeSession: (sessionId) => call('resume_session', { session_id: sessionId }),
     takeOver: (sessionId) => call('take_over', { session_id: sessionId }),
     stopSession: (sessionId, reason?) => call('stop_session', { session_id: sessionId, ...(reason ? { reason } : {}) }),
-    approveAction: (sessionId, actionId, ttlMs?) => call('approve_action', {
+    approveAction: (sessionId, actionId, ttlMs?, opts?) => call('approve_action', {
       session_id: sessionId, action_id: actionId, ...(ttlMs !== undefined ? { ttl_ms: ttlMs } : {}),
+      ...(opts?.scope ? { scope: opts.scope } : {}),
+      ...(opts?.uses !== undefined ? { uses: opts.uses } : {}),
     }),
     completeSession: (sessionId, evidence) => call('complete_session', {
       session_id: sessionId,

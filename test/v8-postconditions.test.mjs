@@ -93,7 +93,10 @@ test('filesystem, registry, window, and process postconditions verify observed s
     if (tool === 'filesystem') {
       const exists = files.has(args.path)
       if (args.mode === 'info') return exists
-        ? { content: [{ type: 'text', text: JSON.stringify({ path: args.path, type: 'file' }) }] }
+        ? { content: [{ type: 'text', text: JSON.stringify({
+            path: args.path, type: 'file',
+            ...(args.include_digest ? { contentDigest: valueDigest(files.get(args.path)) } : {}),
+          }) }] }
         : { content: [{ type: 'text', text: 'Not found' }], isError: true }
       return exists
         ? { content: [{ type: 'text', text: files.get(args.path) }] }
@@ -129,6 +132,31 @@ test('filesystem, registry, window, and process postconditions verify observed s
   assert.equal((await verifySessionPostcondition(session, envelope('process_kill', {
     kind: 'process', pid: 2_147_483_647, running: false,
   }), {})).verified, true)
+})
+
+test('automatic copy verification compares independent source and destination byte digests', async () => {
+  const files = new Map([
+    ['/safe/source.bin', Buffer.from([0, 255, 1]).toString('binary')],
+    ['/safe/copy.bin', Buffer.from([0, 255, 1]).toString('binary')],
+  ])
+  const session = { async dispatch(tool, args) {
+    assert.equal(tool, 'filesystem')
+    const value = files.get(args.path)
+    if (value === undefined) return { content: [{ type: 'text', text: 'missing' }], isError: true }
+    return { content: [{ type: 'text', text: JSON.stringify({
+      path: args.path, type: 'file', contentDigest: valueDigest(value),
+    }) }] }
+  } }
+  const copied = await verifySessionPostcondition(session, envelope('filesystem'), {
+    mode: 'copy', path: '/safe/source.bin', destination: '/safe/copy.bin',
+  })
+  assert.deepEqual(copied, {
+    verified: true, method: 'postcondition.auto_filesystem_copy_integrity', details: { checks: 2 },
+  })
+  files.set('/safe/copy.bin', Buffer.from([0, 254, 1]).toString('binary'))
+  assert.equal((await verifySessionPostcondition(session, envelope('filesystem'), {
+    mode: 'copy', path: '/safe/source.bin', destination: '/safe/copy.bin',
+  })).verified, false)
 })
 
 test('strict auto-verification makes a false-success UI mutation indeterminate and non-replayable', async () => {

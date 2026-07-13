@@ -176,8 +176,12 @@ export class SupervisorIpcServer {
     else if (type === 'stop') await this.#runtime.stopSession(sessionId, principalId, String(message.reason ?? 'supervisor_stop'))
     else if (type === 'approve') {
       if (typeof message.actionId !== 'string') throw new TypeError('actionId is required')
+      const scope = message.scope === 'session_operation' ? 'session_operation' : 'exact_action'
+      const uses = scope === 'session_operation' && Number.isInteger(message.uses)
+        ? Number(message.uses) : undefined
       const grant = await this.#runtime.approveAction(
         sessionId, principalId, message.actionId, Number(message.ttlMs ?? 60_000),
+        { scope, ...(uses !== undefined ? { uses } : {}) },
       )
       this.#send(socket, { type: 'approved', actionId: message.actionId, grant })
       return

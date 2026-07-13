@@ -984,6 +984,21 @@ field label or value. Generic physical `type` into the currently focused field
 does not yet have equivalent field attribution, so it remains governed by the
 existing foreground/target/approval controls rather than this semantic proof.
 
+### Exact and session-operation approvals
+
+Exact-action approval remains the default and is bound to one action digest,
+principal, session, policy digest, risk class, execution mode, TTL, and use.
+An operator may explicitly choose `session_operation` only when v8 proves a
+reusable scope for `set_value` or `fill_form`: the same agent/execution group, app, PID/window,
+role/label selectors, operation, risk, mode, public/private data labels, trusted
+provenance, and conclusive non-sensitive accessibility evidence. Field values
+and labels are not stored in the grant; the reusable scope is a SHA-256 digest.
+Session-operation grants are capped at 20 uses and five minutes, and the PiP
+reference UI uses 10 uses/two minutes. A changed field, window, policy,
+sensitivity assessment, provenance boundary, or use budget requires new
+review. Pause, takeover, authorization loss, emergency stop, stop, completion,
+and deletion revoke both grants and pending approvals before work can resume.
+
 ### Effect-level postconditions
 
 The v8 facade does not treat a low-level handler's success message as proof that
@@ -1021,9 +1036,11 @@ to the action, resource, approval, and receipt digest:
 The public contract also supports filesystem, registry, non-running process,
 and window existence checks. Explicit postconditions must refer to the same
 target or resource as the action; unrelated checks are rejected before policy
-approval. Copy currently proves destination presence, while move additionally
-proves source disappearance; use a `content_digest` when byte equality is a
-required completion condition.
+approval. Copy automatically compares independently read source and destination
+SHA-256 digests. Regular files are hashed as raw bytes; directories use a
+path-independent canonical tree digest covering sorted relative entries, file
+bytes, and symlink targets. Move proves destination presence and source
+disappearance because its source is unavailable for post-effect comparison.
 
 Run `npm run conformance:v8` to execute the public policy, multi-agent, and
 supervisor suites and combine their source/output digests with live capability

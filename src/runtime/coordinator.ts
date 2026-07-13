@@ -65,6 +65,11 @@ export interface ActionPreview {
   blocker?: 'shadow_mutation' | 'foreground_required' | 'input_attribution_unavailable' | 'target_evidence_required' | 'sensitivity_unavailable' | 'postcondition_unavailable' | 'approval_required' | 'policy_denied'
 }
 
+interface PendingApproval {
+  preview: ActionPreview
+  sessionScopeDigest?: string
+}
+
 export interface ExecutionOutcome {
   preview: ActionPreview
   receipt: ExecutionReceipt<ToolResult>
@@ -177,7 +182,7 @@ export class RuntimeCoordinator {
   readonly #requireManagedSession: boolean
   readonly #transactionHooks?: TransactionHooks
   readonly #resolveToolMeta: (tool: string) => ToolMeta | undefined
-  readonly #pendingApprovals = new Map<string, ActionPreview>()
+  readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #emergencyListeners = new Set<(status: ReturnType<RuntimeCoordinator['emergencyStopStatus']>) => void>()
   readonly #followUps = new Map<string, SessionFollowUp[]>()
   readonly #activeExecutions = new Map<string, {
@@ -304,6 +309,7 @@ export class RuntimeCoordinator {
       expiresAt: new Date(now.getTime() + (request.expiresInMs ?? 30_000)).toISOString(),
       argsDigest,
     }
+    const sessionScopeDigest = this.#sessionApprovalScopeDigest(request, envelope)
     const capability = await this.#selectCapability(request, meta, operation)
     const hasCertifiedEffectVerifier = await this.#hasCertifiedEffectVerifier(request, capability)
     const policy = await this.#policy(envelope)
@@ -325,14 +331,17 @@ export class RuntimeCoordinator {
     else if (policy.decision === 'confirm') {
       if (!request.approvalGrantId) blocker = 'approval_required'
       else {
-        try { this.grants.validate(request.approvalGrantId, envelope, policy.policyDigest) }
+        try { this.grants.validate(request.approvalGrantId, envelope, policy.policyDigest, sessionScopeDigest) }
         catch { blocker = 'approval_required' }
       }
     }
 
     const preview: ActionPreview = { envelope, capability, policy, executable: !blocker, ...(blocker ? { blocker } : {}) }
     if (blocker === 'approval_required') {
-      this.#pendingApprovals.set(`${request.sessionId}\u0000${actionId}`, structuredClone(preview))
+      this.#pendingApprovals.set(`${request.sessionId}\u0000${actionId}`, {
+        preview: structuredClone(preview),
+        ...(sessionScopeDigest ? { sessionScopeDigest } : {}),
+      })
     }
     this.events.publish({
       sessionId: request.sessionId,
@@ -369,6 +378,7 @@ export class RuntimeCoordinator {
           targetAppId: envelope.target?.appId ?? null,
           targetWindowId: envelope.target?.windowId ?? null,
           reasons: policy.reasons,
+          sessionScopeEligible: Boolean(sessionScopeDigest),
           ...(targetSensitivity ? this.#sensitivitySummary(targetSensitivity) : {}),
           ...(request.postcondition ? this.#postconditionSummary(request.postcondition) : {}),
         },
@@ -393,7 +403,12 @@ export class RuntimeCoordinator {
 
     if (preview.policy.decision === 'confirm') {
       if (!request.approvalGrantId) throw new RuntimeError('approval_required', 'action-bound approval is required')
-      this.grants.consume(request.approvalGrantId, preview.envelope, preview.policy.policyDigest)
+      this.grants.consume(
+        request.approvalGrantId,
+        preview.envelope,
+        preview.policy.policyDigest,
+        this.#sessionApprovalScopeDigest(request, preview.envelope),
+      )
       this.#pendingApprovals.delete(`${request.sessionId}\u0000${request.actionId}`)
     }
 
@@ -591,6 +606,7 @@ export class RuntimeCoordinator {
       catch { /* the cooperative boundary must still stop if the native latch reports failure */ }
     }
     const revoked = this.leases.emergencyStop(reason)
+    this.#revokeAllApprovalAuthority('emergency_stop')
     if (revoked) {
       this.events.publish({
         sessionId: revoked.sessionId,
@@ -650,26 +666,65 @@ export class RuntimeCoordinator {
     principalId: string,
     actionId: string,
     ttlMs = 60_000,
+    options: { scope?: 'exact_action' | 'session_operation'; uses?: number } = {},
   ) {
     await this.getSession(sessionId, principalId)
-    const preview = this.#pendingApprovals.get(`${sessionId}\u0000${actionId}`)
-    if (!preview || preview.envelope.principalId !== principalId) {
+    const pending = this.#pendingApprovals.get(`${sessionId}\u0000${actionId}`)
+    const preview = pending?.preview
+    if (!pending || !preview || preview.envelope.principalId !== principalId) {
       throw new RuntimeError('approval_required', 'no exact pending action is available for approval')
     }
     if (this.#now().getTime() >= Date.parse(preview.envelope.expiresAt)) {
       this.#pendingApprovals.delete(`${sessionId}\u0000${actionId}`)
       throw new RuntimeError('approval_required', 'pending action expired before approval')
     }
-    return this.grants.issue({
+    const scope = options.scope ?? 'exact_action'
+    if (scope === 'session_operation' && !pending.sessionScopeDigest) {
+      throw new RuntimeError(
+        'policy_denied',
+        'this action is not eligible for a session-scoped approval; approve the exact action instead',
+      )
+    }
+    if (scope === 'exact_action' && options.uses !== undefined && options.uses !== 1) {
+      throw new RangeError('exact-action approval grants must have exactly one use')
+    }
+    const uses = scope === 'exact_action' ? 1 : options.uses ?? 10
+    if (scope === 'session_operation' && (!Number.isInteger(uses) || uses < 1 || uses > 20)) {
+      throw new RangeError('session-operation approval uses must be between 1 and 20')
+    }
+    const grant = this.grants.issue({
+      scope,
       principalId,
       sessionId,
       actionDigest: preview.envelope.argsDigest,
+      ...(pending.sessionScopeDigest ? { scopeDigest: pending.sessionScopeDigest } : {}),
       policyDigest: preview.policy.policyDigest,
+      tool: preview.envelope.tool,
+      operation: preview.envelope.operation,
       actionClass: preview.envelope.actionClass,
       mode: preview.envelope.requestedMode,
       ttlMs: Math.min(ttlMs, 300_000),
-      uses: 1,
+      uses,
     })
+    // One explicit approval decision issues one grant. Remove the reviewed
+    // pending item before publishing so duplicate UI/IPC submissions cannot
+    // mint parallel authority from the same review event.
+    this.#pendingApprovals.delete(`${sessionId}\u0000${actionId}`)
+    this.events.publish({
+      sessionId,
+      actionId,
+      principalId,
+      type: 'action.approved',
+      payload: {
+        scope: grant.scope,
+        scopeDigest: grant.scopeDigest,
+        expiresAt: grant.expiresAt,
+        remainingUses: grant.remainingUses,
+        tool: grant.tool,
+        operation: grant.operation,
+      },
+    })
+    return grant
   }
 
   async startSession(input: { principalId: string; executionGroupId?: string; objective?: string }): Promise<RuntimeSession> {
@@ -706,6 +761,7 @@ export class RuntimeCoordinator {
       const lease = this.leases.current()
       if (lease?.sessionId === session.sessionId) this.leases.revoke(lease.leaseId, reason)
       this.#cancelReservations(session.sessionId, principalId, reason)
+      this.#revokeApprovalAuthority(session.sessionId, principalId, reason)
       if (session.state === 'running' || session.state === 'waiting_for_user') {
         affected.push(await this.sessions.transition(session.sessionId, 'paused_by_policy', reason))
       }
@@ -762,6 +818,7 @@ export class RuntimeCoordinator {
     const lease = this.leases.current()
     if (lease?.sessionId === sessionId) this.leases.revoke(lease.leaseId, reason)
     this.#cancelReservations(sessionId, principalId, reason)
+    this.#revokeApprovalAuthority(sessionId, principalId, reason)
     return this.sessions.transition(sessionId, 'paused_by_user', reason)
   }
 
@@ -780,6 +837,7 @@ export class RuntimeCoordinator {
     const lease = this.leases.current()
     if (lease?.sessionId === sessionId) this.leases.revoke(lease.leaseId, reason)
     this.#cancelReservations(sessionId, principalId, reason)
+    this.#revokeApprovalAuthority(sessionId, principalId, reason)
     const stopping = current.state === 'stopping'
       ? current
       : await this.sessions.transition(sessionId, 'stopping', reason)
@@ -795,6 +853,7 @@ export class RuntimeCoordinator {
     const lease = this.leases.current()
     if (lease?.sessionId === sessionId) this.leases.revoke(lease.leaseId, 'session_completed')
     this.#cancelReservations(sessionId, principalId, 'session_completed')
+    this.#revokeApprovalAuthority(sessionId, principalId, 'session_completed')
     return this.sessions.complete(sessionId, evidence)
   }
 
@@ -1048,6 +1107,125 @@ export class RuntimeCoordinator {
       return ['set', 'delete'].includes(String(request.args.mode)) && typeof request.args.name === 'string'
     }
     return request.tool === 'process_kill' && request.args.mode === 'kill' && typeof request.args.pid === 'number'
+  }
+
+  /**
+   * Narrow reusable approval scope for repeated edits to the same proven,
+   * non-sensitive semantic controls. Mutable values remain exact-action-only.
+   */
+  #sessionApprovalScopeDigest(request: ActionRequest, envelope: ActionEnvelope): string | undefined {
+    if (request.tool !== 'set_value' && request.tool !== 'fill_form') return undefined
+    if (envelope.actionClass !== 'edit_reversible' || !envelope.reversible) return undefined
+    if (envelope.targetSensitivity?.assessment !== 'non_sensitive') return undefined
+    if (!envelope.target?.appId || envelope.target.windowId === undefined) return undefined
+    if (envelope.provenance?.untrustedInstruction || envelope.provenance?.crossesDataBoundary) return undefined
+    if (envelope.dataLabels.length === 0
+        || envelope.dataLabels.some(label => label !== 'public' && label !== 'private')) return undefined
+
+    let selectors: Array<{ role: string; label: string }>
+    if (request.tool === 'set_value') {
+      if (typeof request.args.role !== 'string' || typeof request.args.label !== 'string') return undefined
+      selectors = [{ role: request.args.role, label: request.args.label }]
+    } else {
+      if (!Array.isArray(request.args.fields) || request.args.fields.length < 1
+          || request.args.fields.length > 100) return undefined
+      selectors = []
+      for (const value of request.args.fields) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+        const field = value as Record<string, unknown>
+        if (typeof field.role !== 'string' || typeof field.label !== 'string') return undefined
+        selectors.push({ role: field.role, label: field.label })
+      }
+    }
+    if (envelope.targetSensitivity.fieldsChecked !== selectors.length) return undefined
+    return digestAction({
+      version: 1,
+      sessionId: envelope.sessionId,
+      executionGroupId: envelope.executionGroupId,
+      agentId: envelope.agentId,
+      tool: envelope.tool,
+      operation: envelope.operation,
+      actionClass: envelope.actionClass,
+      mode: envelope.requestedMode,
+      reversible: envelope.reversible,
+      externalSideEffect: envelope.externalSideEffect,
+      target: {
+        platform: envelope.target.platform,
+        appId: envelope.target.appId,
+        pid: envelope.target.pid,
+        windowId: envelope.target.windowId,
+        displayId: envelope.target.displayId,
+      },
+      selectors,
+      dataLabels: [...envelope.dataLabels].sort(),
+      sensitivity: {
+        assessment: envelope.targetSensitivity.assessment,
+        source: envelope.targetSensitivity.source,
+        signals: [...envelope.targetSensitivity.signals].sort(),
+        fieldsChecked: envelope.targetSensitivity.fieldsChecked,
+      },
+      postconditionKind: envelope.postcondition?.kind,
+    })
+  }
+
+  #revokeApprovalAuthority(sessionId: string, principalId: string, reason: string): number {
+    const revokedGrants = this.grants.revokeSession(sessionId, principalId)
+    let pendingApprovals = 0
+    for (const key of [...this.#pendingApprovals.keys()]) {
+      if (!key.startsWith(`${sessionId}\u0000`)) continue
+      this.#pendingApprovals.delete(key)
+      pendingApprovals++
+    }
+    if (revokedGrants > 0 || pendingApprovals > 0) {
+      this.events.publish({
+        sessionId,
+        principalId,
+        type: 'approval.authority_revoked',
+        payload: {
+          revokedGrants,
+          pendingApprovals,
+          reasonDigest: `sha256:${createHash('sha256').update(reason).digest('hex')}`,
+        },
+      })
+    }
+    return revokedGrants
+  }
+
+  #revokeAllApprovalAuthority(reason: string): number {
+    const bySession = new Map<string, {
+      sessionId: string
+      principalId: string
+      revokedGrants: number
+      pendingApprovals: number
+    }>()
+    const entry = (sessionId: string, principalId: string) => {
+      const key = `${sessionId}\u0000${principalId}`
+      const existing = bySession.get(key)
+      if (existing) return existing
+      const created = { sessionId, principalId, revokedGrants: 0, pendingApprovals: 0 }
+      bySession.set(key, created)
+      return created
+    }
+    const revoked = this.grants.revokeAll()
+    for (const grant of revoked) entry(grant.sessionId, grant.principalId).revokedGrants++
+    for (const pending of this.#pendingApprovals.values()) {
+      const envelope = pending.preview.envelope
+      entry(envelope.sessionId, envelope.principalId).pendingApprovals++
+    }
+    this.#pendingApprovals.clear()
+    for (const value of bySession.values()) {
+      this.events.publish({
+        sessionId: value.sessionId,
+        principalId: value.principalId,
+        type: 'approval.authority_revoked',
+        payload: {
+          revokedGrants: value.revokedGrants,
+          pendingApprovals: value.pendingApprovals,
+          reasonDigest: `sha256:${createHash('sha256').update(reason).digest('hex')}`,
+        },
+      })
+    }
+    return revoked.length
   }
 
   #requiresSensitivityInspection(request: Pick<ActionRequest, 'tool'>): boolean {

@@ -223,8 +223,17 @@ test('approve_action grants only the exact pending v8 action through the MCP bou
     }
     const preview = await client.previewAction(request)
     assert.equal(preview.structuredContent.blocker, 'approval_required')
+    const ineligibleSessionScope = await client.approveAction(
+      sessionId, 'reviewed-action', 30_000, { scope: 'session_operation', uses: 2 },
+    )
+    assert.equal(ineligibleSessionScope.isError, true)
+    assert.match(ineligibleSessionScope.content[0].text, /not eligible/)
     const approval = await client.approveAction(sessionId, 'reviewed-action', 30_000)
     assert.equal(approval.structuredContent.grant.actionDigest, preview.structuredContent.envelope.argsDigest)
+    assert.equal(approval.structuredContent.grant.scope, 'exact_action')
+    const duplicate = await client.approveAction(sessionId, 'reviewed-action', 30_000)
+    assert.equal(duplicate.isError, true)
+    assert.match(duplicate.content[0].text, /no exact pending action/)
     const lease = await client.acquireControlLease({
       sessionId, kind: 'cooperative', mode: 'background', ttlMs: 10_000, actionBudget: 1,
     })

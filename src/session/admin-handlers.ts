@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { createHash, type Hash } from 'node:crypto'
 import { fsRootsViolation } from './fs-jail.js'
 import type { SpawnBounded } from './spawn.js'
 import { errJson, ok, type ToolResult } from '../result.js'
@@ -31,6 +32,61 @@ function powershellEncodedArgs(script: string): string[] {
 function xmlEscape(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+}
+
+function framedHash(hash: Hash, kind: string, value: string | Buffer): void {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8')
+  hash.update(kind).update('\0').update(String(bytes.length)).update(':').update(bytes)
+}
+
+function fileContentDigest(filePath: string, signal?: AbortSignal): string {
+  const hash = createHash('sha256')
+  const descriptor = fs.openSync(filePath, 'r')
+  const buffer = Buffer.allocUnsafe(64 * 1024)
+  try {
+    for (;;) {
+      if (signal?.aborted) throw signal.reason ?? new Error('filesystem digest aborted')
+      const length = fs.readSync(descriptor, buffer, 0, buffer.length, null)
+      if (length === 0) break
+      hash.update(buffer.subarray(0, length))
+    }
+  } finally {
+    fs.closeSync(descriptor)
+  }
+  return `sha256:${hash.digest('hex')}`
+}
+
+/** Canonical, path-independent digest for a directory tree or symlink. */
+function filesystemContentDigest(filePath: string, signal?: AbortSignal): string {
+  const root = fs.lstatSync(filePath)
+  if (root.isFile()) return fileContentDigest(filePath, signal)
+  const hash = createHash('sha256')
+  const visit = (absolute: string, relative: string): void => {
+    if (signal?.aborted) throw signal.reason ?? new Error('filesystem digest aborted')
+    const stat = fs.lstatSync(absolute)
+    if (stat.isDirectory()) {
+      framedHash(hash, 'directory', relative)
+      const names = fs.readdirSync(absolute)
+        .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+      for (const name of names) visit(path.join(absolute, name), relative ? `${relative}/${name}` : name)
+      return
+    }
+    if (stat.isFile()) {
+      framedHash(hash, 'file', relative)
+      framedHash(hash, 'size', String(stat.size))
+      framedHash(hash, 'digest', fileContentDigest(absolute, signal))
+      return
+    }
+    if (stat.isSymbolicLink()) {
+      framedHash(hash, 'symlink', relative)
+      framedHash(hash, 'target', fs.readlinkSync(absolute))
+      return
+    }
+    framedHash(hash, 'other', relative)
+    framedHash(hash, 'size', String(stat.size))
+  }
+  visit(filePath, '')
+  return `sha256:${hash.digest('hex')}`
 }
 
 /** Extracted filesystem, process, registry, notification, and scrape handlers. */
@@ -126,6 +182,9 @@ export async function handleAdminTool(
       return ok(JSON.stringify({
         path: filePath, type: stat.isDirectory() ? 'directory' : 'file', size: stat.size,
         created: stat.birthtime.toISOString(), modified: stat.mtime.toISOString(),
+        ...(args.include_digest === true
+          ? { contentDigest: filesystemContentDigest(filePath, context.signal) }
+          : {}),
       }))
     }
     return { content: [{ type: 'text', text: `Unknown filesystem mode: ${mode}` }], isError: true }

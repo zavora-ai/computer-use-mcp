@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { handleAdminTool } from '../dist/session/admin-handlers.js'
 
 function context(overrides = {}) {
@@ -44,4 +47,31 @@ test('extracted scrape handler strips active markup and truncates through inject
   assert.equal(result.isError, undefined)
   assert.match(result.content[0].text, /Hello & safe/)
   assert.doesNotMatch(result.content[0].text, /private-style|private-script|<p>/)
+})
+
+test('filesystem info computes path-independent byte digests for files and directory trees', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'computer-use-digest-'))
+  try {
+    const source = join(directory, 'source')
+    const destination = join(directory, 'destination')
+    await mkdir(join(source, 'nested'), { recursive: true })
+    await writeFile(join(source, 'binary.dat'), Buffer.from([0, 255, 1, 254, 2]))
+    await writeFile(join(source, 'nested', 'text.txt'), 'same bytes')
+    const copied = await handleAdminTool('filesystem', {
+      mode: 'copy', path: source, destination,
+    }, context())
+    assert.equal(copied.isError, undefined)
+    const digest = async path => {
+      const result = await handleAdminTool('filesystem', {
+        mode: 'info', path, include_digest: true,
+      }, context())
+      return JSON.parse(result.content[0].text).contentDigest
+    }
+    assert.match(await digest(source), /^sha256:[a-f0-9]{64}$/)
+    assert.equal(await digest(source), await digest(destination))
+    await writeFile(join(destination, 'binary.dat'), Buffer.from([0, 255, 1, 253, 2]))
+    assert.notEqual(await digest(source), await digest(destination))
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

@@ -283,6 +283,12 @@ request the hidden value. In the v8 semantic path, `set_value` and `fill_form`
 require conclusive accessibility sensitivity evidence and fail closed when it
 is missing, ambiguous, or changes before execution.
 
+Approval grants are exact-action by default. Request `session_operation` only
+after the operator explicitly chooses it and only when the approval-required
+event reports `sessionScopeEligible: true`; v8 limits that scope to the same
+proven non-sensitive semantic fields and revokes it on every pause, takeover,
+authorization-loss, emergency-stop, or terminal transition.
+
 The error payload includes ranked-by-similarity label suggestions. Use them instead of retrying blindly:
 
 ```typescript

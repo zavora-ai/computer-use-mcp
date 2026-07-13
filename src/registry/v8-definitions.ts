@@ -334,11 +334,14 @@ export function defineV8Tools(
   registry.define({
     apiVersion: 8,
     name: 'approve_action',
-    description: 'Issue a short-lived grant for the exact pending action and active policy digest after explicit user review.',
+    description: 'Issue a short-lived exact-action grant, or an explicitly selected bounded session-operation grant when the runtime proves the same non-sensitive semantic target scope.',
     inputSchema: {
       session_id: z.string(),
       action_id: z.string(),
       ttl_ms: z.number().int().min(1_000).max(300_000).optional(),
+      scope: z.enum(['exact_action', 'session_operation']).optional(),
+      uses: z.number().int().min(1).max(20).optional()
+        .describe('Session-operation use budget only; exact-action grants always have one use'),
     },
     meta: v8ControlMeta,
     riskMapper: controlRisk,
@@ -347,6 +350,10 @@ export function defineV8Tools(
         const grant = await runtime.approveAction(
           String(args.session_id), context.principalId, String(args.action_id),
           typeof args.ttl_ms === 'number' ? args.ttl_ms : 60_000,
+          {
+            scope: args.scope === 'session_operation' ? 'session_operation' : 'exact_action',
+            ...(typeof args.uses === 'number' ? { uses: args.uses } : {}),
+          },
         )
         return { content: [{ type: 'text', text: JSON.stringify({ grant }) }], structuredContent: { grant } }
       } catch (error) { return publicError(error) }

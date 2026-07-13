@@ -264,6 +264,8 @@ jobs:
               "contracts/v8/audit-export.schema.json",
               "contracts/v8/capability-certification-trace.schema.json",
               "contracts/v8/action-postcondition.schema.json",
+              "contracts/v8/approval-grant.schema.json",
+              "contracts/v8/approval-grant.json",
               "contracts/v8/target-sensitivity.schema.json",
               "contracts/v8/evidence-frame.schema.json",
               "contracts/v8/conformance-evidence.schema.json",

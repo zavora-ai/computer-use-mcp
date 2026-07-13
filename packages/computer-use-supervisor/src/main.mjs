@@ -53,9 +53,14 @@ function registerControls() {
     if (!commands.has(command)) throw new Error('unsupported supervisor command')
     send({ type: command, sessionId, ...(typeof payload.reason === 'string' ? { reason: payload.reason } : {}) })
   })
-  ipcMain.handle('supervisor:approve', (_event, actionId) => {
+  ipcMain.handle('supervisor:approve', (_event, actionId, scope = 'exact_action') => {
     if (typeof actionId !== 'string' || !actionId) throw new Error('actionId is required')
-    send({ type: 'approve', sessionId, actionId, ttlMs: 60_000 })
+    if (scope !== 'exact_action' && scope !== 'session_operation') throw new Error('unsupported approval scope')
+    send({
+      type: 'approve', sessionId, actionId, scope,
+      ttlMs: scope === 'session_operation' ? 120_000 : 60_000,
+      ...(scope === 'session_operation' ? { uses: 10 } : {}),
+    })
   })
   ipcMain.handle('supervisor:get-frame', (_event, frameId) => {
     if (typeof frameId !== 'string' || !frameId || frameId.length > 128) throw new Error('frameId is required')

@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-preview",
   "runtimeVersion": "7.0.0",
-  "generatedAt": "2026-07-13T15:47:30.317Z",
+  "generatedAt": "2026-07-13T16:23:43.584Z",
   "evidence": [
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_multi_agent_3eaef55a2db871d3",
+      "evidenceId": "evidence_multi_agent_7f243b1044e28a4e",
       "kind": "deterministic_suite",
       "scope": "multi_agent",
-      "observedAt": "2026-07-13T15:47:29.431Z",
+      "observedAt": "2026-07-13T16:23:42.668Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -20,7 +20,7 @@
       "command": "node --test test/v8-reliability-corpus.test.mjs test/v8-mcp-facade.test.mjs",
       "passed": true,
       "tests": 18,
-      "durationMs": 442,
+      "durationMs": 395,
       "assertions": [
         "lease.one_writer",
         "lease.terminal_revocation",
@@ -31,22 +31,22 @@
       "sources": [
         {
           "path": "test/v8-mcp-facade.test.mjs",
-          "digest": "sha256:4fc6a703ed673f15bcb440e82662df5dfab99cbf0b4de4272c6f8e2ec725684f"
+          "digest": "sha256:d038d728eb4a0626992997d2f2b39cdde192889890054f7e6ae3803386962117"
         },
         {
           "path": "test/v8-reliability-corpus.test.mjs",
           "digest": "sha256:b68a21f1cc81079ba240970304c5da4d75f9585a1858357373cc6886373a5e49"
         }
       ],
-      "sourceDigest": "sha256:a13aa332fd5668b2578af855601180d0c22b3d0b4d26322f3eaef55a2db871d3",
-      "outputDigest": "sha256:cde05fafef887cac2648a40611e06cb4e6fa321c5a1a9df3d38e114fc3a0f2d8"
+      "sourceDigest": "sha256:2d1e118300c7827af568e70692f40700b571880e7c3e188e7f243b1044e28a4e",
+      "outputDigest": "sha256:c65fd7bb5639df9959d8c1510e7cd5e25d3350111b4466562527c8cf3177cf2f"
     },
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_policy_c697c5669d93dd60",
+      "evidenceId": "evidence_policy_b05c3b419685dbf0",
       "kind": "deterministic_suite",
       "scope": "policy",
-      "observedAt": "2026-07-13T15:47:28.987Z",
+      "observedAt": "2026-07-13T16:23:42.272Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -54,10 +54,10 @@
         "interactive": false,
         "source": "local"
       },
-      "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs test/v8-migration.test.mjs test/v8-postconditions.test.mjs test/v8-capability-adapters.test.mjs test/v8-sensitive-targets.test.mjs && npm test --prefix packages/computer-use-remote",
+      "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs test/v8-migration.test.mjs test/v8-postconditions.test.mjs test/session-admin-handlers.test.mjs test/v8-capability-adapters.test.mjs test/v8-sensitive-targets.test.mjs test/v8-approval-scopes.test.mjs && npm test --prefix packages/computer-use-remote",
       "passed": true,
-      "tests": 134,
-      "durationMs": 3380,
+      "tests": 142,
+      "durationMs": 3191,
       "assertions": [
         "policy.operation_boundaries",
         "policy.approval_binding",
@@ -73,9 +73,12 @@
         "transaction.independent_readback",
         "transaction.false_success_indeterminate",
         "transaction.certified_adapter_readback",
+        "transaction.copy_byte_integrity",
         "policy.native_sensitive_field",
         "privacy.accessibility_value_redaction",
-        "target.sensitivity_revalidation"
+        "target.sensitivity_revalidation",
+        "approval.session_scope_binding",
+        "approval.authority_lifecycle"
       ],
       "sources": [
         {
@@ -85,6 +88,14 @@
         {
           "path": "contracts/v8/adk-evaluation-receipt.schema.json",
           "digest": "sha256:8f2965d4739b82a58ca7721eb79afb9a60023d6128bd612b2ce37969e3440606"
+        },
+        {
+          "path": "contracts/v8/approval-grant.json",
+          "digest": "sha256:9f6cc3312c60394c4e6a21eb03c2d9dcac212da56415dc12f761bf5e3f95d140"
+        },
+        {
+          "path": "contracts/v8/approval-grant.schema.json",
+          "digest": "sha256:0d4b9172edbd2399d21d3f19c6343c580af409910d7ca7978e51cf36e6be05d9"
         },
         {
           "path": "contracts/v8/browser-page-evidence.schema.json",
@@ -128,7 +139,7 @@
         },
         {
           "path": "docs/conformance/v8/adk-evaluation-receipt-7.0.0.json",
-          "digest": "sha256:35f89247e039d3628e580114659c015554bff1cea68a8a9aaff1b63ce3ab5395"
+          "digest": "sha256:90e5d813007818256d22d72d518e4922800a5a3e26f7e07e9ccaa69806f0b9b0"
         },
         {
           "path": "examples/v8-direct-sdk.mjs",
@@ -204,11 +215,11 @@
         },
         {
           "path": "src/client.ts",
-          "digest": "sha256:662e1085cf630dfe1a04cad7669461b582381094b899060c820ad411d00e44ff"
+          "digest": "sha256:8f52eab65e7297d67198d2a5e714db0d1e9ad9750b8d20239e0c098d2aa241a3"
         },
         {
           "path": "src/control/postconditions.ts",
-          "digest": "sha256:f45fa5c31c4f6617d26cdb10a0e0caf9e0e335371b03a90f4e427f70458c293b"
+          "digest": "sha256:3e3bb883d48952c29de3caca84cec492818a5ee7058d42f5893108ba540040c8"
         },
         {
           "path": "src/control/session-transaction.ts",
@@ -239,8 +250,12 @@
           "digest": "sha256:4257936c70619e4859834add607cb70b1a893c854392e7906d5c050552101b56"
         },
         {
+          "path": "src/policy/grants.ts",
+          "digest": "sha256:45fca5d9af52ed8a40f71e22828df0b5bf880253c4a7ad9de7343f3fdadb8958"
+        },
+        {
           "path": "src/registry/v8-definitions.ts",
-          "digest": "sha256:32bd489a431a013db3325be73cd35596c3a908cd55533a2f454e3f7fd8b2bc5f"
+          "digest": "sha256:763dcc048c49cb130432ea6cbb80c6449482bf3cb723b50dc4626f832fd5f6ef"
         },
         {
           "path": "src/release/artifacts.ts",
@@ -248,7 +263,7 @@
         },
         {
           "path": "src/release/readiness.ts",
-          "digest": "sha256:e2f54f4ad0256b69e0a3eccd98b35308db23849d166b41df605df94e93aee43d"
+          "digest": "sha256:e97b2d195af021383d875f2b66c0daa9aa43c2b9a2ee20cc63178b37cdaa7084"
         },
         {
           "path": "src/reliability/lab.ts",
@@ -267,6 +282,10 @@
           "digest": "sha256:653addffbff6937c5210a045963063876f71e9d86955c0abc7e36ef9752419cd"
         },
         {
+          "path": "src/runtime/coordinator.ts",
+          "digest": "sha256:8c57f44505407540c3bb57a8a26e5a9e77f9946e33bc76c62c753726a461a286"
+        },
+        {
           "path": "src/runtime/reference-adapters.ts",
           "digest": "sha256:d8516afc6053d227080c3206050a480f78d05ffab150d64c434b6d92e6864501"
         },
@@ -279,8 +298,20 @@
           "digest": "sha256:446e324463a72fe042415d838bbff90c239388987f8be04978b97b37742f6949"
         },
         {
+          "path": "src/session/admin-handlers.ts",
+          "digest": "sha256:e11612f88de92f15259799dca64d92466fa418fedb7182d4b9d0376e9ca2810c"
+        },
+        {
           "path": "src/targeting/sensitivity.ts",
           "digest": "sha256:225f3c46a46c6972443bf0faf51f7d0091d02ee08f8d0d6162f4d5c6514e211d"
+        },
+        {
+          "path": "test/session-admin-handlers.test.mjs",
+          "digest": "sha256:893342727f2fe2befcdd9f6c74cfe7587f8f711657308d216da243f7fbc316bc"
+        },
+        {
+          "path": "test/v8-approval-scopes.test.mjs",
+          "digest": "sha256:42bdd8f8f8c06292845f94f95aaa2db99e20d50235631c6f41f4498e686a002e"
         },
         {
           "path": "test/v8-browser-bridge.test.mjs",
@@ -304,7 +335,7 @@
         },
         {
           "path": "test/v8-postconditions.test.mjs",
-          "digest": "sha256:037d022a1edf352c6f9100d5d93aa03bd0833283ddaef982cd45e4856e614cb1"
+          "digest": "sha256:701898c0bfd3a5d291fd4cf975d5a624c8259b2dbd4db2909db6c4c129149e72"
         },
         {
           "path": "test/v8-provider-adapters.test.mjs",
@@ -332,22 +363,22 @@
         },
         {
           "path": "test/v8-runtime-kernel.test.mjs",
-          "digest": "sha256:fe764c1166ac1e90d598f61efc05dfd584ed378d376d27ae78b74f6204540c25"
+          "digest": "sha256:80fc9fafe71367d95bda5de3f6c44f06896edce2c6e7de385d0af2159cb99b67"
         },
         {
           "path": "test/v8-sensitive-targets.test.mjs",
           "digest": "sha256:420e60585db6f528543b1e3833115e5f77061796de3d765af2a4c40866be5f00"
         }
       ],
-      "sourceDigest": "sha256:096abb19941e6be371bfca4ba2ed028c202b2ce5b2d6fb27c697c5669d93dd60",
-      "outputDigest": "sha256:59b07a6d834ea152ac84be95df9cf7b5d12eb991f4616d4e9f3a5809c9db346f"
+      "sourceDigest": "sha256:a753c3bbe2d4eef1e6f7653666e8a9f3bc64edebd01277b7b05c3b419685dbf0",
+      "outputDigest": "sha256:fd638655627f123bd99a7131f6dca56c90b9fca451b43edd8f7a208c2558e84c"
     },
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_supervisor_2e554db0bb8beb06",
+      "evidenceId": "evidence_supervisor_a780e92d2eb95ece",
       "kind": "integration_suite",
       "scope": "supervisor",
-      "observedAt": "2026-07-13T15:47:30.317Z",
+      "observedAt": "2026-07-13T16:23:43.584Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -358,7 +389,7 @@
       "command": "node --test test/v8-supervisor-ipc.test.mjs test/v8-evidence-frames.test.mjs test/v8-emergency-stop.test.mjs test/cancellation.test.mjs && npm test --prefix packages/computer-use-supervisor",
       "passed": true,
       "tests": 24,
-      "durationMs": 886,
+      "durationMs": 915,
       "assertions": [
         "supervisor.authentication",
         "supervisor.principal_isolation",
@@ -392,15 +423,15 @@
         },
         {
           "path": "packages/computer-use-supervisor/src/main.mjs",
-          "digest": "sha256:ead62c4937e50d5c079d20f1e00e360ac091c27de7ce84a4c44a855c8b21d60e"
+          "digest": "sha256:a7b01dffc49d476789395fdbc82e6fcd6e1ecec3981ca065837cd6c4aa90df1d"
         },
         {
           "path": "packages/computer-use-supervisor/src/model.mjs",
-          "digest": "sha256:4a475926ce7c8190a2ea917a8475e49d18c2aa277b63b4457d0b2687269ff60f"
+          "digest": "sha256:012d50edb5d53cd8737acef143f2d1bf7f2e1219d8c9c1bfb745ca7538724e87"
         },
         {
           "path": "packages/computer-use-supervisor/src/preload.mjs",
-          "digest": "sha256:e02c63cc4da6a7775b89b457f34f3953853b1bec21b8c1f45de8f6d8ff354f10"
+          "digest": "sha256:b90e6990908a7b7b5ed81a2694f3cd144d750596430159a0b93fd8e7db7aaad0"
         },
         {
           "path": "packages/computer-use-supervisor/src/renderer.css",
@@ -408,15 +439,15 @@
         },
         {
           "path": "packages/computer-use-supervisor/src/renderer.html",
-          "digest": "sha256:aeb205a29c7895ce7fc78682673c304207afeba6e1fa7cbc9e7894bf278a96ff"
+          "digest": "sha256:4fe36280be3326fc18b39c909961e320b60f7b71dd88f471d13ef32da9e0a3a0"
         },
         {
           "path": "packages/computer-use-supervisor/src/renderer.mjs",
-          "digest": "sha256:8eff2899acd0914677fe69b9af2e1f2a9e2ced48be0838c4fca7b0e1eb437efb"
+          "digest": "sha256:868db8dbe85f2ca1d7f6f96eb3f300a97182944896726e181fef8061a75bdeb9"
         },
         {
           "path": "packages/computer-use-supervisor/test/model.test.mjs",
-          "digest": "sha256:79567e37f8daa8e511a83ebc0f7b7c1a399c1de617457b81ad512261b4762ccf"
+          "digest": "sha256:3197f7d48facabfaeafd249ca64c496e79ea65a7b9b21f88fd594c2c3cd97803"
         },
         {
           "path": "src/control/activity-monitor.ts",
@@ -424,7 +455,7 @@
         },
         {
           "path": "src/runtime/coordinator.ts",
-          "digest": "sha256:c86d9eae1038294004b778b0c08147bb7c5765a7dafaca7df481306267875197"
+          "digest": "sha256:8c57f44505407540c3bb57a8a26e5a9e77f9946e33bc76c62c753726a461a286"
         },
         {
           "path": "src/server.ts",
@@ -440,7 +471,7 @@
         },
         {
           "path": "src/session/supervisor-ipc.ts",
-          "digest": "sha256:44701f8d59df240c05bd7277d409ea551bd005c1067f316dbbb99b23b13890b6"
+          "digest": "sha256:3227bfad7f6bdb892ef34833588680477150e28d0a22dba81170978ee5257c61"
         },
         {
           "path": "test/cancellation.test.mjs",
@@ -459,8 +490,8 @@
           "digest": "sha256:e08e5c3bbf4fa075120587896d06fa7f1055838be7dd001af995e446a8b1ade7"
         }
       ],
-      "sourceDigest": "sha256:e118095646c03f4b437617fbf75ca29af61c4bb3be049e132e554db0bb8beb06",
-      "outputDigest": "sha256:8c832d08575243f406ea39fa0ff7f05004d09b745836ab569326917d25f3725d"
+      "sourceDigest": "sha256:d25afe0c0efba257bd7046aae1331573aff07c08981b84d6a780e92d2eb95ece",
+      "outputDigest": "sha256:3e31fbefba513afeacbee3df9f2b82d653abe1cb318c6f54786ce67818033fa7"
     }
   ],
   "certifications": [
@@ -541,5 +572,5 @@
       ]
     }
   ],
-  "reportDigest": "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
+  "reportDigest": "sha256:5e89b7567aca499b03944767787f0ec647bb0a29fa35502a1e6d034e7d5e63b0"
 }

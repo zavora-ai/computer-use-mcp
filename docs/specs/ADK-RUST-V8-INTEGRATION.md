@@ -15,7 +15,7 @@ principal/tenant binding, typed v8 contracts, a live MCP example, and safety
 evaluation. Pre-effect and post-commit crash points are separately injected and
 prove exactly one physical mutation across retry. `adk-tool` preserves
 structured text and real MCP image blocks. A canonical Rust-verified evaluation
-receipt binds 17 executed tests, 10 named assertions, 17 source files, output and
+receipt binds 18 executed tests, 11 named assertions, 19 source files, output and
 source digests, two crash points, zero duplicate mutations, auth binding, and
 multimodal evidence. ADK CI regenerates and uploads the receipt. The v8 release
 evaluator accepts it only when a trusted release authority signs an `adk_graph`
@@ -35,6 +35,13 @@ assessments without a native signal. ADK can route on the assessment but never
 receives the control label or value; the v8 kernel remains responsible for
 native inspection, risk escalation, digest binding, and pre-effect
 revalidation.
+
+The shared approval contract distinguishes `exact_action` from
+`session_operation`. Rust rejects raw fields, digest mismatches, duplicate use
+accounting, non-semantic tools, non-reversible classes, and a combined session
+budget above 20. ADK continues to pause at the approval node; only an
+authenticated approver chooses the scope, and v8—not graph state—enforces its
+policy, target, sensitivity, and lifecycle binding.
 
 ## Decision
 

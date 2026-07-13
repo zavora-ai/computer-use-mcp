@@ -469,6 +469,13 @@ test('approval grants bind principal, session, digest, class, mode, and action i
     actionDigest: blocked.envelope.argsDigest, actionClass: blocked.envelope.actionClass,
     policyDigest: blocked.policy.policyDigest, mode: 'background', ttlMs: 1_000,
   })
+  assert.equal(grant.scope, 'exact_action')
+  assert.equal(grant.scopeDigest, grant.actionDigest)
+  assert.throws(() => grants.issue({
+    principalId: 'principal', sessionId: 'approval-session',
+    actionDigest: blocked.envelope.argsDigest, actionClass: blocked.envelope.actionClass,
+    policyDigest: blocked.policy.policyDigest, mode: 'background', ttlMs: 1_000, uses: 2,
+  }), /exact-action.*one use/)
   const approved = await coordinator.preview({ ...request, approvalGrantId: grant.grantId })
   assert.equal(approved.executable, true)
   const wrongPrincipal = await coordinator.preview({
@@ -494,6 +501,188 @@ test('approval grants bind principal, session, digest, class, mode, and action i
   assert.equal(regenerated.blocker, 'approval_required')
   now += 2_000
   assert.throws(() => grants.validate(grant.grantId, blocked.envelope, blocked.policy.policyDigest), /expired|unknown/)
+})
+
+test('session-operation approval is field-, target-, policy-, risk-, TTL-, and use-bound', async () => {
+  const grants = new MemoryApprovalGrantStore()
+  let effects = 0
+  let policyDigest = 'session-scope-policy'
+  const coordinator = new RuntimeCoordinator({
+    grants, requireManagedSession: true,
+    policy: () => ({ decision: 'confirm', policyDigest, reasons: ['review'] }),
+    validateTarget: async () => true,
+    resolveTargetSensitivity: async request => ({
+      assessment: 'non_sensitive', source: 'accessibility', signals: [],
+      fieldsChecked: request.tool === 'fill_form' ? request.args.fields.length : 1,
+      observedAt: new Date().toISOString(),
+    }),
+    transactionHooks: {
+      capture: async () => ({ capturedAt: new Date().toISOString() }),
+      verify: async () => ({ verified: true, method: 'scope-test', details: { checks: 1 } }),
+      restore: async () => ({ restored: true }),
+    },
+    execute: async () => { effects++; return { content: [] } },
+  })
+  const session = await coordinator.startSession({ principalId: 'owner' })
+  const target = {
+    platform: process.platform, appId: 'app.editor', pid: 42, windowId: 7,
+    role: 'AXTextField', labelDigest: `sha256:${'a'.repeat(64)}`,
+    observationId: 'scope-observation', confidence: 1, capturedAt: new Date().toISOString(),
+  }
+  const base = {
+    sessionId: session.sessionId, principalId: 'owner', tool: 'set_value',
+    args: { window_id: 7, role: 'AXTextField', label: 'Summary', value: 'first' },
+    mode: 'foreground', target, dataLabels: ['private'],
+  }
+  const preview = await coordinator.preview({ ...base, actionId: 'scope-1' })
+  assert.equal(preview.blocker, 'approval_required')
+  const required = coordinator.events.query(session.sessionId)
+    .find(event => event.type === 'action.approval_required' && event.actionId === 'scope-1')
+  assert.equal(required.payload.sessionScopeEligible, true)
+  const grant = await coordinator.approveAction(
+    session.sessionId, 'owner', 'scope-1', 120_000,
+    { scope: 'session_operation', uses: 3 },
+  )
+  assert.equal(grant.scope, 'session_operation')
+  assert.equal(grant.remainingUses, 3)
+  assert.match(grant.scopeDigest, /^[a-f0-9]{64}$/)
+  assert.doesNotMatch(JSON.stringify(grant), /Summary|first/)
+  await assert.rejects(coordinator.approveAction(
+    session.sessionId, 'owner', 'scope-1', 120_000,
+    { scope: 'session_operation', uses: 3 },
+  ), error => error instanceof RuntimeError && error.code === 'approval_required')
+
+  const lease = await coordinator.leases.acquire({
+    sessionId: session.sessionId, principalId: 'owner', kind: 'exclusive',
+    executionMode: 'foreground', ttlMs: 30_000, actionBudget: 3,
+  })
+  const executeScoped = async (actionId, value) => {
+    const outcome = await coordinator.execute({
+      ...base, actionId, args: { ...base.args, value },
+      approvalGrantId: grant.grantId, leaseId: lease.leaseId,
+    })
+    assert.equal(outcome.receipt.status, 'committed')
+  }
+  await executeScoped('scope-1', 'first')
+  policyDigest = 'changed-policy'
+  assert.equal((await coordinator.preview({
+    ...base, actionId: 'changed-policy', args: { ...base.args, value: 'blocked' },
+    approvalGrantId: grant.grantId,
+  })).blocker, 'approval_required')
+  policyDigest = 'session-scope-policy'
+  const changedField = await coordinator.preview({
+    ...base, actionId: 'scope-other-field',
+    args: { ...base.args, label: 'Recipient', value: 'someone@example.com' },
+    approvalGrantId: grant.grantId,
+  })
+  assert.equal(changedField.blocker, 'approval_required')
+  assert.equal((await coordinator.preview({
+    ...base, actionId: 'scope-other-agent', agentId: 'different-planner',
+    args: { ...base.args, value: 'other' }, approvalGrantId: grant.grantId,
+  })).blocker, 'approval_required')
+  assert.equal((await coordinator.preview({
+    ...base, actionId: 'scope-other-window',
+    target: { ...target, windowId: 8, observationId: 'other-window' },
+    args: { ...base.args, window_id: 8, value: 'other' },
+    approvalGrantId: grant.grantId,
+  })).blocker, 'approval_required')
+  await executeScoped('scope-2', 'second')
+  await executeScoped('scope-3', 'third')
+  assert.equal(effects, 3)
+  const exhausted = await coordinator.preview({
+    ...base, actionId: 'scope-4', args: { ...base.args, value: 'fourth' },
+    approvalGrantId: grant.grantId,
+  })
+  assert.equal(exhausted.blocker, 'approval_required')
+})
+
+test('session-operation approval excludes unknown, sensitive, and untrusted scopes and is revoked on pause', async () => {
+  let sensitive = false
+  const coordinator = new RuntimeCoordinator({
+    requireManagedSession: true,
+    policy: () => ({ decision: 'confirm', policyDigest: 'scope-deny-policy', reasons: ['review'] }),
+    validateTarget: async () => true,
+    resolveTargetSensitivity: async () => ({
+      assessment: sensitive ? 'sensitive' : 'non_sensitive', source: 'accessibility',
+      signals: sensitive ? ['protected_content'] : [], fieldsChecked: 1,
+      observedAt: new Date().toISOString(),
+    }),
+    transactionHooks: {
+      capture: async () => ({}), verify: async () => ({ verified: true, method: 'test' }),
+      restore: async () => ({ restored: true }),
+    },
+    execute: async () => ({ content: [] }),
+  })
+  const session = await coordinator.startSession({ principalId: 'owner' })
+  const target = {
+    platform: process.platform, appId: 'app.editor', windowId: 7,
+    observationId: 'scope-deny-observation', confidence: 1, capturedAt: new Date().toISOString(),
+  }
+  const request = {
+    sessionId: session.sessionId, principalId: 'owner', actionId: 'unknown-label',
+    tool: 'set_value', args: { window_id: 7, role: 'AXTextField', label: 'Name', value: 'Alice' },
+    mode: 'foreground', target,
+  }
+  await coordinator.preview(request)
+  await assert.rejects(coordinator.approveAction(
+    session.sessionId, 'owner', request.actionId, 60_000,
+    { scope: 'exact_action', uses: 2 },
+  ), /exact-action.*one use/)
+  await assert.rejects(coordinator.approveAction(
+    session.sessionId, 'owner', request.actionId, 60_000,
+    { scope: 'session_operation', uses: 2 },
+  ), error => error instanceof RuntimeError && error.code === 'policy_denied')
+
+  const eligible = { ...request, actionId: 'eligible', dataLabels: ['private'] }
+  await coordinator.preview(eligible)
+  const grant = await coordinator.approveAction(
+    session.sessionId, 'owner', eligible.actionId, 60_000,
+    { scope: 'session_operation', uses: 2 },
+  )
+  await coordinator.pauseSession(session.sessionId, 'owner')
+  assert.throws(() => coordinator.grants.validate(
+    grant.grantId, {}, 'scope-deny-policy',
+  ), error => error instanceof RuntimeError && error.code === 'approval_required')
+  await coordinator.resumeSession(session.sessionId, 'owner')
+  assert.equal((await coordinator.preview({
+    ...eligible, actionId: 'after-pause', approvalGrantId: grant.grantId,
+  })).blocker, 'approval_required')
+
+  sensitive = true
+  const sensitiveRequest = { ...eligible, actionId: 'sensitive-field', dataLabels: ['private'] }
+  await coordinator.preview(sensitiveRequest)
+  await assert.rejects(coordinator.approveAction(
+    session.sessionId, 'owner', sensitiveRequest.actionId, 60_000,
+    { scope: 'session_operation', uses: 2 },
+  ), error => error instanceof RuntimeError && error.code === 'policy_denied')
+
+  sensitive = false
+  const untrusted = {
+    ...eligible, actionId: 'untrusted-field',
+    provenance: {
+      untrustedInstruction: true, sourceObservationIds: ['open-web-page'],
+      crossesDataBoundary: true,
+    },
+  }
+  await coordinator.preview(untrusted)
+  await assert.rejects(coordinator.approveAction(
+    session.sessionId, 'owner', untrusted.actionId, 60_000,
+    { scope: 'session_operation', uses: 2 },
+  ), error => error instanceof RuntimeError && error.code === 'policy_denied')
+
+  const emergencyAction = { ...eligible, actionId: 'emergency-authority' }
+  const emergencyPreview = await coordinator.preview(emergencyAction)
+  const exactGrant = await coordinator.approveAction(
+    session.sessionId, 'owner', emergencyAction.actionId,
+  )
+  await coordinator.preview({ ...eligible, actionId: 'pending-at-emergency' })
+  coordinator.emergencyStop('operator_stop')
+  assert.throws(() => coordinator.grants.validate(
+    exactGrant.grantId, emergencyPreview.envelope, emergencyPreview.policy.policyDigest,
+  ), error => error instanceof RuntimeError && error.code === 'approval_required')
+  await assert.rejects(coordinator.approveAction(
+    session.sessionId, 'owner', 'pending-at-emergency',
+  ), error => error instanceof RuntimeError && error.code === 'approval_required')
 })
 
 test('approval grant is invalidated when the active policy digest changes', async () => {
@@ -1183,7 +1372,7 @@ test('durable session deletion is revision-bound and terminal retention pruning 
   assert.equal(await store.delete(recent.sessionId, 999), false)
 })
 
-test('session deletion revokes receipts, approval grants, and pending approval state', async () => {
+test('session stop revokes approval authority before terminal deletion removes retained data', async () => {
   const receipts = new MemoryReceiptStore()
   const grants = new MemoryApprovalGrantStore()
   const coordinator = new RuntimeCoordinator({
@@ -1204,12 +1393,12 @@ test('session deletion revokes receipts, approval grants, and pending approval s
   })
   const grant = await coordinator.approveAction(session.sessionId, 'owner', 'pending-approval')
   await coordinator.stopSession(session.sessionId, 'owner')
-  const deletion = await coordinator.deleteSession(session.sessionId, 'owner')
-  assert.equal(deletion.deletedReceipts, 1)
-  assert.equal(deletion.revokedGrants, 1)
-  assert.equal(await receipts.get(session.sessionId, 'observation'), undefined)
   assert.throws(() => grants.validate(grant.grantId, pending.envelope, pending.policy.policyDigest),
     error => error instanceof RuntimeError && error.code === 'approval_required')
+  const deletion = await coordinator.deleteSession(session.sessionId, 'owner')
+  assert.equal(deletion.deletedReceipts, 1)
+  assert.equal(deletion.revokedGrants, 0, 'stop already revoked every approval grant')
+  assert.equal(await receipts.get(session.sessionId, 'observation'), undefined)
   await assert.rejects(coordinator.approveAction(session.sessionId, 'owner', 'pending-approval'),
     error => error instanceof RuntimeError && error.code === 'session_not_found')
   assert.equal(observed.receipt.status, 'committed')

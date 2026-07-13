@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-release-readiness",
   "runtimeVersion": "7.0.0",
-  "evaluatedAt": "2026-07-13T15:49:45.465Z",
+  "evaluatedAt": "2026-07-13T16:23:43.640Z",
   "requestedStage": "stable",
   "decision": "no_go",
   "highestReadyStage": "none",
   "inputs": {
-    "conformanceDigest": "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f",
+    "conformanceDigest": "sha256:5e89b7567aca499b03944767787f0ec647bb0a29fa35502a1e6d034e7d5e63b0",
     "reliabilityDigest": "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210",
     "signedEvidenceDigests": [],
-    "adkEvaluationDigest": "sha256:2d3ef7ae0cbca049bb90c22267b32f04063da94af3c71a29a9f89f708ed8a67d"
+    "adkEvaluationDigest": "sha256:1e45877c9547969a74ad6696a4bdfe2ff692c24b5c1a604a17fd04600496fd61"
   },
   "gates": [
     {
@@ -24,7 +24,7 @@
       "evidenceLevel": "deterministic",
       "reasons": [],
       "evidenceDigests": [
-        "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
+        "sha256:5e89b7567aca499b03944767787f0ec647bb0a29fa35502a1e6d034e7d5e63b0"
       ]
     },
     {
@@ -42,7 +42,7 @@
         "win32: trusted signature over conformance digest required"
       ],
       "evidenceDigests": [
-        "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
+        "sha256:5e89b7567aca499b03944767787f0ec647bb0a29fa35502a1e6d034e7d5e63b0"
       ]
     },
     {
@@ -58,7 +58,7 @@
         "trusted cross-platform CI signature required"
       ],
       "evidenceDigests": [
-        "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
+        "sha256:5e89b7567aca499b03944767787f0ec647bb0a29fa35502a1e6d034e7d5e63b0"
       ]
     },
     {
@@ -74,7 +74,7 @@
         "trusted signature over the ADK evaluation receipt is required"
       ],
       "evidenceDigests": [
-        "sha256:2d3ef7ae0cbca049bb90c22267b32f04063da94af3c71a29a9f89f708ed8a67d"
+        "sha256:1e45877c9547969a74ad6696a4bdfe2ff692c24b5c1a604a17fd04600496fd61"
       ]
     },
     {
@@ -175,5 +175,5 @@
       "evidenceDigests": []
     }
   ],
-  "reportDigest": "sha256:2618e2e864821da22409d6d4f1525cd5be392a168482c4cbc009efcd7819fc05"
+  "reportDigest": "sha256:b4f90e70b4b7b418602ef2fb7b46919fe54fc3292f56c4f54cc4987e66837629"
 }

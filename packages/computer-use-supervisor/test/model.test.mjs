@@ -20,6 +20,7 @@ test('view model allowlists approval metadata and never copies secret payload fi
         postconditionExpectedState: 'exists', postconditionExpectedDigest: `sha256:${'a'.repeat(64)}`,
         sensitivityAssessment: 'sensitive', sensitivitySource: 'accessibility',
         sensitivitySignals: ['uia_is_password', 'private password signal'], sensitivityFieldsChecked: 1,
+        sessionScopeEligible: true,
         postconditionLabel: 'private account name', postconditionPath: '/private/path',
         sensitivityLabel: 'private password label', sensitivityValue: 'private password value',
         password: 'must-not-render', value: 'must-not-render',
@@ -34,6 +35,7 @@ test('view model allowlists approval metadata and never copies secret payload fi
   assert.equal(model.pendingApproval.sensitivityAssessment, 'sensitive')
   assert.deepEqual(model.pendingApproval.sensitivitySignals, ['uia_is_password'])
   assert.equal(model.pendingApproval.sensitivityFieldsChecked, 1)
+  assert.equal(model.pendingApproval.sessionScopeEligible, true)
   assert.doesNotMatch(JSON.stringify(model), /must-not-render|private account|private\/path|private password/)
 })
 
@@ -49,6 +51,7 @@ test('main-to-renderer sanitizer strips grants, secrets, and unrecognized event 
       sequence: 7, type: 'action.approval_required', actionId: 'a1', principalId: 'private-principal',
       payload: {
         tool: 'notification', actionDigest: 'safe-digest', secret: 'do-not-render',
+        sessionScopeEligible: 'yes',
         arguments: { password: 'hunter2' },
       },
     },
