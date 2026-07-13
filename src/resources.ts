@@ -3,9 +3,12 @@
  * Screenshot resource is cache-only (K15) — never captures on read.
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { ResourceTemplate, type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { Session } from './session.js'
-import type { ProfileName } from './tool-catalog.js'
+import { AUDIT_EXPORT_SCHEMA, AUDIT_EXPORT_SCHEMA_DIGEST } from './session/event-schema.js'
+import type { RuntimeCoordinator } from './runtime/coordinator.js'
+import { createCapabilityManifest, type CapabilityManifestOptions } from './runtime/manifest.js'
+import type { ProfileName, SurfaceProfileName } from './tool-catalog.js'
 import { TOOL_CATALOG, toolInProfile } from './tool-catalog.js'
 
 export interface ResourceContext {
@@ -14,6 +17,12 @@ export interface ResourceContext {
   /** Last screenshot structured metadata (optional; never auto-captures). */
   getLastScreenshot?: () => { mimeType: string; data: string; capturedAt: number } | undefined
   getPolicyStatus?: () => Promise<Record<string, unknown>> | Record<string, unknown>
+  /** Enforced v8 lifecycle, when enabled. Session resources are never backed by the legacy dispatcher. */
+  runtime?: RuntimeCoordinator
+  principalId?: string
+  capabilityManifest?: Omit<CapabilityManifestOptions, 'runtime' | 'maximumProfile' | 'activeProfile'> & {
+    getActiveProfile(): SurfaceProfileName
+  }
 }
 
 function textResource(uri: string, name: string, text: string, mimeType = 'application/json') {
@@ -135,4 +144,88 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       }
     },
   )
+
+  if (ctx.runtime && ctx.principalId) {
+    const runtime = ctx.runtime
+    const principalId = ctx.principalId
+    server.registerResource(
+      'capability-manifest',
+      'computer://capabilities/manifest',
+      {
+        title: 'Computer-use capability manifest',
+        description: 'Machine-readable v8 modes, persistence, monitor limits, and per-actuator interference contracts',
+        mimeType: 'application/json',
+      },
+      async uri => textResource(uri.href, 'capability-manifest', JSON.stringify(createCapabilityManifest({
+        runtime,
+        maximumProfile: ctx.profile,
+        activeProfile: ctx.capabilityManifest?.getActiveProfile() ?? ctx.profile,
+        experimentalTasks: ctx.capabilityManifest?.experimentalTasks ?? false,
+        durableSessions: ctx.capabilityManifest?.durableSessions ?? false,
+        durableReceipts: ctx.capabilityManifest?.durableReceipts ?? false,
+        durableEvents: ctx.capabilityManifest?.durableEvents ?? false,
+        supervisorIpcConfigured: ctx.capabilityManifest?.supervisorIpcConfigured ?? false,
+        browserBridgeConfigured: ctx.capabilityManifest?.browserBridgeConfigured ?? false,
+        ...(ctx.capabilityManifest?.inputMonitor ? { inputMonitor: ctx.capabilityManifest.inputMonitor } : {}),
+      }))),
+    )
+    server.registerResource(
+      'audit-schema',
+      'computer://audit/schema',
+      {
+        title: 'Computer-use v8 audit export schema',
+        description: 'Stable JSON Schema and digest for paginated, redacted session-event exports',
+        mimeType: 'application/schema+json',
+      },
+      async uri => textResource(uri.href, 'audit-schema', JSON.stringify({
+        schema: AUDIT_EXPORT_SCHEMA,
+        digest: AUDIT_EXPORT_SCHEMA_DIGEST,
+      }), 'application/schema+json'),
+    )
+    server.registerResource(
+      'session-current',
+      'computer://session/current',
+      {
+        title: 'Current computer-use session',
+        description: 'Most recently updated v8 session owned by the authenticated host principal',
+        mimeType: 'application/json',
+      },
+      async uri => {
+        const [current] = await runtime.listSessions(principalId)
+        return textResource(uri.href, 'session-current', JSON.stringify(current
+          ? { available: true, session: current }
+          : { available: false, reason: 'no_owned_session' }))
+      },
+    )
+
+    server.registerResource(
+      'session-by-id',
+      new ResourceTemplate('computer://session/{sessionId}', {
+        list: async () => ({
+          resources: (await runtime.listSessions(principalId)).map(session => ({
+            uri: `computer://session/${encodeURIComponent(session.sessionId)}`,
+            name: `session-${session.sessionId}`,
+            title: `Computer-use session (${session.state})`,
+            description: 'Principal-owned v8 lifecycle state and completion evidence',
+            mimeType: 'application/json',
+          })),
+        }),
+        complete: {
+          sessionId: async value => (await runtime.listSessions(principalId))
+            .map(session => session.sessionId)
+            .filter(sessionId => sessionId.startsWith(value)),
+        },
+      }),
+      {
+        title: 'Computer-use session by ID',
+        description: 'Read a principal-owned v8 session without exposing another principal’s lifecycle',
+        mimeType: 'application/json',
+      },
+      async (uri, variables) => {
+        const sessionId = String(variables.sessionId)
+        const session = await runtime.getSession(sessionId, principalId)
+        return textResource(uri.href, `session-${sessionId}`, JSON.stringify({ session }))
+      },
+    )
+  }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "@zavora-ai/computer-use-supervisor",
+  "version": "0.1.0",
+  "description": "Local Picture-in-Picture supervisor for computer-use-mcp v8",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "electron": ">=30"
+  },
+  "license": "MIT"
+}

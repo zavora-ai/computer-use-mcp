@@ -36,7 +36,12 @@ const require = createRequire(import.meta.url)
  * state), resolution falls through to the legacy root binary — identical to
  * prior behavior.
  */
-export function resolveAddonPath(): string {
+export interface AddonResolverOptions {
+  /** Test/embedding seam that avoids mutating the process-wide node_modules tree. */
+  resolveOptionalPackage?: (specifier: string) => string
+}
+
+export function resolveAddonPath(options: AddonResolverOptions = {}): string {
   const platform = process.platform
   const arch = process.arch
 
@@ -65,7 +70,8 @@ export function resolveAddonPath(): string {
 
   // 2. Optional platform package (npm optionalDependencies pattern).
   try {
-    const resolved = require.resolve(`@zavora-ai/computer-use-mcp-${platform}-${arch}/${binaryName}`)
+    const resolveOptionalPackage = options.resolveOptionalPackage ?? ((specifier: string) => require.resolve(specifier))
+    const resolved = resolveOptionalPackage(`@zavora-ai/computer-use-mcp-${platform}-${arch}/${binaryName}`)
     attempts.push(resolved)
     if (existsSync(resolved)) return resolved
   } catch {
@@ -145,6 +151,42 @@ export interface WindowRecord {
 }
 
 export interface NativeModule {
+  /** Host-only macOS Keychain access. Never registered as an MCP tool. */
+  keychainGetGenericPassword?(service: string, account: string): string | null | undefined
+  /** Host-only macOS Keychain access. Never registered as an MCP tool. */
+  keychainSetGenericPassword?(service: string, account: string, value: string): void
+  /** Host-only permission status. Never registered as an MCP tool. */
+  getNativePermissionStatus?(permission: 'accessibility' | 'display_capture'): NativePermissionResult
+  /** Host-only present-user OS prompt. Never registered as an MCP tool. */
+  requestNativePermission?(permission: 'accessibility' | 'display_capture'): NativePermissionResult
+  // User activity clock (v8 lease interruption)
+  getUserIdleTimeMs?(): number | null
+  getInputMonitorCapability?(): {
+    supported: boolean
+    backend: string
+    distinguishesInjected: boolean
+    recommendedPollMs: number
+    reason?: string
+  }
+  configureEmergencyStopChord?(chord: string): {
+    supported: boolean
+    backend: string
+    physicalOnly: boolean
+    latched: boolean
+    generation: number
+    chord?: string
+    reason?: string
+  }
+  getEmergencyStopGeneration?(): number
+  isNativeEmergencyStopActive?(): boolean
+  triggerNativeEmergencyStop?(): void
+  /** Host-only reset. This is intentionally never exposed as an MCP tool. */
+  resetNativeEmergencyStop?(): void
+  waitForNativeEmergencyStop?(timeoutMs: number): {
+    triggered: boolean
+    generation: number
+    observerLatencyMs?: number
+  }
   // Mouse
   mouseMove(x: number, y: number): void
   mouseClick(x: number, y: number, button: string, count: number): void  // throws on invalid button
@@ -300,6 +342,17 @@ export interface NativeModule {
     targetBundleId: string
     hiddenBundleIds: string[]
   }
+}
+
+export interface NativePermissionResult {
+  permission: 'accessibility' | 'display_capture'
+  supported: boolean
+  canPrompt: boolean
+  granted: boolean
+  promptRequested: boolean
+  backend: string
+  restartMayBeRequired: boolean
+  reason?: string | null
 }
 
 let cached: NativeModule | undefined

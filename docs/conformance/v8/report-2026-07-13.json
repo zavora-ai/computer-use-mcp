@@ -1,0 +1,438 @@
+{
+  "schemaVersion": 1,
+  "protocol": "computer-use-v8-preview",
+  "runtimeVersion": "7.0.0",
+  "generatedAt": "2026-07-13T14:02:04.980Z",
+  "evidence": [
+    {
+      "schemaVersion": 1,
+      "evidenceId": "evidence_multi_agent_4965fc8bf835c7d3",
+      "kind": "deterministic_suite",
+      "scope": "multi_agent",
+      "observedAt": "2026-07-13T14:02:04.051Z",
+      "environment": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "node": "v25.4.0",
+        "interactive": false,
+        "source": "local"
+      },
+      "command": "node --test test/v8-reliability-corpus.test.mjs test/v8-mcp-facade.test.mjs",
+      "passed": true,
+      "tests": 17,
+      "durationMs": 387,
+      "assertions": [
+        "lease.one_writer",
+        "lease.terminal_revocation",
+        "lease.schedule_10000",
+        "reservation.conflict",
+        "reservation.no_authority"
+      ],
+      "sources": [
+        {
+          "path": "test/v8-mcp-facade.test.mjs",
+          "digest": "sha256:440b1e09903a139552471eea095f283209a79c95cc2d72d7e4eb9fe1c38aaacb"
+        },
+        {
+          "path": "test/v8-reliability-corpus.test.mjs",
+          "digest": "sha256:b68a21f1cc81079ba240970304c5da4d75f9585a1858357373cc6886373a5e49"
+        }
+      ],
+      "sourceDigest": "sha256:bb2b8d3548e23ecedb8f36f5c7d7d814423f2160d12e44684965fc8bf835c7d3",
+      "outputDigest": "sha256:8404eccf3a957d5aa18959dbd8b42d3ee0b241b084aa1e079bf952f73d56cb45"
+    },
+    {
+      "schemaVersion": 1,
+      "evidenceId": "evidence_policy_74b735e529cb00cc",
+      "kind": "deterministic_suite",
+      "scope": "policy",
+      "observedAt": "2026-07-13T14:02:03.662Z",
+      "environment": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "node": "v25.4.0",
+        "interactive": false,
+        "source": "local"
+      },
+      "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs && npm test --prefix packages/computer-use-remote",
+      "passed": true,
+      "tests": 110,
+      "durationMs": 3100,
+      "assertions": [
+        "policy.operation_boundaries",
+        "policy.approval_binding",
+        "policy.untrusted_provenance",
+        "target.stale_fail_closed",
+        "receipt.exactly_once",
+        "onboarding.disclosure_boundary",
+        "reliability.evidence_separation",
+        "release.artifact_binding",
+        "release.mandatory_readiness_gates",
+        "remote.os_vault_boundary"
+      ],
+      "sources": [
+        {
+          "path": "contracts/v8/adk-evaluation-receipt.schema.json",
+          "digest": "sha256:8f2965d4739b82a58ca7721eb79afb9a60023d6128bd612b2ce37969e3440606"
+        },
+        {
+          "path": "contracts/v8/browser-page-evidence.schema.json",
+          "digest": "sha256:39b4be1ae87fa7f80c6052ff2cf75081ecfd7b3abff563e08522b74fd8b64302"
+        },
+        {
+          "path": "contracts/v8/release-artifact-manifest.schema.json",
+          "digest": "sha256:de67dc45b4e676e31b9e263344864ad2d446f49c566f4d8823d3906348c41d7c"
+        },
+        {
+          "path": "contracts/v8/release-evidence.schema.json",
+          "digest": "sha256:9ea3985b08c074b708fe1b76f2bfd9a5dbb0caffe03d6bd1f6898f6b12bc7c82"
+        },
+        {
+          "path": "contracts/v8/release-readiness-report.schema.json",
+          "digest": "sha256:fb9e27d303d7b0f5a7c3117e3e6bfd948fe03f0a0177862c3c73b54607ed3249"
+        },
+        {
+          "path": "contracts/v8/reliability-lab-corpus.json",
+          "digest": "sha256:6e0bb2cb55352a3e3cfbafaf8af034b8ffda846b972d37071b5d9cffb96b496c"
+        },
+        {
+          "path": "contracts/v8/reliability-lab-corpus.schema.json",
+          "digest": "sha256:71ce40336cc341e16d29d9230b11cc4c4ad3f2bb2caa0a993edaabae41c7bff6"
+        },
+        {
+          "path": "contracts/v8/reliability-lab-report.schema.json",
+          "digest": "sha256:31f884ea343bdd6663afcaaa5786bb0ecf49dfa9ce638a1a92fd04badc09b38d"
+        },
+        {
+          "path": "contracts/v8/setup-command.schema.json",
+          "digest": "sha256:f7aab9076e68948936126e152e2f224487e16e856737ac4345938d482fe5e6b7"
+        },
+        {
+          "path": "contracts/v8/setup-view-model.schema.json",
+          "digest": "sha256:e10ac47aae6b0f0a5fab0d450373b3f1c4dea92416599e8bc32639b458bb3b15"
+        },
+        {
+          "path": "docs/conformance/v8/adk-evaluation-receipt-7.0.0.json",
+          "digest": "sha256:28f0e35c56bae109769cd83d45b796ef4fbff6e5546257f21e3170542609cbf9"
+        },
+        {
+          "path": "examples/v8-direct-sdk.mjs",
+          "digest": "sha256:ae2c9cd95e7007522c09c6e518172944f2df725bb3d4dce02abeb8e67d071f43"
+        },
+        {
+          "path": "examples/v8-electron-setup.mjs",
+          "digest": "sha256:b5bfb239d5e00f795067ba86daecb43ed2f93b192583e2d8c7274f24bfb38c3e"
+        },
+        {
+          "path": "examples/v8-langgraph.mjs",
+          "digest": "sha256:1cf45889bffd42f104aa6591ae30555533ea351a031cc30868e07526ffd87ec2"
+        },
+        {
+          "path": "examples/v8-setup-ui.mjs",
+          "digest": "sha256:81189c4dc71f4885532016a712465fe3f3a8e00deb567acb93a94989c69e5234"
+        },
+        {
+          "path": "examples/v8-tauri-setup.mjs",
+          "digest": "sha256:5150fa8fbca07a0b0fe34ae1bdc6425c61d1ef95004eaec3d6129f5897864ae5"
+        },
+        {
+          "path": "native/src/keychain.rs",
+          "digest": "sha256:c11399c01d85bf9575ca8f11b9c4fd9a02a4415a904b04ae318786b5cbe02b79"
+        },
+        {
+          "path": "native/src/lib.rs",
+          "digest": "sha256:078c87eb13ed543850ce8670269affb318093fc194f04d1f99c6bda9a34bdbc1"
+        },
+        {
+          "path": "native/src/permissions.rs",
+          "digest": "sha256:8508ec2b43ac12a59bc2f49b5e1bc735e5c4f08381e1bdd9eb4e3398b2a3a735"
+        },
+        {
+          "path": "packages/computer-use-remote/src/cli.mjs",
+          "digest": "sha256:f7925e2450c249ea7ca375a577c2cb8d180b20f0d88f1d570b725a0407b40966"
+        },
+        {
+          "path": "packages/computer-use-remote/src/os-vault.mjs",
+          "digest": "sha256:cdb5fd715e5b51b2c7d9b5dad85bb73d61458fbc804d57f9eea6b124ec51cdfb"
+        },
+        {
+          "path": "packages/computer-use-remote/src/pairing.mjs",
+          "digest": "sha256:c774533cd0342ec6264711c970426eab5e566c752e33fdc052e24ee35024f8b7"
+        },
+        {
+          "path": "packages/computer-use-remote/test/remote.test.mjs",
+          "digest": "sha256:67f81cd8cf551326077a0a8899bf0fb1f2a44017e88896236313b6283768f282"
+        },
+        {
+          "path": "release-artifacts.json",
+          "digest": "sha256:1f8746abae00b794821da8f55d225065ce10ab0bf3fe0d683879318b7ffb101a"
+        },
+        {
+          "path": "scripts/evaluate-v8-readiness.mjs",
+          "digest": "sha256:a9ab8e50abc972be14a1a4709b0752c712ad3d4638c3f48fa42ccfe1137254a9"
+        },
+        {
+          "path": "scripts/generate-release-artifacts.mjs",
+          "digest": "sha256:e95c82bbf398a8ab158912ce0d44dd7702aebda799129ccac3ba16434ce6df73"
+        },
+        {
+          "path": "scripts/run-v8-reliability-lab.mjs",
+          "digest": "sha256:55cce223889ef1463562075028d5dd32a2460f2f47f3332210403c0ebd083772"
+        },
+        {
+          "path": "src/native.ts",
+          "digest": "sha256:8267a28faa6a47fa3ac4fe99da2ba5a80c02b67c889660274efc36b604cae733"
+        },
+        {
+          "path": "src/onboarding/desktop.ts",
+          "digest": "sha256:b18788db47f5da7ac5c42f37e2e547a82f9f8c54d13ff0d65624643c8615a1e2"
+        },
+        {
+          "path": "src/onboarding/terminal.ts",
+          "digest": "sha256:8a5ce1f2668e114c0fc9c825b1ab0d73afa3428e45af9e31d5699271abd9a20f"
+        },
+        {
+          "path": "src/onboarding/view-model.ts",
+          "digest": "sha256:4257936c70619e4859834add607cb70b1a893c854392e7906d5c050552101b56"
+        },
+        {
+          "path": "src/release/artifacts.ts",
+          "digest": "sha256:93d578649f59d7fecf1451942612acbad11e1cbda9e096b04f69379842217728"
+        },
+        {
+          "path": "src/release/readiness.ts",
+          "digest": "sha256:66e2de5603969d508e60a497d6809c4e7d05d7f130ac146d678be266646e2229"
+        },
+        {
+          "path": "src/reliability/lab.ts",
+          "digest": "sha256:8d58c1b0857a4d1511e726c07e71b1c69f30ca9933294595fde20527a5a92e3b"
+        },
+        {
+          "path": "src/runtime/browser-bridge.ts",
+          "digest": "sha256:bedd69e6568e2fb310c2efad63439ae115a64d9864b89ed120a9178a80cfd039"
+        },
+        {
+          "path": "test/v8-browser-bridge.test.mjs",
+          "digest": "sha256:5ed3652b0caeb768622d15f236c000ae89d8d270109c58a04918e2fb70abbec6"
+        },
+        {
+          "path": "test/v8-onboarding-ui.test.mjs",
+          "digest": "sha256:7568676b550ebe27f0471e71bfe4ce05dbe6dc49d6a818709178dbbf2cc258a6"
+        },
+        {
+          "path": "test/v8-onboarding.test.mjs",
+          "digest": "sha256:7ae60f973d6e8304426ad15fdad9b0fd2b720a57803df037885a8b84615a4d37"
+        },
+        {
+          "path": "test/v8-provider-adapters.test.mjs",
+          "digest": "sha256:d679dfc312259f9952db48a0959f74edcebd7de25c840e24b1dd44b10dd8823b"
+        },
+        {
+          "path": "test/v8-provider-examples.test.mjs",
+          "digest": "sha256:cee62942327ef635c0cabf98313b917aa4c70c115c3f64b29fd32a55399dedef"
+        },
+        {
+          "path": "test/v8-registry-action.test.mjs",
+          "digest": "sha256:e27387d38fc331c2332b5b1197e7396337e164f0cbdfeb34803dc52d796c8565"
+        },
+        {
+          "path": "test/v8-release-artifacts.test.mjs",
+          "digest": "sha256:a3ecc42f1c3b21718da2527e5f9c75f1b3d567a445c75ecd01615c13816f18ca"
+        },
+        {
+          "path": "test/v8-release-readiness.test.mjs",
+          "digest": "sha256:89e43c3c5a5b1f2e8de876c2dbef5cc6237e060801406d5b248a0ada804d57d2"
+        },
+        {
+          "path": "test/v8-reliability-lab.test.mjs",
+          "digest": "sha256:228dde0ea43ebaf41f653094f80a89a716aeefab46d025516ba356f9250fb0bf"
+        },
+        {
+          "path": "test/v8-runtime-kernel.test.mjs",
+          "digest": "sha256:fe764c1166ac1e90d598f61efc05dfd584ed378d376d27ae78b74f6204540c25"
+        }
+      ],
+      "sourceDigest": "sha256:43847ba01632ed7056716c537eb1f2e7fff3ddc682dbcb2074b735e529cb00cc",
+      "outputDigest": "sha256:1d43ebe8a60d6e79a27f67920e098edf03484e721e3ce0134fe675fb015ee6b8"
+    },
+    {
+      "schemaVersion": 1,
+      "evidenceId": "evidence_supervisor_d5327fa6cad0933d",
+      "kind": "integration_suite",
+      "scope": "supervisor",
+      "observedAt": "2026-07-13T14:02:04.980Z",
+      "environment": {
+        "platform": "darwin",
+        "arch": "arm64",
+        "node": "v25.4.0",
+        "interactive": false,
+        "source": "local"
+      },
+      "command": "node --test test/v8-supervisor-ipc.test.mjs test/v8-emergency-stop.test.mjs test/cancellation.test.mjs && npm test --prefix packages/computer-use-supervisor",
+      "passed": true,
+      "tests": 18,
+      "durationMs": 929,
+      "assertions": [
+        "supervisor.authentication",
+        "supervisor.principal_isolation",
+        "supervisor.lifecycle_control",
+        "supervisor.approval_binding",
+        "supervisor.renderer_boundary",
+        "supervisor.emergency_out_of_band",
+        "supervisor.emergency_confirmed_reset",
+        "supervisor.credential_not_inherited"
+      ],
+      "sources": [
+        {
+          "path": "native/src/activity.rs",
+          "digest": "sha256:e9fbedcdcb0f21845e6701d0d11ea567f97ee9812758714b084565dc5c862c13"
+        },
+        {
+          "path": "native/src/keyboard.rs",
+          "digest": "sha256:9c4f8c9a9e52e1cfd5d0224c65020cf59348b9357c3b36b991390f1644cf08fc"
+        },
+        {
+          "path": "native/src/mouse.rs",
+          "digest": "sha256:0d4e06467db400cec3e394838270d7187571509d8751ab74edffb8b0f2f8c9e2"
+        },
+        {
+          "path": "packages/computer-use-supervisor/src/main.mjs",
+          "digest": "sha256:412e621d10302321ef912c17c35506cd26a6dce0754d5298b89abe040d1b82e5"
+        },
+        {
+          "path": "packages/computer-use-supervisor/src/model.mjs",
+          "digest": "sha256:ff18fca43d6b8d798ff4cf92b213ee3bd5228158b5463c9cd29b57d0e1b751a4"
+        },
+        {
+          "path": "packages/computer-use-supervisor/src/preload.mjs",
+          "digest": "sha256:eabd6fac480036a2da7e7b72f7cde0c49c6e7e3d2ce1e3c7bfdd7a2f7d5b2c41"
+        },
+        {
+          "path": "packages/computer-use-supervisor/src/renderer.html",
+          "digest": "sha256:a96c0b3af9e328c5d03c81f90533bfa65a1ecfa5126df2860e963ceb922777a8"
+        },
+        {
+          "path": "packages/computer-use-supervisor/src/renderer.mjs",
+          "digest": "sha256:c02173d428b5cc02db714b64ea787fb9b61dea5e3c80334110e79dc736ed7ccc"
+        },
+        {
+          "path": "packages/computer-use-supervisor/test/model.test.mjs",
+          "digest": "sha256:d40c8e4213c78a4d5b392b4af5cdda63377fd4896afee348b16b6a0b9495050c"
+        },
+        {
+          "path": "src/control/activity-monitor.ts",
+          "digest": "sha256:2391bae6fce305458736a79df0702d3f64bc5aa3ec4c37354920e1abae023432"
+        },
+        {
+          "path": "src/runtime/coordinator.ts",
+          "digest": "sha256:a27fef9d12f50921f7569ed17543593a1b60e0ae5ce5677b235b12dc95ef9edb"
+        },
+        {
+          "path": "src/server.ts",
+          "digest": "sha256:5bb1fc125508f8cce80545f19e6832ae485584469e414fac3de963ee5668dcfa"
+        },
+        {
+          "path": "src/session/spawn.ts",
+          "digest": "sha256:6a35ba56c569ab648d092fa78ac0ddd5a08506ecd4150b84c36186f1f9f6aabe"
+        },
+        {
+          "path": "src/session/supervisor-ipc.ts",
+          "digest": "sha256:475879ff95d549ebf41d46fc43d3d7f42250b41d5672c0de61b0f7c9a50ff161"
+        },
+        {
+          "path": "test/cancellation.test.mjs",
+          "digest": "sha256:662b10bc069d1259de68f28cf032e7fbe3e076b0c9efef1d898a3b5cd80e5a3c"
+        },
+        {
+          "path": "test/v8-emergency-stop.test.mjs",
+          "digest": "sha256:811bc6d1d04e53c96e21db0924cdfd2ac22bbb5030145d0820a5dc584bcffd7f"
+        },
+        {
+          "path": "test/v8-supervisor-ipc.test.mjs",
+          "digest": "sha256:ce860d8bc79edcbad969e382b33986ed853f6d078b0be50ca0a9a9e144d3fb7b"
+        }
+      ],
+      "sourceDigest": "sha256:1e0b7c2c36d67176d1855ef6bb06b93788d761f4fdaa558ed5327fa6cad0933d",
+      "outputDigest": "sha256:501d11f3ff9a673bb0bce7c712b14935db9fa702823e7af7b5a7d6e3e0cbba0c"
+    }
+  ],
+  "certifications": [
+    {
+      "path": "docs/conformance/v8/macos-finder-comment-26.2.json",
+      "certificationId": "cert_692fe0c1b553ea6866d652275ac65e91",
+      "traceDigest": "sha256:52e93de6f595da9e6ef4a7b3ebaf0c0a114120f491916accdc0c00dd63ddedfd",
+      "platform": "darwin",
+      "appId": "com.apple.finder",
+      "appVersion": "26.2",
+      "operation": "finder_set_sandbox_file_comment",
+      "approach": "scripting",
+      "observedAt": "2026-07-13T10:29:36.729Z",
+      "passed": true
+    }
+  ],
+  "badges": {
+    "background-safe": {
+      "status": "partial",
+      "evidenceLevel": "live",
+      "satisfied": [
+        "darwin:scripting:finder_set_sandbox_file_comment"
+      ],
+      "missing": [
+        "win32:valid_live_certification_trace"
+      ]
+    },
+    "policy-v2": {
+      "status": "pass",
+      "evidenceLevel": "deterministic",
+      "satisfied": [
+        "policy.operation_boundaries",
+        "policy.approval_binding",
+        "policy.untrusted_provenance",
+        "target.stale_fail_closed",
+        "receipt.exactly_once"
+      ],
+      "missing": []
+    },
+    "multi-agent-safe": {
+      "status": "pass",
+      "evidenceLevel": "deterministic",
+      "satisfied": [
+        "lease.one_writer",
+        "lease.terminal_revocation",
+        "lease.schedule_10000",
+        "reservation.conflict",
+        "reservation.no_authority"
+      ],
+      "missing": []
+    },
+    "supervisor-ready": {
+      "status": "partial",
+      "evidenceLevel": "integration",
+      "satisfied": [
+        "supervisor.authentication",
+        "supervisor.principal_isolation",
+        "supervisor.lifecycle_control",
+        "supervisor.approval_binding",
+        "supervisor.renderer_boundary",
+        "supervisor.emergency_out_of_band",
+        "supervisor.emergency_confirmed_reset",
+        "supervisor.credential_not_inherited"
+      ],
+      "missing": [
+        "platform:win32"
+      ]
+    }
+  },
+  "platformCoverage": [
+    {
+      "platform": "darwin",
+      "liveBackgroundApproaches": [
+        "scripting"
+      ],
+      "operations": [
+        "finder_set_sandbox_file_comment"
+      ]
+    }
+  ],
+  "reportDigest": "sha256:bb9e83ec49c52f6f6bc554de43f8b94b146df7f0ed39f6f408fe7a406185c6cb"
+}

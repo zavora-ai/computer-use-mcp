@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>Computer Use</title>
+  <link rel="stylesheet" href="renderer.css">
+</head>
+<body>
+  <header><span class="signal" id="signal"></span><strong>Computer Use</strong><span id="mode">connecting</span></header>
+  <main>
+    <section><small>Session</small><div id="session">Local session</div></section>
+    <section><small>Current activity</small><div id="activity">Waiting for runtime…</div><div class="meta" id="event"></div></section>
+    <section class="emergency-card">
+      <small>Emergency boundary</small>
+      <div id="emergency-state">Ready</div>
+      <div class="chord" id="emergency-chord">Loading chord…</div>
+      <div class="meta" id="emergency-generation"></div>
+      <button class="reset" id="reset-emergency" hidden>Inspect and reset…</button>
+    </section>
+    <section id="approval" hidden>
+      <small>Approval required</small><h2 id="approval-title">Action</h2>
+      <dl><dt>Class</dt><dd id="approval-class"></dd><dt>Target</dt><dd id="approval-target"></dd></dl>
+      <button class="approve" id="approve">Approve exact action</button>
+    </section>
+  </main>
+  <footer>
+    <button data-command="pause">Pause</button><button data-command="resume">Resume</button>
+    <button data-command="takeover">Take over</button><button data-command="stop">Stop</button>
+    <button class="danger" id="emergency">Emergency stop</button>
+  </footer>
+  <script type="module" src="renderer.mjs"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/reliability-lab-report.schema.json",
+  "title": "Computer Use v8 Reliability Lab Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocol", "corpusId", "corpusDigest", "runtimeVersion", "generatedAt", "results", "coverage", "metrics", "reportDigest"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "computer-use-v8-reliability-lab" },
+    "corpusId": { "type": "string", "minLength": 1 },
+    "corpusDigest": { "$ref": "#/$defs/digest" },
+    "runtimeVersion": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "reportDigest": { "$ref": "#/$defs/digest" },
+    "results": { "type": "array", "items": { "$ref": "#/$defs/result" } },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["totalCells", "passed", "failed", "blocked", "notRun", "byEvidenceLevel", "missingLiveScenarioIds"],
+      "properties": {
+        "totalCells": { "$ref": "#/$defs/count" }, "passed": { "$ref": "#/$defs/count" }, "failed": { "$ref": "#/$defs/count" }, "blocked": { "$ref": "#/$defs/count" }, "notRun": { "$ref": "#/$defs/count" },
+        "byEvidenceLevel": {
+          "type": "object", "additionalProperties": false, "required": ["deterministic", "integration", "live"],
+          "properties": { "deterministic": { "$ref": "#/$defs/passFail" }, "integration": { "$ref": "#/$defs/passFail" }, "live": { "$ref": "#/$defs/passFail" } }
+        },
+        "missingLiveScenarioIds": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+      }
+    },
+    "metrics": { "type": "array", "items": { "$ref": "#/$defs/metric" } }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "count": { "type": "integer", "minimum": 0 },
+    "rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "passFail": { "type": "object", "additionalProperties": false, "required": ["passed", "failed"], "properties": { "passed": { "$ref": "#/$defs/count" }, "failed": { "$ref": "#/$defs/count" } } },
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["osRelease", "arch", "interactive", "ci", "sessionKind", "displayServer", "compositor"],
+      "properties": { "osRelease": { "type": "string" }, "arch": { "type": "string" }, "interactive": { "type": "boolean" }, "ci": { "type": "boolean" }, "sessionKind": { "type": "string" }, "displayServer": { "type": "string" }, "compositor": { "type": "string" } }
+    },
+    "assertion": { "type": "object", "additionalProperties": false, "required": ["id", "passed", "detail"], "properties": { "id": { "type": "string" }, "passed": { "type": "boolean" }, "detail": { "type": "string" } } },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempts", "successes", "unintendedMutations", "interferenceEvents", "attributedMutations", "staleActionsBlocked", "staleActionsAttempted", "restorationsAttempted", "restorationsSucceeded", "latenciesMs"],
+      "properties": { "attempts": { "$ref": "#/$defs/count" }, "successes": { "$ref": "#/$defs/count" }, "unintendedMutations": { "$ref": "#/$defs/count" }, "interferenceEvents": { "$ref": "#/$defs/count" }, "attributedMutations": { "$ref": "#/$defs/count" }, "staleActionsBlocked": { "$ref": "#/$defs/count" }, "staleActionsAttempted": { "$ref": "#/$defs/count" }, "restorationsAttempted": { "$ref": "#/$defs/count" }, "restorationsSucceeded": { "$ref": "#/$defs/count" }, "latenciesMs": { "type": "array", "items": { "type": "number", "minimum": 0 } } }
+    },
+    "result": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "resultId", "scenarioId", "platform", "approach", "evidenceLevel", "status", "observedAt", "environment", "facts", "assertions", "sourceDigest", "outputDigest"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "resultId": { "type": "string" }, "scenarioId": { "type": "string" },
+        "platform": { "enum": ["darwin", "win32", "linux"] }, "approach": { "enum": ["scripting", "ax", "uia", "physical_input", "capture", "runtime"] },
+        "evidenceLevel": { "enum": ["deterministic", "integration", "live"] }, "status": { "enum": ["passed", "failed", "blocked", "not_run"] },
+        "observedAt": { "type": "string", "format": "date-time" }, "environment": { "$ref": "#/$defs/environment" },
+        "facts": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+        "assertions": { "type": "array", "items": { "$ref": "#/$defs/assertion" } }, "observation": { "$ref": "#/$defs/observation" },
+        "blocker": { "type": "string" }, "sourceDigest": { "$ref": "#/$defs/digest" }, "outputDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["platform", "approach", "evidenceLevel", "scenariosPassed", "scenariosFailed", "attempts", "successes", "successRate", "unintendedMutations", "interferenceEvents", "attributionRate", "staleBlockRate", "restorationRate", "latencyP50Ms", "latencyP95Ms"],
+      "properties": {
+        "platform": { "enum": ["darwin", "win32", "linux"] }, "approach": { "enum": ["scripting", "ax", "uia", "physical_input", "capture", "runtime"] }, "evidenceLevel": { "enum": ["deterministic", "integration", "live"] },
+        "scenariosPassed": { "$ref": "#/$defs/count" }, "scenariosFailed": { "$ref": "#/$defs/count" }, "attempts": { "$ref": "#/$defs/count" }, "successes": { "$ref": "#/$defs/count" }, "successRate": { "$ref": "#/$defs/rate" },
+        "unintendedMutations": { "$ref": "#/$defs/count" }, "interferenceEvents": { "$ref": "#/$defs/count" }, "attributionRate": { "$ref": "#/$defs/rate" }, "staleBlockRate": { "$ref": "#/$defs/rate" }, "restorationRate": { "$ref": "#/$defs/rate" },
+        "latencyP50Ms": { "type": ["number", "null"], "minimum": 0 }, "latencyP95Ms": { "type": ["number", "null"], "minimum": 0 }
+      }
+    }
+  }
+}

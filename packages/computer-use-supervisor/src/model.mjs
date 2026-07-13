@@ -1,0 +1,116 @@
+const SAFE_APPROVAL_FIELDS = [
+  'actionDigest', 'tool', 'operation', 'actionClass', 'mode', 'expiresAt',
+  'targetAppId', 'targetWindowId',
+]
+
+const SAFE_EVENT_FIELDS = ['sequence', 'type', 'actionId']
+const SAFE_EVENT_PAYLOAD_FIELDS = [
+  'to', 'state', 'tool', 'mode', 'actionClass', 'interference', 'policyDecision',
+  'executable', 'blocker', ...SAFE_APPROVAL_FIELDS,
+]
+
+/** Converts only an explicit secondary-button confirmation into a reset command. */
+export function emergencyResetCommand(dialogResult) {
+  return dialogResult?.response === 1 ? { type: 'reset_emergency_stop' } : null
+}
+
+/** Construct the only message shape allowed to cross into the renderer. */
+export function sanitizeSupervisorMessage(message) {
+  if (!message || typeof message !== 'object') return { type: 'error', error: 'invalid_message' }
+  if (message.type === 'hello') return { type: 'hello', protocolVersion: Number(message.protocolVersion ?? 0) }
+  if (message.type === 'disconnected') return { type: 'disconnected' }
+  if (message.type === 'subscribed') return { type: 'subscribed', sessionId: String(message.sessionId ?? '') }
+  if (message.type === 'emergency_status') {
+    return {
+      type: 'emergency_status',
+      active: message.active === true,
+      supported: message.supported === true,
+      generation: Number.isSafeInteger(message.generation) && message.generation >= 0 ? message.generation : 0,
+      backend: String(message.backend ?? 'unknown').slice(0, 80),
+      chord: typeof message.chord === 'string' ? message.chord.slice(0, 80) : '',
+    }
+  }
+  if (message.type === 'ack') {
+    return { type: 'ack', command: String(message.command ?? ''), sessionId: String(message.sessionId ?? '') }
+  }
+  if (message.type === 'approved') {
+    // The runtime keeps the action-bound grant. It is never renderer data.
+    return { type: 'approved', actionId: String(message.actionId ?? '') }
+  }
+  if (message.type === 'event' && message.event && typeof message.event === 'object') {
+    const event = {}
+    for (const field of SAFE_EVENT_FIELDS) {
+      if (message.event[field] !== undefined) event[field] = message.event[field]
+    }
+    const payload = {}
+    for (const field of SAFE_EVENT_PAYLOAD_FIELDS) {
+      if (message.event.payload?.[field] !== undefined) payload[field] = message.event.payload[field]
+    }
+    event.payload = payload
+    return { type: 'event', event }
+  }
+  return { type: 'error', error: String(message.error ?? 'unsupported_message') }
+}
+
+export function initialViewModel(sessionId) {
+  return {
+    sessionId, state: 'connecting', currentAction: null, pendingApproval: null,
+    lastEvent: null, sequence: 0, connected: false,
+    emergency: { active: false, supported: false, generation: 0, backend: 'unknown', chord: '' },
+    stateBeforeEmergency: null,
+  }
+}
+
+export function reduceSupervisorMessage(model, message) {
+  if (message.type === 'hello') return { ...model, connected: true, state: 'connected' }
+  if (message.type === 'emergency_status') {
+    const active = message.active === true
+    return {
+      ...model,
+      emergency: {
+        active,
+        supported: message.supported === true,
+        generation: Number(message.generation ?? 0),
+        backend: String(message.backend ?? 'unknown'),
+        chord: String(message.chord ?? ''),
+      },
+      ...(active
+        ? {
+            state: 'emergency_stopped',
+            stateBeforeEmergency: model.state === 'emergency_stopped' ? model.stateBeforeEmergency : model.state,
+            currentAction: null,
+          }
+        : {
+            state: model.state === 'emergency_stopped' ? (model.stateBeforeEmergency ?? 'connected') : model.state,
+            stateBeforeEmergency: null,
+          }),
+    }
+  }
+  if (message.type !== 'event' || !message.event) return model
+  const event = message.event
+  const next = {
+    ...model,
+    sequence: Number(event.sequence ?? model.sequence),
+    lastEvent: String(event.type ?? 'event'),
+  }
+  if (event.type === 'session.state_changed' || event.type === 'session.recovered') {
+    next.state = String(event.payload?.to ?? event.payload?.state ?? model.state)
+  } else if (event.type === 'session.completed') {
+    next.state = 'completed'
+    next.currentAction = null
+  } else if (event.type === 'action.started') {
+    next.currentAction = { actionId: event.actionId, tool: String(event.payload?.tool ?? 'action') }
+  } else if (event.type === 'action.committed' || event.type === 'action.rejected'
+    || event.type === 'action.interrupted' || event.type === 'action.indeterminate') {
+    next.currentAction = null
+    if (next.pendingApproval?.actionId === event.actionId) next.pendingApproval = null
+  } else if (event.type === 'action.approval_required') {
+    const safe = { actionId: event.actionId }
+    for (const field of SAFE_APPROVAL_FIELDS) {
+      if (event.payload?.[field] !== undefined) safe[field] = event.payload[field]
+    }
+    next.pendingApproval = safe
+    next.state = 'waiting_for_user'
+  }
+  return next
+}

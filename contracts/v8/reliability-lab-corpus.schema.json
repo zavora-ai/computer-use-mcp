@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/reliability-lab-corpus.schema.json",
+  "title": "Computer Use v8 Reliability Lab Corpus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "corpusId", "description", "scenarios", "corpusDigest"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "corpusId": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "corpusDigest": { "$ref": "#/$defs/digest" },
+    "scenarios": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "title", "platforms", "approaches", "category", "condition", "minimumEvidence", "assertions", "requiredFacts"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$" },
+          "title": { "type": "string", "minLength": 1 },
+          "platforms": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["darwin", "win32", "linux"] } },
+          "approaches": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["scripting", "ax", "uia", "physical_input", "capture", "runtime"] } },
+          "category": { "enum": ["display", "privilege", "session", "workspace", "compositor", "interference"] },
+          "condition": { "type": "string", "minLength": 1 },
+          "minimumEvidence": { "enum": ["deterministic", "integration", "live"] },
+          "assertions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "requiredFacts": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    }
+  },
+  "$defs": { "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

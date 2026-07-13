@@ -1,0 +1,389 @@
+import { z, type ZodTypeAny } from 'zod'
+import { errJson, okJson } from '../result.js'
+import { createRiskMapper } from '../runtime/action.js'
+import { TOOL_CATALOG, getToolMeta, toToolMetaPublic, type ToolMeta } from '../tool-catalog.js'
+import type { ToolRegistry } from './registry.js'
+
+const targetAppParam = z.string().optional().describe('App id: macOS bundle ID or Windows process name (auto-focuses before action)')
+const targetWindowIdParam = z.number().int().optional().describe('Window ID to target (CGWindowID on macOS, HWND on Windows). Takes precedence over target_app.')
+const focusStrategyParam = z.enum(['strict', 'best_effort', 'none', 'prepare_display']).optional().describe('Focus strategy: strict (fail if unconfirmed), best_effort (try and proceed), none (skip activation), prepare_display (hide every non-target app before acting — v5.2, defeats focus-stealing background apps)')
+export const approvalTokenParam = z.string().optional().describe('Policy approval token. Required only when COMPUTER_USE_APPROVAL_TOKEN / approval policy requires it.')
+// NOTE: use length-constrained z.array (not z.tuple). Zod tuples serialize to
+// JSON Schema as `items: [ ... ]`, which is valid in draft-07 but REJECTED by
+// JSON Schema draft 2020-12 (Claude API), where tuples must use `prefixItems`.
+// A length-constrained array emits a single `items` schema object + minItems/
+// maxItems, which is valid across drafts. Runtime values are still arrays.
+const numArray = (len: number) => z.array(z.number()).length(len)
+const intArray = (len: number) => z.array(z.number().int()).length(len)
+const coord = { coordinate: numArray(2).describe('[x, y] logical pixels') }
+const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
+  ...schema,
+  target_app: targetAppParam,
+  target_window_id: targetWindowIdParam,
+  focus_strategy: focusStrategyParam,
+})
+
+const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'phi', 'auto'] as const
+
+/** Complete v7 compatibility surface, defined independently of MCP transport setup. */
+export function defineV7Tools(registry: ToolRegistry): void {
+  const openAiActionSchema = z.object({
+    type: z.string().optional().describe('OpenAI computer action type, e.g. click, double_click, scroll, type, wait, keypress, drag, move, screenshot'),
+    action: z.string().optional().describe('Alias for type'),
+  }).catchall(z.unknown())
+
+  const tool = (
+    name: string,
+    desc: string,
+    schema: Record<string, ZodTypeAny>,
+    _legacyCategoryMeta: ToolMeta,
+  ) => {
+    const meta = getToolMeta(name)
+    if (!meta) throw new Error(`tool "${name}" missing from TOOL_CATALOG`)
+    registry.define({
+      name,
+      description: desc,
+      inputSchema: schema,
+      meta,
+      riskMapper: createRiskMapper(name, meta),
+    })
+  }
+
+  // Convenience aliases matching catalog focus/mutate (legacy call sites pass these; catalog wins)
+  const CG_MUT = TOOL_CATALOG.left_click
+  const AX_MUT = TOOL_CATALOG.click_element
+  const AX_READ = TOOL_CATALOG.get_ui_tree
+  const SCRIPTING = TOOL_CATALOG.run_script
+  const SCRIPT_READ = TOOL_CATALOG.get_app_dictionary
+  const NONE_READ = TOOL_CATALOG.screenshot
+  const NONE_MUT = TOOL_CATALOG.write_clipboard
+  const VIRTUAL_MUT = TOOL_CATALOG.agent_pointer
+  const DYNAMIC_MUT = TOOL_CATALOG.openai_computer
+
+  tool('doctor', 'Run first-run onboarding diagnostics. Checks native binary compatibility, permissions, display capture, clipboard, Accessibility/UI Automation, scripting, PowerShell, policy, and audit logging; returns machine-readable remediation steps.', {
+    include_remediation: z.boolean().optional().default(true).describe('Include exact setup/fix steps for failed or warning checks'),
+  }, NONE_READ)
+  tool('policy_status', 'Show active policy and audit configuration without revealing approval tokens.', {}, NONE_READ)
+  tool('agent_pointer', 'Manage a non-interrupting virtual agent pointer. Moving it does not move the user cursor or focus any app; use screenshot(show_agent_pointer=true) to render it into observations.', {
+    action: z.enum(['get', 'move', 'show', 'hide', 'reset']).describe('Virtual pointer operation'),
+    coordinate: numArray(2).optional().describe('[x, y] logical pixels for action=move'),
+    visible: z.boolean().optional().describe('Optional visibility override for move/reset'),
+    native_overlay: z.boolean().optional().describe('Show/update the native always-on-top overlay window when available. Defaults true for visible pointer actions.'),
+  }, VIRTUAL_MUT)
+  tool('openai_computer', 'OpenAI Computer Use compatibility adapter. Accepts a single action or batched actions[] using click, double_click, scroll, type, wait, keypress, drag, move, screenshot.', {
+    action: openAiActionSchema.optional().describe('Single OpenAI-style computer action'),
+    actions: z.array(openAiActionSchema).optional().describe('Batch of OpenAI-style computer actions executed in order'),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+    focus_strategy: focusStrategyParam,
+    return_screenshot: z.boolean().optional().describe('Capture a screenshot after the batch'),
+    use_virtual_pointer: z.boolean().optional().describe('For move actions, update the virtual agent pointer instead of moving the real OS cursor'),
+    native_overlay: z.boolean().optional().describe('When use_virtual_pointer=true, show/update the native overlay pointer if available.'),
+    provider: z.enum(PROVIDERS).optional().describe('Screenshot provider defaults when the adapter captures screenshots'),
+    width: z.number().int().positive().optional().describe('Screenshot width when return_screenshot or screenshot action is used'),
+    quality: z.number().int().min(0).max(100).optional().describe('Screenshot quality; 0 = PNG'),
+  }, DYNAMIC_MUT)
+
+  tool('screenshot', 'Capture the screen or a specific window. BEFORE using this, consider get_ui_tree or find_element to discover UI by role/label — structured queries are cheaper than visual parsing. Auto-targets the active session window when no explicit target is given.', {
+    width: z.number().int().positive().optional()
+      .describe('Override width in pixels. Omit to use provider-optimal default.'),
+    quality: z.number().int().min(0).max(100).optional()
+      .describe('Image quality. 1-100 = JPEG quality. 0 = PNG (lossless). Default: 80 (JPEG).'),
+    target_app: z.string().optional()
+      .describe('Bundle ID of app to capture (window only). Omit for full screen.'),
+    target_window_id: targetWindowIdParam,
+    provider: z.enum(PROVIDERS).optional()
+      .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
+    show_agent_pointer: z.boolean().optional()
+      .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
+  }, NONE_READ)
+  tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling.', {
+    region: intArray(4)
+      .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect'),
+    quality: z.number().int().min(0).max(100).optional()
+      .describe('Image quality. 0 = PNG (lossless, best for text). 1-100 = JPEG. Default: 0 (PNG).'),
+  }, NONE_READ)
+  // Pointer / keyboard — last resort; prefer click_element / press_button / set_value when possible.
+  tool('left_click', 'Left-click at coordinates (last resort — prefer click_element or press_button when the control is accessible). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('right_click', 'Right-click at coordinates (last resort — prefer accessibility when available). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('middle_click', 'Middle-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('double_click', 'Double-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('triple_click', 'Triple-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('mouse_move', 'Move OS cursor to coordinates (last resort — prefer agent_pointer for non-interrupting pointer). Requires target frontmost for subsequent clicks.', withTargeting(coord), CG_MUT)
+  tool('left_click_drag', 'Click and drag', withTargeting({
+    coordinate: numArray(2),
+    start_coordinate: numArray(2).optional(),
+  }), CG_MUT)
+  tool('cursor_position', 'Get current cursor position', {}, NONE_READ)
+  tool('left_mouse_down', 'Press left mouse button', withTargeting(coord), CG_MUT)
+  tool('left_mouse_up', 'Release left mouse button', withTargeting(coord), CG_MUT)
+  tool('scroll', 'Scroll at position', {
+    ...coord,
+    direction: z.enum(['up', 'down', 'left', 'right']),
+    amount: z.number().int().positive().default(3),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+    focus_strategy: focusStrategyParam,
+  }, CG_MUT)
+  tool('type', 'Type text into the focused app. For form fields, prefer set_value or fill_form — accessibility-based writes are more reliable and need no click-to-focus.', {
+    text: z.string(),
+    clear: z.boolean().optional().describe('Clear existing text before typing (Ctrl+A, Delete)'),
+    press_enter: z.boolean().optional().describe('Press Enter/Return after typing to submit'),
+    caret_position: z.enum(['start', 'end', 'idle']).optional().describe('Move caret before typing: start (Home), end (End), idle (leave as-is)'),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+    focus_strategy: focusStrategyParam,
+  }, CG_MUT)
+  tool('key', 'Press a key combination (e.g. "command+c", "return"). Tab and Shift+Tab navigate between form fields; keyboard shortcuts are usually faster than coordinate-based clicks.', {
+    text: z.string().describe('Key combo like "command+c" or "return"'),
+    repeat: z.number().int().positive().optional(),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+    focus_strategy: focusStrategyParam,
+  }, CG_MUT)
+  tool('hold_key', 'Hold keys for a duration', {
+    keys: z.array(z.string()),
+    duration: z.number().positive().describe('Seconds'),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+    focus_strategy: focusStrategyParam,
+  }, CG_MUT)
+  // Clipboard — touches pasteboard only, no focus dependency.
+  tool('read_clipboard', 'Read clipboard contents', {}, NONE_READ)
+  tool('write_clipboard', 'Write text to clipboard', { text: z.string() }, NONE_MUT)
+  // App / window lifecycle — NSWorkspace/AX mutations.
+  tool('open_application', 'Open and focus an app by id (macOS bundle ID or Windows process name)', {
+    bundle_id: z.string().describe('App id: e.g. "com.apple.Safari" (macOS) or "notepad.exe" (Windows)'),
+  }, AX_MUT)
+  tool('get_frontmost_app', 'Get the currently frontmost app', {}, AX_READ)
+  tool('list_windows', 'List visible on-screen windows, optionally filtered by bundle ID', {
+    bundle_id: z.string().optional().describe('Bundle ID to filter windows by'),
+  }, AX_READ)
+  tool('list_running_apps', 'List all running regular applications', {}, AX_READ)
+  tool('hide_app', 'Hide an app by bundle ID', { bundle_id: z.string() }, AX_MUT)
+  tool('unhide_app', 'Unhide an app by bundle ID', { bundle_id: z.string() }, AX_MUT)
+  tool('get_display_size', 'Get display dimensions and scale factor', {
+    display_id: z.number().optional().describe('Display ID (omit for main display)'),
+  }, NONE_READ)
+  tool('list_displays', 'List all connected displays', {}, NONE_READ)
+  tool('get_window', 'Look up a window by its CGWindowID', {
+    window_id: z.number().int().describe('CGWindowID of the window to look up'),
+  }, AX_READ)
+  tool('get_cursor_window', 'Get the window currently under the mouse cursor', {}, AX_READ)
+  tool('activate_app', 'Activate an app and return structured before/after diagnostics', {
+    bundle_id: z.string().describe('macOS bundle ID'),
+    timeout_ms: z.number().int().positive().optional().describe('Activation polling timeout in ms'),
+  }, AX_MUT)
+  tool('activate_window', 'Raise a specific window by CGWindowID', {
+    window_id: z.number().int().describe('CGWindowID of the window to raise'),
+    timeout_ms: z.number().int().positive().optional().describe('Activation polling timeout in ms'),
+  }, AX_MUT)
+  tool('resize_window', 'Resize and/or move a window. Omit window_name to target the foreground window.', {
+    window_name: z.string().optional().describe('Window title or process name to target (omit for foreground)'),
+    window_id: z.number().int().optional().describe('Window ID to target (takes precedence over window_name)'),
+    window_size: intArray(2).optional().describe('[width, height] in pixels'),
+    window_loc: intArray(2).optional().describe('[x, y] top-left position'),
+  }, AX_MUT)
+  tool('wait', 'Wait for N seconds', { duration: z.number().positive().max(300) }, NONE_READ)
+  tool('snapshot', 'Combined screenshot + UI tree + window list + desktop info in one call. Returns structured text with all desktop state. Set use_vision=true to include screenshot image. Set use_annotation=true to draw bounding boxes on UI elements. Set grid_lines=[cols,rows] to overlay reference grid.', {
+    use_vision: z.boolean().optional().default(false).describe('Include screenshot image in response'),
+    use_annotation: z.boolean().optional().default(false).describe('Draw bounding boxes on detected UI elements'),
+    grid_lines: intArray(2).optional().describe('[columns, rows] for reference grid overlay'),
+    display: z.array(z.number().int()).optional().describe('Monitor indices to capture (omit for all)'),
+    width: z.number().int().positive().optional().describe('Resize screenshot width'),
+    target_app: targetAppParam,
+    target_window_id: targetWindowIdParam,
+  }, NONE_READ)
+
+  // ── v5: Accessibility observation ───────────────────────────────────────
+  tool('get_ui_tree', 'Get the accessibility tree for a window — discover UI elements by role/label instead of parsing pixels. Returns role, label, value, bounds, actions, children per node. Capped at 500 nodes.', {
+    window_id: z.number().int().describe('CGWindowID to introspect'),
+    max_depth: z.number().int().positive().max(20).optional().describe('Maximum tree depth (default 10, max 20)'),
+  }, AX_READ)
+  tool('get_focused_element', 'Get the currently focused UI element — where typed text will go. Returns null if no element has focus.', {}, AX_READ)
+  tool('find_element', 'Search for UI elements in a window by role, label, or value (AND of the provided criteria). Faster than walking the full tree.', {
+    window_id: z.number().int().describe('CGWindowID to search within'),
+    role: z.string().optional().describe('AX role — e.g. AXButton, AXTextField, AXStaticText, AXMenuItem'),
+    label: z.string().optional().describe('Element label (AXTitle or AXDescription); case-insensitive substring match'),
+    value: z.string().optional().describe('Element value (AXValue); case-insensitive substring match'),
+    max_results: z.number().int().positive().max(100).optional().describe('Max matches to return (default 25)'),
+  }, AX_READ)
+
+  // ── v5: Semantic actions ────────────────────────────────────────────────
+  tool('click_element', 'Click a UI element by role and label — more reliable than pixel clicks (survives window moves and resolution changes). Falls back to coordinate click if AXPress is unsupported.', {
+    window_id: z.number().int().describe('CGWindowID of the window containing the element'),
+    role: z.string().describe('AX role of the element to click (e.g. AXButton)'),
+    label: z.string().describe('Element label — matched against AXTitle/AXDescription'),
+    focus_strategy: focusStrategyParam,
+  }, AX_MUT)
+  tool('set_value', 'Set a UI element\'s value directly (e.g. text field content). Avoids the click → type dance. Defaults to strict focus since it writes text.', {
+    window_id: z.number().int().describe('CGWindowID of the window containing the element'),
+    role: z.string().describe('AX role (usually AXTextField or AXTextArea)'),
+    label: z.string().describe('Element label'),
+    value: z.string().describe('New value to set'),
+    focus_strategy: focusStrategyParam,
+  }, AX_MUT)
+  tool('press_button', 'Press a button by its label. Shortcut over click_element for role=AXButton.', {
+    window_id: z.number().int().describe('CGWindowID of the window containing the button'),
+    label: z.string().describe('Button label'),
+    focus_strategy: focusStrategyParam,
+  }, AX_MUT)
+  tool('select_menu_item', 'Select an app menu item programmatically — walks AXMenuBar. Returns list of available menus on miss.', {
+    bundle_id: z.string().describe('Bundle ID of the app'),
+    menu: z.string().describe('Top-level menu title (e.g. "File")'),
+    item: z.string().describe('Menu item title (e.g. "New")'),
+    submenu: z.string().optional().describe('Submenu title when the item is nested'),
+  }, AX_MUT)
+  tool('fill_form', 'Set multiple UI element values in a single call — collapses click+type loops into one tool call. Partial failures are reported per field without aborting the batch.', {
+    window_id: z.number().int().describe('CGWindowID of the form window'),
+    fields: z.array(z.object({
+      role: z.string(),
+      label: z.string(),
+      value: z.string(),
+    })).describe('Ordered list of fields to fill'),
+    focus_strategy: focusStrategyParam,
+  }, AX_MUT)
+
+  // ── v5: Scripting bridge ────────────────────────────────────────────────
+  tool('run_script', 'Execute a script and return the output. On macOS: AppleScript or JXA for scriptable apps. On Windows: PowerShell. Bounded by timeout_ms.', {
+    language: z.enum(['applescript', 'javascript', 'powershell']).describe('Scripting language (applescript/javascript on macOS, powershell on Windows)'),
+    script: z.string().describe('Script body to execute'),
+    timeout_ms: z.number().int().positive().max(120_000).optional().describe('Hard timeout in ms (default 30000, max 120000)'),
+  }, SCRIPTING)
+  tool('get_app_dictionary', 'Get a scriptable app\'s dictionary (suites, commands, classes). Returns summarized names by default; pass `suite` for full details of one suite.', {
+    bundle_id: z.string().describe('Bundle ID of the scriptable app'),
+    suite: z.string().optional().describe('Limit to a specific suite; omit for a summary'),
+  }, SCRIPT_READ)
+
+  // ── v5.1: Menu bar introspection ────────────────────────────────────────
+  tool('list_menu_bar', 'List an app\'s full menu bar structure with keyboard shortcuts. Use this BEFORE select_menu_item to see what menus / items / shortcuts exist — agents can then press the shortcut directly (faster than walking the menu) or pass the exact item title to select_menu_item.', {
+    bundle_id: z.string().describe('Bundle ID of the app whose menu bar to read'),
+  }, AX_READ)
+
+  // ── v5: Strategy advisor ────────────────────────────────────────────────
+  tool('get_tool_guide', 'Recommend the best automation approach for a task. Call this BEFORE committing to screenshot-and-click — it suggests scripting or accessibility paths when they exist.', {
+    task_description: z.string().describe('Natural-language description of the task to automate'),
+  }, NONE_READ)
+  tool('get_app_capabilities', 'Discover what automation approaches work for an app: scriptable? accessible? running? hidden?', {
+    bundle_id: z.string().describe('Bundle ID to probe'),
+  }, AX_READ)
+
+  // ── v5: Agent Spaces ────────────────────────────────────────────────────
+  // macOS Space mutation uses best-effort backends selected by
+  // COMPUTER_USE_SPACES_BACKEND: yabai, Mission Control gestures, then CGS.
+  // CGS-created Spaces can be orphaned on SIP-enabled Macs.
+  tool('list_spaces', 'List user Spaces grouped by display. Always works — pure read via CGS.', {}, NONE_READ)
+  tool('get_active_space', 'Get the currently active Space ID.', {}, NONE_READ)
+  tool('create_agent_space', 'Create a new virtual desktop/Space. On macOS, auto-selects yabai, Mission Control gesture automation, or CGS fallback. On Windows uses Ctrl+Win+D keyboard shortcut.', {}, AX_MUT)
+  tool('move_window_to_space', 'Move a window to a virtual desktop/Space. On macOS, prefers yabai and falls back to private CGS APIs.', {
+    window_id: z.number().int().describe('Window ID to move'),
+    space_id: z.number().int().describe('Target Space/desktop ID'),
+  }, AX_MUT)
+  tool('remove_window_from_space', 'Remove a window from a virtual desktop/Space. Best effort on macOS because private CGS APIs may no-op without elevated entitlements.', {
+    window_id: z.number().int().describe('Window ID to remove'),
+    space_id: z.number().int().describe('Space/desktop ID to remove the window from'),
+  }, AX_MUT)
+  tool('destroy_space', 'Close a virtual desktop/Space. On macOS, prefers yabai and falls back to private CGS APIs. On Windows uses Ctrl+Win+F4.', {
+    space_id: z.number().int().optional().describe('Space ID to destroy (ignored on Windows — always closes current)'),
+  }, AX_MUT)
+
+  // ── v5.2: Tool metadata introspection (server-local; K20) ───────────────
+  registry.define({
+    name: 'get_tool_metadata',
+    description: 'Get structured metadata for a tool: focusRequired (scripting|ax|cgevent|none) and mutates (bool). Useful for agents that want to filter tools by their focus requirements — e.g. "show me only tools I can use while Safari is backgrounded".',
+    inputSchema: { tool_name: z.string().describe('Name of the tool to inspect') },
+    meta: TOOL_CATALOG.get_tool_metadata,
+    riskMapper: createRiskMapper('get_tool_metadata', TOOL_CATALOG.get_tool_metadata),
+    wireMetaShape: 'legacy_minimal',
+    handler: async (args) => {
+      const toolName = typeof args.tool_name === 'string' ? args.tool_name : ''
+      const meta = registry.getMeta(toolName)
+      if (!meta) return errJson({ error: 'unknown_tool', tool_name: toolName })
+      return okJson({ tool_name: toolName, ...toToolMetaPublic(meta) })
+    },
+  })
+
+  // ── Windows-parity tools (cross-platform where possible) ────────────────
+
+  // FileSystem tool — Node.js fs, cross-platform
+  tool('filesystem',
+    'File and directory operations: read, write, copy, move, delete, list, search, info. Relative paths resolve from Desktop.',
+    {
+      mode: z.enum(['read', 'write', 'copy', 'move', 'delete', 'list', 'search', 'info']).describe('Operation mode'),
+      path: z.string().describe('File or directory path'),
+      destination: z.string().optional().describe('Destination path for copy/move'),
+      content: z.string().optional().describe('Content for write mode'),
+      pattern: z.string().optional().describe('Glob pattern for list/search'),
+      recursive: z.boolean().optional().default(false).describe('Recursive delete/list/search'),
+      append: z.boolean().optional().default(false).describe('Append instead of overwrite'),
+      overwrite: z.boolean().optional().default(false).describe('Overwrite existing for copy/move'),
+      offset: z.number().int().optional().describe('Line offset for read'),
+      limit: z.number().int().optional().describe('Line limit for read'),
+      encoding: z.string().optional().default('utf-8').describe('File encoding'),
+      show_hidden: z.boolean().optional().default(false).describe('Show hidden files in list'),
+    }, NONE_MUT)
+
+  // Process tool — list and kill processes
+  tool('process_kill',
+    'List and kill running processes. mode=list for process listing, mode=kill to terminate by name or PID.',
+    {
+      mode: z.enum(['list', 'kill']).describe('Operation mode'),
+      name: z.string().optional().describe('Process name to filter/kill'),
+      pid: z.number().int().optional().describe('Process ID to kill'),
+      force: z.boolean().optional().default(false).describe('Force kill without graceful close'),
+      sort_by: z.enum(['memory', 'cpu', 'name']).optional().default('memory').describe('Sort field for list'),
+      limit: z.number().int().optional().default(20).describe('Max processes to list'),
+    }, NONE_MUT)
+
+  // Registry tool — Windows only
+  tool('registry',
+    'Windows Registry operations: get, set, delete, list. Paths use PowerShell format (HKCU:\\Software\\...). Windows only.',
+    {
+      mode: z.enum(['get', 'set', 'delete', 'list']).describe('Operation mode'),
+      path: z.string().describe('Registry path in PowerShell format'),
+      name: z.string().optional().describe('Value name'),
+      value: z.string().optional().describe('Value data for set mode'),
+      type: z.enum(['String', 'DWord', 'QWord', 'Binary', 'MultiString', 'ExpandString']).optional().default('String').describe('Value type for set'),
+    }, NONE_MUT)
+
+  // Notification tool — Windows only
+  tool('notification',
+    'Send a Windows toast notification. Windows only.',
+    {
+      title: z.string().describe('Notification title'),
+      message: z.string().describe('Notification body text'),
+      app_id: z.string().optional().describe('Application User Model ID'),
+    }, NONE_MUT)
+
+  // MultiSelect tool — batch click with optional Ctrl hold
+  tool('multi_select',
+    'Select multiple items by clicking coordinates or UI element labels. Set press_ctrl=true for additive selection.',
+    {
+      locs: z.array(numArray(2)).optional().describe('List of [x,y] coordinates'),
+      labels: z.array(z.string()).optional().describe('List of UI element labels'),
+      press_ctrl: z.boolean().optional().default(true).describe('Hold Ctrl for additive selection'),
+      target_app: targetAppParam,
+      target_window_id: targetWindowIdParam,
+      focus_strategy: focusStrategyParam,
+    }, CG_MUT)
+
+  // MultiEdit tool — batch click+type
+  tool('multi_edit',
+    'Enter text into multiple fields. Provide locs as [[x,y,text],...] or labels as [[label,text],...].',
+    {
+      locs: z.array(z.array(z.union([z.number(), z.string()])).length(3)).optional().describe('List of [x,y,text] tuples'),
+      labels: z.array(z.array(z.string()).length(2)).optional().describe('List of [label,text] tuples'),
+      target_app: targetAppParam,
+      target_window_id: targetWindowIdParam,
+      focus_strategy: focusStrategyParam,
+    }, CG_MUT)
+
+  // Scrape tool — fetch web page content
+  tool('scrape',
+    'Fetch and extract content from a URL. Returns clean text from web pages. Set use_dom=true to extract from active browser tab DOM instead of HTTP fetch. openWorld: may fetch untrusted content.',
+    {
+      url: z.string().describe('URL to fetch'),
+      query: z.string().optional().describe('Focus extraction on specific information'),
+      use_dom: z.boolean().optional().default(false).describe('Extract from active browser tab DOM instead of HTTP'),
+    }, NONE_READ)
+}

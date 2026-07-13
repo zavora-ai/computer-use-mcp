@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/capability-certification-trace.schema.json",
+  "title": "computer-use-mcp v8 capability certification trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "certificationId",
+    "platform",
+    "adapter",
+    "app",
+    "operation",
+    "tool",
+    "backend",
+    "contract",
+    "probe",
+    "capability",
+    "traceDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "certificationId": { "$ref": "#/$defs/certificationId" },
+    "platform": { "type": "string", "minLength": 1 },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "operation": { "type": "string", "minLength": 1 },
+    "tool": { "type": "string", "minLength": 1 },
+    "backend": { "$ref": "#/$defs/backend" },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "bindingDigest", "digest", "description"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "bindingDigest": { "$ref": "#/$defs/digest" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "completedAt", "result"],
+      "properties": {
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "result": { "$ref": "#/$defs/probeResult" }
+      }
+    },
+    "capability": { "$ref": "#/$defs/capability" },
+    "traceDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "certificationId": {
+      "type": "string",
+      "pattern": "^cert_[a-f0-9]{32}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "backend": {
+      "enum": [
+        "applescript",
+        "javascript",
+        "powershell",
+        "scripting",
+        "ax",
+        "uia",
+        "filesystem",
+        "registry",
+        "process",
+        "physical_input",
+        "none"
+      ]
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "frontmostAppBefore": { "type": ["string", "null"] },
+        "frontmostAppAfter": { "type": ["string", "null"] },
+        "pointerBefore": { "$ref": "#/$defs/point" },
+        "pointerAfter": { "$ref": "#/$defs/point" },
+        "physicalInputEventsBefore": { "type": "number" },
+        "physicalInputEventsAfter": { "type": "number" },
+        "preconditionDigest": { "$ref": "#/$defs/digest" },
+        "postconditionDigest": { "$ref": "#/$defs/digest" },
+        "rollbackDigest": { "$ref": "#/$defs/digest" },
+        "environmentDigest": { "$ref": "#/$defs/digest" },
+        "quietPeriodSatisfied": { "type": "boolean" },
+        "executionSucceeded": { "type": "boolean" },
+        "postconditionSatisfied": { "type": "boolean" },
+        "rollbackSucceeded": { "type": "boolean" }
+      }
+    },
+    "probeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supported",
+        "interference",
+        "focusChanged",
+        "physicalInputInjected",
+        "pointerMoved",
+        "evidence"
+      ],
+      "properties": {
+        "supported": { "type": "boolean" },
+        "interference": {
+          "enum": [
+            "none",
+            "visual_overlay_only",
+            "may_raise_window",
+            "takes_foreground",
+            "moves_physical_pointer"
+          ]
+        },
+        "focusChanged": { "type": "boolean" },
+        "physicalInputInjected": { "type": "boolean" },
+        "pointerMoved": { "type": "boolean" },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "certification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "certificationId",
+        "adapterId",
+        "adapterVersion",
+        "appVersion",
+        "tool",
+        "actionContractDigest",
+        "probeFingerprint",
+        "traceDigest",
+        "validUntil"
+      ],
+      "properties": {
+        "certificationId": { "$ref": "#/$defs/certificationId" },
+        "adapterId": { "type": "string", "minLength": 1 },
+        "adapterVersion": { "type": "string", "minLength": 1 },
+        "appVersion": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "actionContractDigest": { "$ref": "#/$defs/digest" },
+        "probeFingerprint": { "$ref": "#/$defs/digest" },
+        "traceDigest": { "$ref": "#/$defs/digest" },
+        "validUntil": { "type": "string", "format": "date-time" }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appId",
+        "operation",
+        "backend",
+        "supportedModes",
+        "interference",
+        "confidence",
+        "verifiedAt",
+        "verificationSource",
+        "certification"
+      ],
+      "properties": {
+        "appId": { "type": "string", "minLength": 1 },
+        "operation": { "type": "string", "minLength": 1 },
+        "backend": { "$ref": "#/$defs/backend" },
+        "supportedModes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["shadow", "background", "foreground"] }
+        },
+        "interference": {
+          "enum": [
+            "none",
+            "visual_overlay_only",
+            "may_raise_window",
+            "takes_foreground",
+            "moves_physical_pointer"
+          ]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "verifiedAt": { "type": "string", "format": "date-time" },
+        "verificationSource": { "const": "live_probe" },
+        "certification": { "$ref": "#/$defs/certification" }
+      }
+    }
+  }
+}

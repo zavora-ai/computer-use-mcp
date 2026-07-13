@@ -1,0 +1,17 @@
+{
+  "structuredContent": {
+    "observation_id": "observation-0002",
+    "screenshot_hash": "sha256:fixture"
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"observation_id\":\"observation-0002\"}"
+    },
+    {
+      "type": "image",
+      "data": "aW1hZ2U=",
+      "mimeType": "image/png"
+    }
+  ]
+}

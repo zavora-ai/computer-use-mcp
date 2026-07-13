@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/contracts/computer-use/v8/setup-view-model.schema.json",
+  "title": "SetupViewModel",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["onboardingId", "stage", "revision", "progress", "steps", "capabilities", "permissions", "restartRequired", "environmentKeys"],
+  "properties": {
+    "onboardingId": { "type": "string", "minLength": 1 },
+    "stage": { "enum": ["created", "diagnosed", "capture_tested", "pointer_tested", "semantic_tested", "emergency_acknowledged", "configured", "completed"] },
+    "revision": { "type": "integer", "minimum": 1 },
+    "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "nextAction": { "enum": ["diagnose", "test_capture", "show_pointer", "test_semantic", "acknowledge_emergency", "configure", "complete"] },
+    "steps": {
+      "type": "array", "minItems": 7, "maxItems": 7,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "status"],
+        "properties": {
+          "id": { "enum": ["diagnostics", "capture", "pointer", "semantic", "emergency", "policy", "finish"] },
+          "status": { "enum": ["pending", "active", "passed", "failed", "configured", "completed"] },
+          "detail": { "type": "string", "maxLength": 256 }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object", "additionalProperties": false, "required": ["capture", "virtualPointer", "semantic", "physicalEmergencyStop"],
+      "properties": { "capture": { "type": "boolean" }, "virtualPointer": { "type": "boolean" }, "semantic": { "type": "boolean" }, "physicalEmergencyStop": { "type": "boolean" } }
+    },
+    "emergencyStop": {
+      "type": "object", "additionalProperties": false,
+      "required": ["chord", "backend", "physicalOnly", "acknowledged"],
+      "properties": {
+        "chord": { "type": "string", "minLength": 3, "maxLength": 128 },
+        "backend": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "physicalOnly": { "type": "boolean" }, "acknowledged": { "type": "boolean" }
+      }
+    },
+    "permissions": {
+      "type": "array", "maxItems": 8,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "label", "status", "required", "canRequestInProcess", "canOpenSettings", "remediation"],
+        "properties": {
+          "id": { "enum": ["display_capture", "accessibility", "ui_automation", "automation"] },
+          "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "status": { "enum": ["pass", "warn", "fail", "skip", "unknown"] },
+          "required": { "type": "boolean" },
+          "canRequestInProcess": { "type": "boolean" },
+          "canOpenSettings": { "type": "boolean" },
+          "remediation": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "settingsUri": { "type": "string", "pattern": "^x-apple\\.systempreferences:" }
+        }
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["filesystemRootCount", "allowedAppCount", "scrapeEnabled", "auditEnabled"],
+      "properties": {
+        "filesystemRootCount": { "type": "integer", "minimum": 0 }, "allowedAppCount": { "type": "integer", "minimum": 0 },
+        "scrapeEnabled": { "type": "boolean" }, "auditEnabled": { "type": "boolean" }
+      }
+    },
+    "restartRequired": { "type": "boolean" },
+    "environmentKeys": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z0-9_]+$" } }
+  }
+}

@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { ActionProvenance, DataLabel, ExecutionMode, TargetEvidence } from './runtime/types.js'
 
 export interface ToolResult {
   content: Array<
@@ -59,6 +60,25 @@ export interface FillFormField {
   value: string
 }
 
+export interface V8ActionRequest {
+  sessionId: string
+  actionId?: string
+  attempt?: number
+  executionGroupId?: string
+  agentId?: string
+  tool: string
+  operation?: string
+  certificationId?: string
+  arguments: Record<string, unknown>
+  mode: ExecutionMode
+  target?: TargetEvidence
+  dataLabels?: DataLabel[]
+  provenance?: ActionProvenance
+  expiresInMs?: number
+  leaseId?: string
+  approvalGrantId?: string
+}
+
 export type OpenAIComputerAction = {
   type?: string
   action?: string
@@ -69,6 +89,7 @@ export interface ComputerUseClient {
   listTools(): Promise<ListedTool[]>
   callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>
   listResources?(): Promise<Array<{ uri: string; name: string; description?: string; mimeType?: string }>>
+  listResourceTemplates?(): Promise<Array<{ uriTemplate: string; name: string; description?: string; mimeType?: string }>>
   readResource?(uri: string): Promise<unknown>
   listPrompts?(): Promise<Array<{ name: string; description?: string; arguments?: unknown }>>
   getPrompt?(name: string, args?: Record<string, string>): Promise<unknown>
@@ -153,6 +174,30 @@ export interface ComputerUseClient {
   scrape(url: string, opts?: { query?: string; useDom?: boolean }): Promise<ToolResult>
   resizeWindow(opts: { windowName?: string; windowId?: number; windowSize?: [number, number]; windowLoc?: [number, number] }): Promise<ToolResult>
   snapshot(opts?: { useVision?: boolean; useAnnotation?: boolean; gridLines?: [number, number]; display?: number[]; width?: number; targetApp?: string }): Promise<ToolResult>
+  // v8 developer-preview facade (requires COMPUTER_USE_V8=true / enableV8)
+  getExecutionCapabilities(tool: string, appId?: string): Promise<ToolResult>
+  getCertificationTrace(certificationId: string): Promise<ToolResult>
+  previewAction(request: V8ActionRequest): Promise<ToolResult>
+  executeAction(request: V8ActionRequest & { actionId: string }): Promise<ToolResult>
+  acquireControlLease(request: { sessionId: string; agentId?: string; kind: 'cooperative' | 'exclusive'; mode: 'background' | 'foreground'; ttlMs: number; actionBudget: number; priority?: number; appIds?: string[]; windowIds?: Array<string | number>; displayIds?: string[] }): Promise<ToolResult>
+  releaseControlLease(leaseId: string): Promise<ToolResult>
+  emergencyStop(reason?: string): Promise<ToolResult>
+  startSession(opts?: { objective?: string; executionGroupId?: string }): Promise<ToolResult>
+  getSession(sessionId: string): Promise<ToolResult>
+  pauseSession(sessionId: string, reason?: string): Promise<ToolResult>
+  resumeSession(sessionId: string): Promise<ToolResult>
+  takeOver(sessionId: string): Promise<ToolResult>
+  stopSession(sessionId: string, reason?: string): Promise<ToolResult>
+  approveAction(sessionId: string, actionId: string, ttlMs?: number): Promise<ToolResult>
+  completeSession(sessionId: string, evidence: { summary: string; postconditions: Array<{ description: string; satisfied: boolean; evidenceHash?: string }>; lastAppId?: string; lastWindowId?: string | number; actionCounts: Record<string, number>; reason?: string }): Promise<ToolResult>
+  getSessionEvents(sessionId: string, opts?: { afterSequence?: number; limit?: number }): Promise<ToolResult>
+  submitFollowUp(sessionId: string, instruction: string): Promise<ToolResult>
+  getFollowUps(sessionId: string, opts?: { afterSequence?: number; limit?: number }): Promise<ToolResult>
+  deleteSession(sessionId: string): Promise<ToolResult>
+  pruneSessions(olderThan: string, limit?: number): Promise<ToolResult>
+  reserveTarget(request: { sessionId: string; intentId: string; executionGroupId?: string; agentId?: string; appId: string; windowId?: string | number; ttlMs: number }): Promise<ToolResult>
+  releaseTargetReservation(sessionId: string, reservationId: string): Promise<ToolResult>
+  onboarding(action: 'start' | 'status' | 'diagnose' | 'test_capture' | 'show_pointer' | 'confirm_pointer' | 'test_pointer' | 'test_semantic' | 'acknowledge_emergency' | 'configure' | 'complete', args?: Record<string, unknown>): Promise<ToolResult>
 }
 
 export async function connectStdio(command: string, args: string[], cwd?: string): Promise<ComputerUseClient> {
@@ -175,6 +220,49 @@ function targetArgs(app?: string, opts?: WindowTargetOpts): Record<string, unkno
     ...(app ? { target_app: app } : {}),
     ...(opts?.targetWindowId !== undefined ? { target_window_id: opts.targetWindowId } : {}),
     ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
+  }
+}
+
+function v8ActionArgs(request: V8ActionRequest): Record<string, unknown> {
+  const target = request.target
+  return {
+    session_id: request.sessionId,
+    ...(request.actionId ? { action_id: request.actionId } : {}),
+    ...(request.attempt !== undefined ? { attempt: request.attempt } : {}),
+    ...(request.executionGroupId ? { execution_group_id: request.executionGroupId } : {}),
+    ...(request.agentId ? { agent_id: request.agentId } : {}),
+    tool: request.tool,
+    ...(request.operation ? { operation: request.operation } : {}),
+    ...(request.certificationId ? { certification_id: request.certificationId } : {}),
+    arguments: request.arguments,
+    mode: request.mode,
+    ...(target ? { target: {
+      platform: target.platform,
+      app_id: target.appId,
+      ...(target.pid !== undefined ? { pid: target.pid } : {}),
+      ...(target.windowId !== undefined ? { window_id: target.windowId } : {}),
+      ...(target.windowTitleDigest ? { window_title_digest: target.windowTitleDigest } : {}),
+      ...(target.displayId ? { display_id: target.displayId } : {}),
+      ...(target.role ? { role: target.role } : {}),
+      ...(target.labelDigest ? { label_digest: target.labelDigest } : {}),
+      ...(target.bounds ? { bounds: target.bounds } : {}),
+      observation_id: target.observationId,
+      ...(target.screenshotHash ? { screenshot_hash: target.screenshotHash } : {}),
+      ...(target.uiTreeRevision ? { ui_tree_revision: target.uiTreeRevision } : {}),
+      confidence: target.confidence,
+      captured_at: target.capturedAt,
+    } } : {}),
+    ...(request.dataLabels ? { data_labels: request.dataLabels } : {}),
+    ...(request.provenance ? { provenance: {
+      untrusted_instruction: request.provenance.untrustedInstruction,
+      source_observation_ids: request.provenance.sourceObservationIds,
+      ...(request.provenance.crossesDataBoundary !== undefined
+        ? { crosses_data_boundary: request.provenance.crossesDataBoundary }
+        : {}),
+    } } : {}),
+    ...(request.expiresInMs !== undefined ? { expires_in_ms: request.expiresInMs } : {}),
+    ...(request.leaseId ? { lease_id: request.leaseId } : {}),
+    ...(request.approvalGrantId ? { approval_grant_id: request.approvalGrantId } : {}),
   }
 }
 
@@ -207,6 +295,15 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
         name: res.name,
         description: res.description,
         mimeType: res.mimeType,
+      }))
+    },
+    async listResourceTemplates() {
+      const result = await client.listResourceTemplates()
+      return result.resourceTemplates.map(template => ({
+        uriTemplate: template.uriTemplate,
+        name: template.name,
+        description: template.description,
+        mimeType: template.mimeType,
       }))
     },
     async readResource(uri: string) {
@@ -355,5 +452,77 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     scrape: (url, opts?) => call('scrape', { url, ...(opts?.query ? { query: opts.query } : {}), ...(opts?.useDom !== undefined ? { use_dom: opts.useDom } : {}) }),
     resizeWindow: (opts) => call('resize_window', { ...(opts.windowName ? { window_name: opts.windowName } : {}), ...(opts.windowId !== undefined ? { window_id: opts.windowId } : {}), ...(opts.windowSize ? { window_size: opts.windowSize } : {}), ...(opts.windowLoc ? { window_loc: opts.windowLoc } : {}) }),
     snapshot: (opts?) => call('snapshot', { ...(opts?.useVision !== undefined ? { use_vision: opts.useVision } : {}), ...(opts?.useAnnotation !== undefined ? { use_annotation: opts.useAnnotation } : {}), ...(opts?.gridLines ? { grid_lines: opts.gridLines } : {}), ...(opts?.display ? { display: opts.display } : {}), ...(opts?.width ? { width: opts.width } : {}), ...(opts?.targetApp ? { target_app: opts.targetApp } : {}) }),
+    getExecutionCapabilities: (tool, appId?) => call('get_execution_capabilities', { tool, ...(appId ? { app_id: appId } : {}) }),
+    getCertificationTrace: certificationId => call('get_certification_trace', { certification_id: certificationId }),
+    previewAction: (request) => call('preview_action', v8ActionArgs(request)),
+    executeAction: (request) => call('execute_action', v8ActionArgs(request)),
+    acquireControlLease: (request) => call('acquire_control_lease', {
+      session_id: request.sessionId,
+      ...(request.agentId ? { agent_id: request.agentId } : {}),
+      kind: request.kind,
+      mode: request.mode,
+      ttl_ms: request.ttlMs,
+      action_budget: request.actionBudget,
+      ...(request.priority !== undefined ? { priority: request.priority } : {}),
+      ...(request.appIds ? { app_ids: request.appIds } : {}),
+      ...(request.windowIds ? { window_ids: request.windowIds } : {}),
+      ...(request.displayIds ? { display_ids: request.displayIds } : {}),
+    }),
+    releaseControlLease: (leaseId) => call('release_control_lease', { lease_id: leaseId }),
+    emergencyStop: (reason?) => call('emergency_stop', { ...(reason ? { reason } : {}) }),
+    startSession: (opts?) => call('start_session', {
+      ...(opts?.objective ? { objective: opts.objective } : {}),
+      ...(opts?.executionGroupId ? { execution_group_id: opts.executionGroupId } : {}),
+    }),
+    getSession: (sessionId) => call('get_session', { session_id: sessionId }),
+    pauseSession: (sessionId, reason?) => call('pause_session', { session_id: sessionId, ...(reason ? { reason } : {}) }),
+    resumeSession: (sessionId) => call('resume_session', { session_id: sessionId }),
+    takeOver: (sessionId) => call('take_over', { session_id: sessionId }),
+    stopSession: (sessionId, reason?) => call('stop_session', { session_id: sessionId, ...(reason ? { reason } : {}) }),
+    approveAction: (sessionId, actionId, ttlMs?) => call('approve_action', {
+      session_id: sessionId, action_id: actionId, ...(ttlMs !== undefined ? { ttl_ms: ttlMs } : {}),
+    }),
+    completeSession: (sessionId, evidence) => call('complete_session', {
+      session_id: sessionId,
+      summary: evidence.summary,
+      postconditions: evidence.postconditions.map(item => ({
+        description: item.description, satisfied: item.satisfied,
+        ...(item.evidenceHash ? { evidence_hash: item.evidenceHash } : {}),
+      })),
+      ...(evidence.lastAppId ? { last_app_id: evidence.lastAppId } : {}),
+      ...(evidence.lastWindowId !== undefined ? { last_window_id: evidence.lastWindowId } : {}),
+      action_counts: evidence.actionCounts,
+      ...(evidence.reason ? { reason: evidence.reason } : {}),
+    }),
+    getSessionEvents: (sessionId, opts?) => call('get_session_events', {
+      session_id: sessionId,
+      ...(opts?.afterSequence !== undefined ? { after_sequence: opts.afterSequence } : {}),
+      ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
+    }),
+    submitFollowUp: (sessionId, instruction) => call('submit_follow_up', { session_id: sessionId, instruction }),
+    getFollowUps: (sessionId, opts?) => call('get_follow_ups', {
+      session_id: sessionId,
+      ...(opts?.afterSequence !== undefined ? { after_sequence: opts.afterSequence } : {}),
+      ...(opts?.limit !== undefined ? { limit: opts.limit } : {}),
+    }),
+    deleteSession: (sessionId) => call('delete_session', { session_id: sessionId, confirm: true }),
+    pruneSessions: (olderThan, limit?) => call('prune_sessions', {
+      older_than: olderThan,
+      ...(limit !== undefined ? { limit } : {}),
+      confirm: true,
+    }),
+    reserveTarget: (request) => call('reserve_target', {
+      session_id: request.sessionId,
+      intent_id: request.intentId,
+      ...(request.executionGroupId ? { execution_group_id: request.executionGroupId } : {}),
+      ...(request.agentId ? { agent_id: request.agentId } : {}),
+      app_id: request.appId,
+      ...(request.windowId !== undefined ? { window_id: request.windowId } : {}),
+      ttl_ms: request.ttlMs,
+    }),
+    releaseTargetReservation: (sessionId, reservationId) => call('release_target_reservation', {
+      session_id: sessionId, reservation_id: reservationId,
+    }),
+    onboarding: (action, args?) => call('onboarding', { action, ...args }),
   }
 }

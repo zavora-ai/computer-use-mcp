@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/conformance-report.schema.json",
+  "title": "computer-use-mcp v8 conformance report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "protocol", "runtimeVersion", "generatedAt", "evidence",
+    "certifications", "badges", "platformCoverage", "reportDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "computer-use-v8-preview" },
+    "runtimeVersion": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "conformance-evidence.schema.json" }
+    },
+    "certifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path", "certificationId", "traceDigest", "platform", "appId", "appVersion",
+          "operation", "approach", "observedAt", "passed"
+        ],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "certificationId": { "type": "string", "pattern": "^cert_[a-f0-9]{32}$" },
+          "traceDigest": { "$ref": "#/$defs/digest" },
+          "platform": { "type": "string", "minLength": 1 },
+          "appId": { "type": "string", "minLength": 1 },
+          "appVersion": { "type": "string", "minLength": 1 },
+          "operation": { "type": "string", "minLength": 1 },
+          "approach": { "enum": ["scripting", "ax", "uia", "physical_input", "other"] },
+          "observedAt": { "type": "string", "format": "date-time" },
+          "passed": { "type": "boolean" }
+        }
+      }
+    },
+    "badges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["background-safe", "supervisor-ready", "policy-v2", "multi-agent-safe"],
+      "properties": {
+        "background-safe": { "$ref": "#/$defs/badge" },
+        "supervisor-ready": { "$ref": "#/$defs/badge" },
+        "policy-v2": { "$ref": "#/$defs/badge" },
+        "multi-agent-safe": { "$ref": "#/$defs/badge" }
+      }
+    },
+    "platformCoverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["platform", "liveBackgroundApproaches", "operations"],
+        "properties": {
+          "platform": { "type": "string", "minLength": 1 },
+          "liveBackgroundApproaches": {
+            "type": "array", "uniqueItems": true,
+            "items": { "enum": ["scripting", "ax", "uia", "physical_input", "other"] }
+          },
+          "operations": {
+            "type": "array", "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "reportDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "badge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidenceLevel", "satisfied", "missing"],
+      "properties": {
+        "status": { "enum": ["pass", "partial", "unassessed"] },
+        "evidenceLevel": { "enum": ["live", "integration", "deterministic", "none"] },
+        "satisfied": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "missing": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+      }
+    }
+  }
+}

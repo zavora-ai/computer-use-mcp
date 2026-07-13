@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "protocol": "computer-use-v8-release-artifacts",
+  "rootPackage": "@zavora-ai/computer-use-mcp",
+  "rootVersion": "7.0.0",
+  "artifacts": [
+    {
+      "filename": "computer-use-napi.darwin-arm64.node",
+      "platform": "darwin",
+      "arch": "arm64",
+      "format": "mach-o",
+      "packageName": "@zavora-ai/computer-use-mcp-darwin-arm64",
+      "packageVersion": "7.0.0",
+      "size": 1352512,
+      "sha256": "sha256:f4ce52de39aa18b7adbea86c2476f5f705cdd198dd0d5ab62fa480088cfe03f4"
+    }
+  ],
+  "manifestDigest": "sha256:3e28a4e773f0dd119b0af1493cfb90fef5f6e5fe044d4aecb3a1ad4b448ecd3b"
+}

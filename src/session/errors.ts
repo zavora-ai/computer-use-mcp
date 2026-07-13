@@ -1,6 +1,6 @@
 /**
  * Session error types — extracted verbatim from session.ts (PR-13b split).
- * `LockError` stays with the lock/pump logic in session.ts.
+ * `LockError` lives with the extracted lock/pump service in `lock.ts`.
  */
 
 export interface FocusFailure {

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/contracts/computer-use/v8/browser-page-evidence.schema.json",
+  "title": "BrowserPageEvidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bridgeId", "pageId", "url", "observationId", "domRevision",
+    "confidence", "capturedAt"
+  ],
+  "properties": {
+    "bridgeId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    "pageId": { "type": "string", "minLength": 1 },
+    "url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+    "observationId": { "type": "string", "minLength": 1 },
+    "domRevision": { "type": "string", "minLength": 1 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "screenshotHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

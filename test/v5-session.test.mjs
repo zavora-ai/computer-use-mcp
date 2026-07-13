@@ -177,6 +177,15 @@ function makeSession(extraNativeOverrides = {}, extraOpts = {}) {
   return { native, session }
 }
 
+test('native emergency latch blocks raw compatibility mutations but not observation', async () => {
+  const { session } = makeSession({ isNativeEmergencyStopActive: () => true })
+  const mutation = await session.dispatch('key', { key: 'a' })
+  assert.equal(mutation.isError, true)
+  assert.equal(JSON.parse(mutation.content[0].text).error, 'emergency_stop_active')
+  const observation = await session.dispatch('get_tool_guide', { task_description: 'inspect a window' })
+  assert.notEqual(observation.isError, true)
+})
+
 // ── Property 1: v5 observation tools never mutate TargetState ────────────────
 // Also Property 2: they only call read-only native methods.
 
@@ -399,7 +408,7 @@ test('Feature: v5-accessible-ui-automation, Property 4: run_script never mutates
 test('Feature: v5-accessible-ui-automation, Property 5: fill_form partial failure', async () => {
   await fc.assert(
     fc.asyncProperty(
-      fc.array(
+      fc.uniqueArray(
         fc.record({
           role: fc.constantFrom('AXTextField', 'AXTextArea'),
           label: fc.string({ minLength: 1, maxLength: 20 }),
@@ -407,7 +416,11 @@ test('Feature: v5-accessible-ui-automation, Property 5: fill_form partial failur
           // Outcome flag on each field
           outcome: fc.constantFrom('ok', 'not_found', 'read_only'),
         }),
-        { minLength: 1, maxLength: 10 },
+        {
+          minLength: 1,
+          maxLength: 10,
+          selector: field => `${field.role}|${field.label}`,
+        },
       ),
       async (fields) => {
         const native = createMockNative()

@@ -47,7 +47,7 @@ It also ships a typed TypeScript client so you can drive your Mac programmatical
 
 ## What's new in v7.0
 
-- **Cancellation** — tool calls honor the MCP host `AbortSignal`: `wait` returns early and `run_script` kills its child process when the host cancels.
+- **Cancellation** — tool calls honor the MCP host `AbortSignal`: `wait` returns early and `run_script` terminates its subprocess tree when the host cancels (POSIX process groups; recursive Windows `taskkill`).
 - **Progress notifications** — long `filesystem` searches emit `notifications/progress` when the request carries a progress token (silent otherwise).
 - **Filesystem jail** — `COMPUTER_USE_FS_ROOTS` confines the `filesystem` tool to allowlisted roots, blocking `..` traversal and symlink escapes.
 - **Native binary resolver + packaging** — `COMPUTER_USE_NATIVE_PATH` override → optional per-platform package → bundled binary; installs never fail on the native layer.
@@ -860,6 +860,125 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_FS_ROOTS` | Optional filesystem jail. Comma-separated absolute roots; when set, the `filesystem` tool may only touch paths inside a root. Blocks `..` traversal and symlink escapes (resolved via `realpath`). Unset = unrestricted (legacy). |
 | `COMPUTER_USE_NATIVE_PATH` | Explicit path to the native `.node` addon, overriding automatic resolution (optional platform package → legacy root binary). Useful for custom builds or non-standard install layouts. |
 | `COMPUTER_USE_LEGACY_FOCUS_TAG` | Append the legacy `[focusRequired: X]` suffix to tool descriptions. **Off by default in v7** (`focusRequired` is still available via `_meta` and `get_tool_metadata`). Set `true` to restore the suffix. |
+| `COMPUTER_USE_V8` | Enable the additive v8 action/session/lease facade. The 64-tool v7 surface remains the default. |
+| `COMPUTER_USE_EMERGENCY_STOP_CHORD` | Global physical emergency-stop chord for v8 on macOS/Windows. Defaults to `ctrl+alt+shift+escape`; requires at least two modifiers and an `escape` or `f12` trigger. It latches native input off until the authenticated host/supervisor resets it. |
+| `COMPUTER_USE_EXPERIMENTAL_TASKS` | Opt in to the experimental MCP Tasks adapter for principal-bound v8 sessions. Requires `COMPUTER_USE_V8=true`; cancellation stops the authoritative v8 session and revokes its lease. |
+| `COMPUTER_USE_ACTIVE_PROFILE` | Runtime-visible surface inside the immutable `COMPUTER_USE_PROFILE` maximum. Use `v8-safe` to expose only governed v8 facade tools and hide every raw actuator/observer. |
+| `COMPUTER_USE_V8_ALLOW_SCRAPE` | Explicitly allow `scrape` through the v8 default policy. Off by default. |
+| `COMPUTER_USE_V8_ALLOWED_DOMAINS` | Comma-separated domain allowlist for v8 network resources; subdomains match an allowed parent domain. |
+| `COMPUTER_USE_V8_REGISTRY_HIVES` | Comma-separated Windows registry prefixes allowed through v8 policy. |
+| `COMPUTER_USE_V8_BLOCKED_PROCESSES` | Comma-separated process names denied through v8 policy. |
+| `COMPUTER_USE_RECEIPT_DIR` | Durable idempotency receipt directory. Result/image bytes remain memory-only by default. |
+| `COMPUTER_USE_SESSION_DIR` | Durable session directory. Recovered nonterminal sessions always start paused. |
+| `COMPUTER_USE_MAX_SESSIONS` | Maximum durable session records (default `1000`). New sessions fail closed at the limit until terminal sessions are explicitly pruned. |
+| `COMPUTER_USE_EVENT_JOURNAL` | Opt-in redacted, integrity-chained supervisor event journal. |
+| `COMPUTER_USE_EVENT_JOURNAL_MAX_BYTES` | Maximum event-journal size in bytes (default `67108864`). Appends fail closed at the limit; terminal-session pruning rewrites a valid retained chain with a retention marker. |
+| `COMPUTER_USE_ONBOARDING_DIR` | Optional private directory for resumable v8 onboarding state. Raw screenshots and accessibility trees are never persisted by onboarding. |
+| `COMPUTER_USE_CERTIFICATION_DIR` | Private directory for atomic, mode-`0600`, digest-verifiable background-capability traces. Defaults to `~/.computer-use-mcp/certifications`. |
+| `COMPUTER_USE_CERTIFICATION_SANDBOX` | Root used by reversible reference-adapter probes. Paths are realpath-confined and symlink escape is rejected. Defaults to `~/.computer-use-mcp/certification-sandbox`. |
+| `COMPUTER_USE_SUPERVISOR_SOCKET` | Opt-in local PiP supervisor socket. Requires v8 and a supervisor token. |
+| `COMPUTER_USE_SUPERVISOR_TOKEN` | Explicit local supervisor secret of at least 32 characters; never exposed to renderer code. |
+| `COMPUTER_USE_SCRIPT_ENV_ALLOWLIST` | Comma-separated variable names that model-authored scripts may inherit when their names look secret-bearing. Supervisor/remote/principal/session/approval control-plane variables are always stripped and cannot be allowlisted. |
+| `COMPUTER_USE_REMOTE_HOST_MODULE` | Host adapter module required by the optional remote-sidecar CLI. It constructs principal-bound `v8-safe` servers and handles authorization loss. |
+| `COMPUTER_USE_REMOTE_AUTH_STORE` | Private device-authorization file used by the remote CLI. Stores token hashes, never bearer-token bytes. |
+| `COMPUTER_USE_REMOTE_AUTH_VAULT` | Set to `os` to use the first-party macOS Keychain, Windows DPAPI CurrentUser, or Linux Secret Service backend. Fails closed if the platform binding is unavailable. |
+| `COMPUTER_USE_REMOTE_AUTH_VAULT_DIR` | Optional Windows-only directory for atomically stored DPAPI ciphertext. Defaults beneath the current user's `LOCALAPPDATA`. |
+| `COMPUTER_USE_REMOTE_HOST` / `COMPUTER_USE_REMOTE_PORT` | Remote sidecar bind address and port. Defaults to `127.0.0.1:7331`; wildcard/public binds are rejected. |
+| `COMPUTER_USE_REMOTE_ALLOW_LAN` | Permit an explicit private LAN address only when set to `true` and TLS key/certificate files are supplied. |
+| `COMPUTER_USE_REMOTE_TLS_KEY` / `COMPUTER_USE_REMOTE_TLS_CERT` | TLS material required together for LAN operation. |
+| `COMPUTER_USE_REMOTE_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the remote sidecar. Browser origins are denied by default. |
+| `COMPUTER_USE_REMOTE_AUTH_VAULT_KEY` | Non-secret record key used by an injected or first-party synchronous durable credential vault. Defaults to `computer-use-remote/device-authorizations`. |
+
+Run `npx computer-use-onboard` for the reference terminal setup. It performs
+diagnostics, capture, virtual-pointer confirmation, a read-only accessibility
+probe, disclosure-safe operating-system permission guidance, explicit
+emergency-stop presentation/acknowledgment, and least-privilege
+policy selection. It refuses to configure a profile before the stop mechanism
+has been presented and acknowledged, then prints a restart-required
+environment block but never edits shell profiles or applies configuration
+implicitly. Use `--resume <onboarding-id>` to continue durable setup, or
+`--non-interactive --pointer-confirmed --emergency-stop-acknowledged --window-id <id>`
+in managed hosts. The generated profile records the configured chord while
+reporting platforms without a physical global chord as API-stop-only.
+The `@zavora-ai/computer-use-mcp/onboarding` export provides the same terminal
+runner plus `DesktopSetupController` and the disclosure-safe `SetupViewModel`.
+Packaged Electron, Tauri, and shared WebView references live under
+`examples/v8-*-setup.mjs`; their renderer contract intentionally excludes
+principal/window IDs, paths, app IDs, environment values, pixels, and UI-tree
+content. Permission labels, statuses, remediation text, and macOS Settings URIs
+are reconstructed from a local allowlist; raw doctor summaries never cross into
+renderer state. A trusted Electron/Tauri host may inject
+`openPermissionSettings(uri)` and may spread `createNativePermissionHost()`
+into `DesktopSetupController`. The native host adapter uses macOS TCC
+status/request APIs for Accessibility and Screen Capture, reruns diagnostics
+after an explicit renderer gesture, and discards native backend output before
+rendering. `canRequestInProcess` and `canOpenSettings` are separate capability
+facts. Renderer commands carry only an allowlisted permission ID; Automation,
+arbitrary URLs, and unsupported-platform prompts fail closed. Neither opening
+settings nor requesting permission is registered as an MCP tool.
+
+On macOS and Windows, the governed v8 path disables physical mouse/keyboard
+actions if the native monitor cannot distinguish physical user activity from
+injected events. macOS uses a passive hardware-source event tap; Windows uses
+low-level hook injection flags. The capability and fail-closed setting are
+published in `computer://capabilities/manifest`. Linux currently reports this
+attribution unavailable. After building the native module, run
+`npm run test:input-attribution`; add `-- --interactive` to measure a real
+physical event against the 100 ms release target.
+
+Background certification is deliberately an operator workflow, not an MCP
+mutation tool. Run `npm run certify:background -- finder` on macOS or
+`npm run certify:background -- powershell` on Windows. A passing trace is bound
+to the installed app version, adapter version, exact low-level tool, canonical
+action contract, instance authority (such as the canonical sandbox root), live
+interference evidence, expiry, and SHA-256 digest. An agent must
+pass the returned `certification_id` to `preview_action`/`execute_action`; an
+operation label alone never inherits background authority. App-version changes,
+expiry, mismatched arguments, or a missing trusted adapter fail closed. The MCP
+surface exposes only the redacted `get_certification_trace` reader.
+
+For an existing non-sensitive text control, an operator can run
+`npm run certify:semantic -- --app-id=... --window-id=... --role=AXTextField --label=...`.
+The shared macOS AX/Windows UIA adapter binds the exact app, live window, role,
+label digest, and value-size limit. Certified execution calls the native
+semantic primitive directly inside the v8 policy/lease/receipt transaction; it
+does not enter the legacy `set_value` handler that acquires foreground focus.
+The probe writes a random marker, reads it back, restores the original value,
+reads the rollback back, and rejects password/credential-like targets.
+
+Run `npm run conformance:v8` to execute the public policy, multi-agent, and
+supervisor suites and combine their source/output digests with live capability
+traces. The report carries an integrity digest and explicit evidence levels.
+Overall `background-safe` and `supervisor-ready` badges require both macOS and
+Windows proof; one platform produces `partial`, not a global pass. The checked-in
+report under `docs/conformance/v8/` currently passes deterministic `policy-v2`
+and `multi-agent-safe`, while accurately reporting partial live platform and
+supervisor coverage. Reports are self-attested build evidence, not a substitute
+for signed release provenance or independent security review.
+
+With v8 enabled, `computer://session/current` and the
+`computer://session/{sessionId}` resource template expose only sessions owned by
+the authenticated host principal. MCP Tasks are a wire projection over that
+lifecycle—not an independent execution engine. A recovered session remains
+paused, and task cancellation stops v8 before the task is considered cancelled.
+`computer://capabilities/manifest` provides a digest-bearing, machine-readable
+view of the active/maximum profiles, execution modes, persistence features,
+native input-monitor limitations, and per-actuator interference contracts.
+`get_session_events` returns a paginated audit-export envelope bound to the
+stable JSON Schema and SHA-256 digest published at `computer://audit/schema`.
+When the opt-in durable journal is active, exported events retain their
+`previousHash`/`hash` links so hosts can verify the disclosed chain.
+
+The optional `@zavora-ai/computer-use-remote` package provides authenticated
+MCP Streamable HTTP without changing stdio defaults. Pairing is short-lived,
+nonce-bound, one-time, and requires explicit confirmation on the local host.
+Each 256-bit MCP session ID is bound to one bearer-token authorization context;
+rotation, revocation, expiry, disconnect, host lock, relay loss, or sidecar
+shutdown pauses owned work and revokes control. A separate resumable SSE feed
+streams principal-owned redacted events, while screen pixels require the
+distinct `computer:screenshot` scope and an explicit governed action result.
+`submit_follow_up`/`get_follow_ups` provide bounded remote steering without
+putting instruction text into the audit event stream.
 
 Audit records redact text, scripts, values, messages, and tokens, replacing them with length and SHA-256 hashes. Use `policy_status` to inspect the active policy without exposing the approval token.
 
@@ -902,6 +1021,164 @@ Creates an MCP server instance with all registered tools. The server is not star
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
 const server = createComputerUseServer()
 ```
+
+Embedding hosts can expose a smaller provider-facing tool surface and change it
+at runtime. Changes use the MCP SDK's `notifications/tools/list_changed`
+mechanism. The immutable `profile` is the maximum authority, so negotiation can
+never enable a tool excluded by host configuration.
+
+```typescript
+let toolRegistry
+const server = createComputerUseServer({
+  enableV8: true,
+  profile: 'full',       // host-authorized maximum
+  activeProfile: 'core', // initially visible subset
+  onRegistry: registry => { toolRegistry = registry },
+})
+
+toolRegistry.setActiveProfile('ax')
+```
+
+The public `@zavora-ai/computer-use-mcp/reliability` entry point exports
+`DeterministicFakeDesktop`. Integrators can run the versioned
+`contracts/v8/safety-corpus.json` without capturing a real screen. The bundled
+CI gate covers normal commit/restore, stale-target rejection, post-effect crash
+recovery, in-flight user revocation, and 10,000 seeded lease schedules.
+
+The same entry point now exports the v8 reliability-lab API. The public
+[`reliability-lab-corpus.json`](contracts/v8/reliability-lab-corpus.json)
+separately tracks deterministic, integration, and live evidence for mixed-DPI
+displays, UAC/integrity boundaries, remote/lock/sleep/VM sessions, macOS
+Spaces/full-screen/Stage Manager, X11 and three Wayland families, and focus,
+notification, overlay, and modal interference. Run the safe baseline with:
+
+```bash
+npm run reliability:v8
+```
+
+The default runner passes only its three image-free deterministic guards and
+leaves interactive rows as `not_run`. It never converts a headless CI result
+into live proof. Interactive labs can supply an explicit module:
+
+```bash
+node scripts/run-v8-reliability-lab.mjs \
+  --probe-module ./private-lab/probes.mjs
+```
+
+That module exports `probes`, keyed by scenario ID. Each probe receives the
+scenario, platform, approach, and clock, and returns its evidence level,
+environment facts, named assertions, raw observation counters/latencies, and a
+digest of the actual probe source. A passing `live` result requires
+`environment.interactive: true`, every corpus assertion, and every required
+environment fact. The report recomputes success, attribution, stale-block,
+restoration, interference, unintended-mutation, and p50/p95 latency metrics by
+platform, approach, and evidence level. Result and report digests detect edits.
+
+The packaged physical emergency-chord probe is opt-in and requires a present
+operator. It runs with no MCP transport attached, blocks inside the native
+addon, measures hook-to-observer latency, attempts and rejects a post-latch
+mutation, then resets through the host-only native path:
+
+```bash
+COMPUTER_USE_LIVE_EMERGENCY_PROBE=true npm run reliability:emergency-chord
+```
+
+Without that explicit opt-in and an interactive TTY it reports `blocked`; it
+cannot create live evidence in headless CI.
+
+The current published workstation baseline is
+[`reliability-report-2026-07-13.json`](docs/conformance/v8/reliability-report-2026-07-13.json):
+3 deterministic cells pass, 16 local cells remain unrun, and no live platform
+claim is made. CI emits a separate report artifact on macOS, Windows, Linux
+x64, and Linux arm64 so release reviewers can inspect environments separately.
+
+### Release integrity
+
+Release CI builds all five native targets independently, then generates a
+versioned `release-artifacts.json` that binds each optional package and exact
+target identity to its Mach-O/PE/ELF format, byte length, and SHA-256 digest.
+Copied platform-package binaries are verified against that manifest. If an npm
+version already exists, CI downloads it and compares the published native bytes
+or main-tarball integrity; mismatched immutable versions fail with a required
+version bump instead of being silently skipped.
+
+The workflow packs once and publishes those exact tarballs, produces a
+CycloneDX SBOM, attaches GitHub build/SBOM attestations, and uses npm provenance.
+The main package cannot publish after a platform-package failure. A separate
+tarball install matrix imports the public client, runtime, reliability, and
+release entry points on Node 18, 20, 22, and current with optional packages
+omitted, proving the bundled native fallback remains installable. Locally, a
+partial manifest for available binaries can be inspected with:
+
+```bash
+npm run release:manifest -- --allow-missing
+```
+
+Code signing and notarization still require release credentials and platform
+services; the manifest and provenance checks do not claim to replace them.
+
+Release stage decisions are also executable:
+
+```bash
+npm run readiness:v8       # report without failing the shell
+npm run readiness:gate     # exit 2 unless the requested stage is proven
+```
+
+The evaluator has ten built-in, non-removable gates spanning governed runtime,
+dual-platform background purity, supervisor isolation, ADK crash/resume,
+supported-target CI, hardware revocation, live reliability, all native
+artifacts, platform signing, and independent review. External evidence is
+version-bound, expiring, Ed25519-signed, and bound to report/artifact digests;
+the host supplies the trusted public-key map. Deleting a gate, editing a claim,
+recomputing a public report digest, using an untrusted key, or replaying expired
+evidence cannot produce `go`.
+
+The checked-in
+[`readiness-report-2026-07-13.json`](docs/conformance/v8/readiness-report-2026-07-13.json)
+is intentionally `no_go` with `highestReadyStage: none`. This reflects missing
+Windows live background proof, trusted ADK/CI/hardware evidence, the interactive
+reliability matrix, complete release artifacts, signing/notarization, and review.
+
+The `@zavora-ai/computer-use-mcp/runtime` entry point exports
+`adaptProviderAction` and `adaptProviderActions`. They normalize OpenAI,
+Anthropic, Gemini, and generic MCP action shapes before every expanded action
+enters the same policy, evidence, lease, receipt, and event pipeline. Gemini's
+normalized 1000×1000 coordinates are converted only against host-observed
+viewport geometry; model-supplied geometry, target identity, principal,
+approval, and safety-decision fields grant no authority. Pixel scroll
+magnitudes require an explicit host conversion factor, and browser-only
+commands require a separate browser bridge. This follows Google's documented
+[Computer Use action protocol](https://ai.google.dev/gemini-api/docs/computer-use)
+without pretending browser operations are desktop primitives.
+
+Runnable host patterns are included for the [direct SDK lifecycle](examples/v8-direct-sdk.mjs)
+and a [LangGraph-compatible durable executor](examples/v8-langgraph.mjs). The
+graph example checkpoints the v8 session before review interrupts and derives
+stable action IDs from the provider call, so receipt replay prevents duplicate
+mutation after a graph crash/resume.
+
+Embedding hosts may also supply a `BrowserBridge` to `createComputerUseServer`.
+It is an internal-only DOM/CDP actuator: `browser_action` never appears in
+`list_tools` and can be reached only through `preview_action`/`execute_action`.
+Use `browserTargetFromEvidence` to bind the bridge/page identity, URL digest,
+DOM revision, viewport, and observation time. The runtime revalidates that page,
+enforces the requested/current domain, requires the normal mutation lease and
+receipt, and accepts completion only when the bridge returns fresh verified
+post-action evidence. No browser engine or raw JavaScript evaluator is bundled.
+
+```typescript
+import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
+import { browserTargetFromEvidence } from '@zavora-ai/computer-use-mcp/runtime'
+
+const evidence = await trustedCdpHost.observePage()
+const target = browserTargetFromEvidence(evidence)
+const server = createComputerUseServer({ enableV8: true, browserBridge: trustedCdpHost })
+```
+
+Multi-agent planners can call `reserve_target` before requesting the one-writer
+lease. Reservations are short-lived conflict signals, not execution authority;
+`release_target_reservation` releases intent, and session pause/takeover/stop
+cancels outstanding reservations automatically.
 
 ### `connectInProcess(server): Promise<ComputerUseClient>`
 
@@ -1006,7 +1283,7 @@ npm run build:ts            # compiles TypeScript
 | Scripting | `bash` (or `pwsh` if installed) |
 
 **Notes:**
-- Currently supports X11 only. Wayland support is planned.
+- X11 is the fully supported Linux path. Wayland uses compositor-dependent helpers (`ydotool`, portals, `grim`, and GNOME D-Bus where available); capability gaps are reported and must not be treated as equivalent to X11.
 - Accessibility features (UI tree, find_element, click_element) are stubbed — they return empty results rather than errors.
 - The `run_script` tool uses `bash` by default on Linux. Use `language: "bash"` in your scripts.
 
@@ -1067,7 +1344,7 @@ This package has **full control of your computer** when permissions are granted.
 - **Shell injection resistance**: Shell-backed tools use bounded subprocess calls with argument arrays or encoded PowerShell commands. User-provided PowerShell literals are escaped before script construction, and clipboard tools use `pbcopy`/`pbpaste` directly.
 - **Temp file safety**: Screenshots use `O_EXCL` (exclusive create) to prevent symlink attacks, with a monotonic counter to avoid collisions.
 - **Bounded waits**: The `wait` tool is capped at 300 seconds to prevent indefinite hangs.
-- **No network access**: The native module makes no network calls. The MCP server itself makes no network calls. Only the example scripts (`crypto-numbers.ts`) fetch external data.
+- **Explicit network surface**: The native module makes no network calls. The `scrape` tool and user-supplied scripts can access the network; v8 disables `scrape` by default unless explicitly enabled.
 - **Error isolation**: All tool errors are caught and returned as `isError: true` responses rather than crashing the server.
 
 ### Running in production
@@ -1085,7 +1362,7 @@ This package has **full control of your computer** when permissions are granted.
 - **macOS + Windows + Linux.** Each platform has a native Rust backend.
 - **macOS minimum**: macOS 10.15 (Catalina) — required for `NSWorkspaceOpenConfiguration`.
 - **macOS tested on**: macOS 12 (Monterey), 13 (Ventura), 14 (Sonoma), 15 (Sequoia).
-- **Linux**: X11 only (Wayland support planned). Requires `xdotool`, `wmctrl`, `xclip`, `scrot`.
+- **Linux**: X11 has the broadest support. Wayland support is best effort and depends on compositor/portal helpers; semantic accessibility remains limited.
 - **Linux tested on**: Ubuntu 24.04+ (GNOME on X11).
 
 ### Architecture

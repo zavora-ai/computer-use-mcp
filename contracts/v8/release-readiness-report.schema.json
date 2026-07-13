@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/release-readiness-report.schema.json",
+  "title": "Computer Use v8 Release Readiness Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocol", "runtimeVersion", "evaluatedAt", "requestedStage", "decision", "highestReadyStage", "inputs", "gates", "reportDigest"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "computer-use-v8-release-readiness" },
+    "runtimeVersion": { "type": "string", "minLength": 1 },
+    "evaluatedAt": { "type": "string", "format": "date-time" },
+    "requestedStage": { "$ref": "#/$defs/stage" },
+    "decision": { "enum": ["go", "no_go"] },
+    "highestReadyStage": { "oneOf": [{ "$ref": "#/$defs/stage" }, { "const": "none" }] },
+    "reportDigest": { "$ref": "#/$defs/digest" },
+    "inputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["conformanceDigest", "reliabilityDigest", "signedEvidenceDigests"],
+      "properties": {
+        "conformanceDigest": { "$ref": "#/$defs/digest" }, "reliabilityDigest": { "$ref": "#/$defs/digest" },
+        "artifactManifestDigest": { "$ref": "#/$defs/digest" },
+        "adkEvaluationDigest": { "$ref": "#/$defs/digest" },
+        "signedEvidenceDigests": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/digest" } }
+      }
+    },
+    "gates": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "requiredFor", "status", "evidenceLevel", "evidenceDigests", "reasons"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_.-]+$" },
+          "requiredFor": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/stage" } },
+          "status": { "enum": ["pass", "fail", "missing"] },
+          "evidenceLevel": { "enum": ["deterministic", "integration", "live", "signed_external", "none"] },
+          "evidenceDigests": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/digest" } },
+          "reasons": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": { "enum": ["developer_preview", "beta", "stable"] },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

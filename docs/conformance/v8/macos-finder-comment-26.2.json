@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "certificationId": "cert_692fe0c1b553ea6866d652275ac65e91",
+  "platform": "darwin",
+  "adapter": {
+    "id": "zavora.macos.finder-comment",
+    "version": "3"
+  },
+  "app": {
+    "id": "com.apple.finder",
+    "version": "26.2"
+  },
+  "operation": "finder_set_sandbox_file_comment",
+  "tool": "run_script",
+  "backend": "applescript",
+  "contract": {
+    "version": "1",
+    "bindingDigest": "sha256:98346f2033263262b08a45c4f2cc0fac676a13c81c40fb2224cf17d15ed77cd2",
+    "digest": "sha256:458d3215da7fe6cb50d34354d0434d31681d11f1cb68fef1acba3d8286e3b5ea",
+    "description": "Set a Finder comment on an existing file confined to the certification sandbox."
+  },
+  "probe": {
+    "startedAt": "2026-07-13T10:29:35.673Z",
+    "completedAt": "2026-07-13T10:29:36.729Z",
+    "result": {
+      "supported": true,
+      "interference": "none",
+      "focusChanged": false,
+      "physicalInputInjected": false,
+      "pointerMoved": false,
+      "evidence": {
+        "frontmostAppBefore": "com.apple.Safari",
+        "frontmostAppAfter": "com.apple.Safari",
+        "pointerBefore": { "x": 1215, "y": 1079 },
+        "pointerAfter": { "x": 1215, "y": 1079 },
+        "preconditionDigest": "sha256:32243d3f9a8ff2a99f42d27524470f04cf7faade1dbe90f1059aee4c73c9bbbc",
+        "postconditionDigest": "sha256:e013620b8fba2af8fd7897fda4805b8e2a9ee37e1a7b367dd61cdcabf8b2144c",
+        "rollbackDigest": "sha256:61c7546833af0d430c4f43067f2ea18205a985edf54059872d927fe447a9e43c",
+        "environmentDigest": "sha256:8213a9f8826bd9def5a9d33091ec64a30c0c40028988c7ebc06907a5d0897a60",
+        "quietPeriodSatisfied": true,
+        "executionSucceeded": true,
+        "postconditionSatisfied": true,
+        "rollbackSucceeded": true
+      }
+    }
+  },
+  "capability": {
+    "appId": "com.apple.finder",
+    "operation": "finder_set_sandbox_file_comment",
+    "backend": "applescript",
+    "supportedModes": ["shadow", "background", "foreground"],
+    "interference": "none",
+    "confidence": 1,
+    "verifiedAt": "2026-07-13T10:29:36.729Z",
+    "verificationSource": "live_probe",
+    "certification": {
+      "certificationId": "cert_692fe0c1b553ea6866d652275ac65e91",
+      "adapterId": "zavora.macos.finder-comment",
+      "adapterVersion": "3",
+      "appVersion": "26.2",
+      "tool": "run_script",
+      "actionContractDigest": "sha256:458d3215da7fe6cb50d34354d0434d31681d11f1cb68fef1acba3d8286e3b5ea",
+      "probeFingerprint": "sha256:9965754e4e9270b7079ae758088db7d89c3b383db06f8c06376f2221ea8b0d9d",
+      "traceDigest": "sha256:52e93de6f595da9e6ef4a7b3ebaf0c0a114120f491916accdc0c00dd63ddedfd",
+      "validUntil": "2026-07-13T10:29:37.729Z"
+    }
+  },
+  "traceDigest": "sha256:52e93de6f595da9e6ef4a7b3ebaf0c0a114120f491916accdc0c00dd63ddedfd"
+}

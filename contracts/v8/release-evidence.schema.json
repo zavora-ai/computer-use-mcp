@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/release-evidence.schema.json",
+  "title": "Computer Use v8 Signed Release Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "evidenceId", "kind", "platform", "subjectVersion", "observedAt", "expiresAt", "claims", "artifactDigests", "keyId", "signature"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "evidenceId": { "$ref": "#/$defs/digest" },
+    "kind": { "enum": ["ci_matrix", "background_certification", "input_interruption", "adk_graph", "code_signing", "security_review"] },
+    "platform": { "enum": ["darwin", "win32", "linux", "all"] },
+    "subjectVersion": { "type": "string", "minLength": 1 },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "claims": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+    "artifactDigests": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/digest" } },
+    "keyId": { "type": "string", "minLength": 1 },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9+/]+={0,2}$" }
+  },
+  "$defs": { "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

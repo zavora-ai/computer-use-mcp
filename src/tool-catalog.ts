@@ -5,6 +5,7 @@
 
 export type FocusRequired = 'scripting' | 'ax' | 'cgevent' | 'none'
 export type ProfileName = 'core' | 'ax' | 'scripting' | 'windows-admin' | 'full'
+export type SurfaceProfileName = ProfileName | 'v8-safe'
 
 export interface ToolMeta {
   focusRequired: FocusRequired
@@ -77,6 +78,14 @@ export function parseProfile(raw: string | undefined | null): ProfileName {
     return v
   }
   return 'full'
+}
+
+export function parseSurfaceProfile(
+  raw: string | undefined | null,
+  fallback: ProfileName = 'full',
+): SurfaceProfileName {
+  if ((raw ?? '').toLowerCase() === 'v8-safe') return 'v8-safe'
+  return raw === undefined || raw === null ? fallback : parseProfile(raw)
 }
 
 // Shorthand factories

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/release-artifact-manifest.schema.json",
+  "title": "Computer Use v8 Release Artifact Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocol", "rootPackage", "rootVersion", "artifacts", "manifestDigest"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocol": { "const": "computer-use-v8-release-artifacts" },
+    "rootPackage": { "type": "string", "minLength": 1 },
+    "rootVersion": { "type": "string", "minLength": 1 },
+    "manifestDigest": { "$ref": "#/$defs/digest" },
+    "artifacts": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["filename", "platform", "arch", "format", "packageName", "packageVersion", "size", "sha256"],
+        "properties": {
+          "filename": { "type": "string", "pattern": "^computer-use-napi\\.(darwin|win32|linux)-(arm64|x64)\\.node$" },
+          "platform": { "enum": ["darwin", "win32", "linux"] },
+          "arch": { "enum": ["arm64", "x64"] },
+          "format": { "enum": ["mach-o", "pe", "elf"] },
+          "packageName": { "type": "string", "pattern": "^@zavora-ai/computer-use-mcp-(darwin|win32|linux)-(arm64|x64)$" },
+          "packageVersion": { "type": "string", "minLength": 1 },
+          "size": { "type": "integer", "minimum": 1 },
+          "sha256": { "$ref": "#/$defs/digest" }
+        }
+      }
+    }
+  },
+  "$defs": { "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

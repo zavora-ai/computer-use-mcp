@@ -56,10 +56,7 @@ extern "C" {
         attribute: CFStringRef,
         value: *mut RawCFTypeRef,
     ) -> AXError;
-    fn AXUIElementCopyActionNames(
-        element: AXUIElementRef,
-        names: *mut CFArrayRef,
-    ) -> AXError;
+    fn AXUIElementCopyActionNames(element: AXUIElementRef, names: *mut CFArrayRef) -> AXError;
     fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
     fn AXUIElementSetAttributeValue(
         element: AXUIElementRef,
@@ -168,7 +165,9 @@ fn dict_get_f64(dict: CFDictionaryRef, key: &str) -> Option<f64> {
     unsafe {
         let val = dict_raw_get(dict, key)?;
         let cf_num: CFNumber = TCFType::wrap_under_get_rule(val as *const _);
-        cf_num.to_f64().or_else(|| cf_num.to_i64().map(|n| n as f64))
+        cf_num
+            .to_f64()
+            .or_else(|| cf_num.to_i64().map(|n| n as f64))
     }
 }
 
@@ -382,13 +381,12 @@ fn ax_app_and_window_for_cg_window(
     // Step 1: look up PID, title, bounds via CG.
     let (pid, title, bounds) = {
         let array_ref = unsafe {
-            CGWindowListCopyWindowInfo(
-                K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
-                K_CG_NULL_WINDOW_ID,
-            )
+            CGWindowListCopyWindowInfo(K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY, K_CG_NULL_WINDOW_ID)
         };
         if array_ref.is_null() {
-            return Err(napi::Error::from_reason("CGWindowListCopyWindowInfo returned null"));
+            return Err(napi::Error::from_reason(
+                "CGWindowListCopyWindowInfo returned null",
+            ));
         }
         let count = unsafe { CFArrayGetCount(array_ref) } as usize;
 
@@ -547,8 +545,7 @@ fn build_node(
     state.node_count += 1;
 
     let role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
-    let label = ax_copy_string(elem, "AXTitle")
-        .or_else(|| ax_copy_string(elem, "AXDescription"));
+    let label = ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
     let value = node_value_of(elem);
 
     let (x, y) = ax_copy_point(elem).unwrap_or((0.0, 0.0));
@@ -576,11 +573,14 @@ fn build_node(
             }
             unsafe { CFRelease(arr_ref) };
         }
-    } else if ax_copy_children(elem).map(|(r, kids)| {
-        let had = !kids.is_empty();
-        unsafe { CFRelease(r) };
-        had
-    }).unwrap_or(false) {
+    } else if ax_copy_children(elem)
+        .map(|(r, kids)| {
+            let had = !kids.is_empty();
+            unsafe { CFRelease(r) };
+            had
+        })
+        .unwrap_or(false)
+    {
         hit_depth_cap = true;
     }
 
@@ -643,13 +643,19 @@ fn find_visit(
         return;
     }
     let actual_role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
-    let actual_label = ax_copy_string(elem, "AXTitle")
-        .or_else(|| ax_copy_string(elem, "AXDescription"));
+    let actual_label =
+        ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
     let actual_value = node_value_of(elem);
 
-    let role_ok = role.map(|r| r.eq_ignore_ascii_case(&actual_role)).unwrap_or(true);
-    let label_ok = label.map(|l| label_matches(actual_label.as_deref(), l)).unwrap_or(true);
-    let value_ok = value.map(|v| value_matches(actual_value.as_deref(), v)).unwrap_or(true);
+    let role_ok = role
+        .map(|r| r.eq_ignore_ascii_case(&actual_role))
+        .unwrap_or(true);
+    let label_ok = label
+        .map(|l| label_matches(actual_label.as_deref(), l))
+        .unwrap_or(true);
+    let value_ok = value
+        .map(|v| value_matches(actual_value.as_deref(), v))
+        .unwrap_or(true);
 
     if role_ok && label_ok && value_ok {
         let (x, y) = ax_copy_point(elem).unwrap_or((0.0, 0.0));
@@ -698,8 +704,8 @@ fn first_match_visit(
         return;
     }
     let actual_role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
-    let actual_label = ax_copy_string(elem, "AXTitle")
-        .or_else(|| ax_copy_string(elem, "AXDescription"));
+    let actual_label =
+        ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
 
     let role_ok = role.eq_ignore_ascii_case(&actual_role);
     let label_ok = label_matches(actual_label.as_deref(), label);
@@ -734,10 +740,14 @@ fn first_match_visit(
 /// Return a depth-limited JSON tree of the window's AX hierarchy.
 #[napi]
 pub fn get_ui_tree(window_id: u32, max_depth: Option<i32>) -> napi::Result<serde_json::Value> {
-    let max_depth = max_depth.unwrap_or(DEFAULT_MAX_DEPTH).clamp(1, MAX_MAX_DEPTH);
+    let max_depth = max_depth
+        .unwrap_or(DEFAULT_MAX_DEPTH)
+        .clamp(1, MAX_MAX_DEPTH);
 
     let Some((ax_app, ax_win)) = ax_app_and_window_for_cg_window(window_id)? else {
-        return Err(napi::Error::from_reason(format!("window_not_found:{window_id}")));
+        return Err(napi::Error::from_reason(format!(
+            "window_not_found:{window_id}"
+        )));
     };
 
     let mut state = WalkState {
@@ -779,8 +789,7 @@ pub fn get_focused_element() -> napi::Result<serde_json::Value> {
 
     let elem = val as AXUIElementRef;
     let role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
-    let label = ax_copy_string(elem, "AXTitle")
-        .or_else(|| ax_copy_string(elem, "AXDescription"));
+    let label = ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
     let value = node_value_of(elem);
     let (x, y) = ax_copy_point(elem).unwrap_or((0.0, 0.0));
     let (w, h) = ax_copy_size(elem).unwrap_or((0.0, 0.0));
@@ -809,7 +818,9 @@ pub fn find_element(
     let max_results = max_results.unwrap_or(25).clamp(1, 100) as usize;
 
     let Some((ax_app, ax_win)) = ax_app_and_window_for_cg_window(window_id)? else {
-        return Err(napi::Error::from_reason(format!("window_not_found:{window_id}")));
+        return Err(napi::Error::from_reason(format!(
+            "window_not_found:{window_id}"
+        )));
     };
 
     let mut out: Vec<serde_json::Value> = Vec::new();
@@ -842,7 +853,9 @@ pub fn perform_action(
     action: String,
 ) -> napi::Result<serde_json::Value> {
     let Some((ax_app, ax_win)) = ax_app_and_window_for_cg_window(window_id)? else {
-        return Err(napi::Error::from_reason(format!("window_not_found:{window_id}")));
+        return Err(napi::Error::from_reason(format!(
+            "window_not_found:{window_id}"
+        )));
     };
 
     let mut hits: Vec<AXUIElementRef> = Vec::new();
@@ -929,7 +942,9 @@ pub fn set_element_value(
     value: String,
 ) -> napi::Result<serde_json::Value> {
     let Some((ax_app, ax_win)) = ax_app_and_window_for_cg_window(window_id)? else {
-        return Err(napi::Error::from_reason(format!("window_not_found:{window_id}")));
+        return Err(napi::Error::from_reason(format!(
+            "window_not_found:{window_id}"
+        )));
     };
 
     let mut hits: Vec<AXUIElementRef> = Vec::new();
@@ -1085,19 +1100,22 @@ fn menu_item_to_json(item: AXUIElementRef, depth: i32) -> serde_json::Value {
 #[napi]
 pub fn get_menu_bar(bundle_id: String) -> napi::Result<serde_json::Value> {
     let Some(pid) = pid_for_bundle(&bundle_id) else {
-        return Err(napi::Error::from_reason(format!("app_not_running:{bundle_id}")));
+        return Err(napi::Error::from_reason(format!(
+            "app_not_running:{bundle_id}"
+        )));
     };
 
     let ax_app = unsafe { AXUIElementCreateApplication(pid) };
     if ax_app.is_null() {
-        return Err(napi::Error::from_reason("AXUIElementCreateApplication failed"));
+        return Err(napi::Error::from_reason(
+            "AXUIElementCreateApplication failed",
+        ));
     }
 
     let mb_key = CFString::new("AXMenuBar");
     let mut mb_val: RawCFTypeRef = std::ptr::null();
-    let err = unsafe {
-        AXUIElementCopyAttributeValue(ax_app, mb_key.as_concrete_TypeRef(), &mut mb_val)
-    };
+    let err =
+        unsafe { AXUIElementCopyAttributeValue(ax_app, mb_key.as_concrete_TypeRef(), &mut mb_val) };
     if is_permission_error(err) {
         unsafe { CFRelease(ax_app as *const _) };
         return Err(napi::Error::from_reason(ax_error_to_reason(err)));
@@ -1169,9 +1187,8 @@ pub fn press_menu_item(
 
     let mb_key = CFString::new("AXMenuBar");
     let mut mb_val: RawCFTypeRef = std::ptr::null();
-    let err = unsafe {
-        AXUIElementCopyAttributeValue(ax_app, mb_key.as_concrete_TypeRef(), &mut mb_val)
-    };
+    let err =
+        unsafe { AXUIElementCopyAttributeValue(ax_app, mb_key.as_concrete_TypeRef(), &mut mb_val) };
     if is_permission_error(err) {
         unsafe { CFRelease(ax_app as *const _) };
         return Err(napi::Error::from_reason(ax_error_to_reason(err)));
@@ -1236,21 +1253,22 @@ pub fn press_menu_item(
     };
 
     // Find (submenu?) then item
-    let find_item_in = |parent_menu: AXUIElementRef, target_title: &str| -> Option<AXUIElementRef> {
-        let (arr, kids) = ax_copy_children(parent_menu)?;
-        let mut hit: Option<AXUIElementRef> = None;
-        for k in &kids {
-            if ax_copy_string(*k, "AXTitle").as_deref() == Some(target_title) {
-                extern "C" {
-                    fn CFRetain(r: RawCFTypeRef) -> RawCFTypeRef;
+    let find_item_in =
+        |parent_menu: AXUIElementRef, target_title: &str| -> Option<AXUIElementRef> {
+            let (arr, kids) = ax_copy_children(parent_menu)?;
+            let mut hit: Option<AXUIElementRef> = None;
+            for k in &kids {
+                if ax_copy_string(*k, "AXTitle").as_deref() == Some(target_title) {
+                    extern "C" {
+                        fn CFRetain(r: RawCFTypeRef) -> RawCFTypeRef;
+                    }
+                    hit = Some(unsafe { CFRetain(*k as RawCFTypeRef) } as AXUIElementRef);
+                    break;
                 }
-                hit = Some(unsafe { CFRetain(*k as RawCFTypeRef) } as AXUIElementRef);
-                break;
             }
-        }
-        unsafe { CFRelease(arr) };
-        hit
-    };
+            unsafe { CFRelease(arr) };
+            hit
+        };
 
     let target_item = if let Some(sub) = submenu.as_deref() {
         let Some(sub_item) = find_item_in(menu_el, sub) else {

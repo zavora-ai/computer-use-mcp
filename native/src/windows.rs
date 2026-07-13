@@ -9,25 +9,34 @@ mod platform {
 
     fn is_wayland() -> bool {
         *IS_WAYLAND.get_or_init(|| {
-            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+            std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false)
         })
     }
 
     fn gdbus_eval(js: &str) -> Option<String> {
-        let output = Command::new("gdbus").args([
-            "call", "--session",
-            "--dest", "org.gnome.Shell",
-            "--object-path", "/org/gnome/Shell",
-            "--method", "org.gnome.Shell.Eval",
-            js,
-        ]).output().ok()?;
+        let output = Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                "org.gnome.Shell",
+                "--object-path",
+                "/org/gnome/Shell",
+                "--method",
+                "org.gnome.Shell.Eval",
+                js,
+            ])
+            .output()
+            .ok()?;
         let text = String::from_utf8_lossy(&output.stdout).to_string();
         // Format: (true, 'json_string')
         if text.starts_with("(true,") {
             let start = text.find('\'')?;
             let end = text.rfind('\'')?;
             if start < end {
-                return Some(text[start+1..end].replace("\\'", "'"));
+                return Some(text[start + 1..end].replace("\\'", "'"));
             }
         }
         None
@@ -41,36 +50,61 @@ mod platform {
         };
         let windows: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
         if let Some(ref filter) = bundle_id {
-            windows.into_iter().filter(|w| {
-                let bid = w.get("bundleId").and_then(|v| v.as_str()).unwrap_or("");
-                bid.to_lowercase() == filter.to_lowercase()
-            }).collect()
+            windows
+                .into_iter()
+                .filter(|w| {
+                    let bid = w.get("bundleId").and_then(|v| v.as_str()).unwrap_or("");
+                    bid.to_lowercase() == filter.to_lowercase()
+                })
+                .collect()
         } else {
             windows
         }
     }
 
     fn list_windows_x11(bundle_id: &Option<String>) -> Vec<serde_json::Value> {
-        let output = Command::new("wmctrl").args(["-l", "-p"]).output().unwrap_or_else(|_| {
-            Command::new("true").output().unwrap()
-        });
+        let output = Command::new("wmctrl")
+            .args(["-l", "-p"])
+            .output()
+            .unwrap_or_else(|_| Command::new("true").output().unwrap());
         let text = String::from_utf8_lossy(&output.stdout);
-        let active = Command::new("xdotool").args(["getactivewindow"]).output().ok()
-            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok())
+        let active = Command::new("xdotool")
+            .args(["getactivewindow"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<u32>()
+                    .ok()
+            })
             .unwrap_or(0);
 
         let mut result = Vec::new();
         for line in text.lines() {
-            let parts: Vec<&str> = line.splitn(5, char::is_whitespace).filter(|s| !s.is_empty()).collect();
-            if parts.len() < 4 { continue; }
+            let parts: Vec<&str> = line
+                .splitn(5, char::is_whitespace)
+                .filter(|s| !s.is_empty())
+                .collect();
+            if parts.len() < 4 {
+                continue;
+            }
             let wid = u32::from_str_radix(parts[0].trim_start_matches("0x"), 16).unwrap_or(0);
             let pid = parts[2].parse::<i32>().unwrap_or(0);
-            let title = if parts.len() >= 5 { parts[4].to_string() } else { String::new() };
+            let title = if parts.len() >= 5 {
+                parts[4].to_string()
+            } else {
+                String::new()
+            };
             let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
-                .unwrap_or_default().trim().to_string();
+                .unwrap_or_default()
+                .trim()
+                .to_string();
 
             if let Some(ref filter) = bundle_id {
-                if proc_name.to_lowercase() != filter.to_lowercase() { continue; }
+                if proc_name.to_lowercase() != filter.to_lowercase() {
+                    continue;
+                }
             }
 
             result.push(serde_json::json!({
@@ -119,12 +153,32 @@ mod platform {
             }
         }
         // X11 fallback
-        let output = Command::new("xdotool").args(["getwindowname", &window_id.to_string()]).output();
-        let title = output.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-        let pid_out = Command::new("xdotool").args(["getwindowpid", &window_id.to_string()]).output();
-        let pid = pid_out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<i32>().ok()).unwrap_or(0);
-        let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default().trim().to_string();
-        if title.is_empty() && pid == 0 { return Ok(serde_json::json!(null)); }
+        let output = Command::new("xdotool")
+            .args(["getwindowname", &window_id.to_string()])
+            .output();
+        let title = output
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let pid_out = Command::new("xdotool")
+            .args(["getwindowpid", &window_id.to_string()])
+            .output();
+        let pid = pid_out
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<i32>()
+                    .ok()
+            })
+            .unwrap_or(0);
+        let proc_name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if title.is_empty() && pid == 0 {
+            return Ok(serde_json::json!(null));
+        }
         Ok(serde_json::json!({
             "windowId": window_id, "bundleId": proc_name, "displayName": proc_name,
             "pid": pid, "title": title,
@@ -146,20 +200,28 @@ mod platform {
             }
         }
         // X11 fallback
-        let output = Command::new("xdotool").args(["getmouselocation", "--shell"]).output()
+        let output = Command::new("xdotool")
+            .args(["getmouselocation", "--shell"])
+            .output()
             .map_err(|e| napi::Error::from_reason(format!("xdotool: {e}")))?;
         let text = String::from_utf8_lossy(&output.stdout);
-        let wid = text.lines()
+        let wid = text
+            .lines()
             .find(|l| l.starts_with("WINDOW="))
             .and_then(|l| l.strip_prefix("WINDOW="))
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(0);
-        if wid == 0 { return Ok(serde_json::json!(null)); }
+        if wid == 0 {
+            return Ok(serde_json::json!(null));
+        }
         get_window(wid)
     }
 
     #[napi]
-    pub fn activate_window(window_id: u32, _timeout_ms: Option<i32>) -> napi::Result<serde_json::Value> {
+    pub fn activate_window(
+        window_id: u32,
+        _timeout_ms: Option<i32>,
+    ) -> napi::Result<serde_json::Value> {
         if is_wayland() {
             let js = format!(
                 r#"let w=global.get_window_actors().map(a=>a.meta_window).find(w=>w.get_id()==={wid});if(w){{w.activate(global.get_current_time());'true'}}else{{'false'}}"#,
@@ -172,7 +234,9 @@ mod platform {
                 "reason": if activated { serde_json::Value::Null } else { serde_json::json!("window_not_found") },
             }));
         }
-        let status = Command::new("xdotool").args(["windowactivate", "--sync", &window_id.to_string()]).status();
+        let status = Command::new("xdotool")
+            .args(["windowactivate", "--sync", &window_id.to_string()])
+            .status();
         let activated = status.map(|s| s.success()).unwrap_or(false);
         Ok(serde_json::json!({
             "windowId": window_id,
@@ -208,7 +272,9 @@ mod platform {
                 &mut size,
             );
             let _ = CloseHandle(handle);
-            if ok.is_err() { return None; }
+            if ok.is_err() {
+                return None;
+            }
             let path = String::from_utf16_lossy(&buf[..size as usize]);
             path.rsplit('\\').next().map(|s| s.to_string())
         }
@@ -227,9 +293,13 @@ mod platform {
 
     fn window_record(hwnd: HWND, fg_hwnd: HWND) -> Option<serde_json::Value> {
         unsafe {
-            if !IsWindowVisible(hwnd).as_bool() { return None; }
+            if !IsWindowVisible(hwnd).as_bool() {
+                return None;
+            }
             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-            if ex_style & WS_EX_TOOLWINDOW.0 != 0 { return None; }
+            if ex_style & WS_EX_TOOLWINDOW.0 != 0 {
+                return None;
+            }
 
             let mut pid: u32 = 0;
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
@@ -278,7 +348,11 @@ mod platform {
                 fg: HWND,
                 result: Vec<serde_json::Value>,
             }
-            let mut data = Data { filter: &filter, fg, result: Vec::new() };
+            let mut data = Data {
+                filter: &filter,
+                fg,
+                result: Vec::new(),
+            };
             let ptr = LPARAM(&mut data as *mut Data as isize);
 
             unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -286,7 +360,10 @@ mod platform {
                 if let Some(rec) = window_record(hwnd, data.fg) {
                     if let Some(ref f) = data.filter {
                         let bid = rec.get("bundleId").and_then(|v| v.as_str()).unwrap_or("");
-                        if bid.to_lowercase() != *f && bid.to_lowercase().trim_end_matches(".exe") != f.trim_end_matches(".exe") {
+                        if bid.to_lowercase() != *f
+                            && bid.to_lowercase().trim_end_matches(".exe")
+                                != f.trim_end_matches(".exe")
+                        {
                             return TRUE;
                         }
                     }
@@ -323,7 +400,9 @@ mod platform {
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
             let hwnd = WindowFromPoint(pt);
-            if hwnd.0.is_null() { return Ok(serde_json::json!(null)); }
+            if hwnd.0.is_null() {
+                return Ok(serde_json::json!(null));
+            }
             // Walk up to the top-level window
             let mut top = hwnd;
             loop {
@@ -342,7 +421,10 @@ mod platform {
     }
 
     #[napi]
-    pub fn activate_window(window_id: u32, timeout_ms: Option<i32>) -> napi::Result<serde_json::Value> {
+    pub fn activate_window(
+        window_id: u32,
+        timeout_ms: Option<i32>,
+    ) -> napi::Result<serde_json::Value> {
         let timeout = timeout_ms.unwrap_or(3000) as u64;
         unsafe {
             let hwnd = HWND(window_id as *mut _);
@@ -372,7 +454,10 @@ mod platform {
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout);
             let mut activated = false;
             while std::time::Instant::now() < deadline {
-                if GetForegroundWindow() == hwnd { activated = true; break; }
+                if GetForegroundWindow() == hwnd {
+                    activated = true;
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(30));
             }
 

@@ -1,0 +1,671 @@
+{
+  "schemaVersion": 1,
+  "protocol": "computer-use-v8-reliability-lab",
+  "corpusId": "computer-use-v8-platform-lab-2026-07",
+  "corpusDigest": "sha256:7908782491bfeacc50af1338d6e26296b08441d3b4329aafdbbaa082c1466964",
+  "runtimeVersion": "7.0.0",
+  "generatedAt": "2026-07-13T12:22:59.315Z",
+  "results": [
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_75e4ad6bc2d8c8a103ef9e1b",
+      "scenarioId": "deterministic-display-transform",
+      "platform": "darwin",
+      "approach": "runtime",
+      "evidenceLevel": "deterministic",
+      "status": "passed",
+      "observedAt": "2026-07-13T12:22:59.314Z",
+      "environment": {
+        "osRelease": "25.2.0",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "deterministic_fake",
+        "displayServer": "deterministic_fake",
+        "compositor": "deterministic_fake"
+      },
+      "facts": {
+        "cases": 48,
+        "scaleFactors": "1,1.25,1.5,2"
+      },
+      "assertions": [
+        {
+          "id": "coordinates.round_trip",
+          "passed": true,
+          "detail": "48 seeded mappings stayed within half a logical pixel"
+        },
+        {
+          "id": "coordinates.bounds_fail_closed",
+          "passed": true,
+          "detail": "all four boundary escapes were rejected"
+        }
+      ],
+      "sourceDigest": "sha256:faaee70c5953f3fed082ffe6672b8cf8aeed3388111b355b4f4c91a463445f35",
+      "outputDigest": "sha256:88ba4b0f375d2f46a6870a181e44ad3fdbdeace257016393d58a52d4a0a25825",
+      "observation": {
+        "attempts": 52,
+        "successes": 52,
+        "unintendedMutations": 0,
+        "interferenceEvents": 0,
+        "attributedMutations": 0,
+        "staleActionsBlocked": 4,
+        "staleActionsAttempted": 4,
+        "restorationsAttempted": 0,
+        "restorationsSucceeded": 0,
+        "latenciesMs": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_30b8deabf5d8267de9d00cd3",
+      "scenarioId": "deterministic-emergency-latch",
+      "platform": "darwin",
+      "approach": "runtime",
+      "evidenceLevel": "deterministic",
+      "status": "passed",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "25.2.0",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "deterministic_fake",
+        "displayServer": "deterministic_fake",
+        "compositor": "deterministic_fake"
+      },
+      "facts": {
+        "revokedLeases": 1,
+        "blockedAcquisitions": 1
+      },
+      "assertions": [
+        {
+          "id": "lease.active_revoked",
+          "passed": true,
+          "detail": "active writer removed immediately"
+        },
+        {
+          "id": "lease.new_work_blocked",
+          "passed": true,
+          "detail": "fresh acquisition rejected while latched"
+        },
+        {
+          "id": "reset.host_only",
+          "passed": true,
+          "detail": "direct host reset restored acquisition; no MCP reset exists"
+        }
+      ],
+      "sourceDigest": "sha256:faaee70c5953f3fed082ffe6672b8cf8aeed3388111b355b4f4c91a463445f35",
+      "outputDigest": "sha256:9de8deb6a8549ed9a0931d8c1616edc57c011d70eb93d0ecdee6b75935696f8e",
+      "observation": {
+        "attempts": 2,
+        "successes": 2,
+        "unintendedMutations": 0,
+        "interferenceEvents": 1,
+        "attributedMutations": 0,
+        "staleActionsBlocked": 1,
+        "staleActionsAttempted": 1,
+        "restorationsAttempted": 0,
+        "restorationsSucceeded": 0,
+        "latenciesMs": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_c3ee866a59e5fd49df9a7a94",
+      "scenarioId": "deterministic-interference-guard",
+      "platform": "darwin",
+      "approach": "runtime",
+      "evidenceLevel": "deterministic",
+      "status": "passed",
+      "observedAt": "2026-07-13T12:22:59.314Z",
+      "environment": {
+        "osRelease": "25.2.0",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "deterministic_fake",
+        "displayServer": "deterministic_fake",
+        "compositor": "deterministic_fake"
+      },
+      "facts": {
+        "faults": "focus_thief,notification,overlay,modal",
+        "seed": "v8-platform-lab-2026-07"
+      },
+      "assertions": [
+        {
+          "id": "target.drift_blocked",
+          "passed": true,
+          "detail": "4/4 revised targets rejected"
+        },
+        {
+          "id": "mutation.zero_after_drift",
+          "passed": true,
+          "detail": "validation produced no fake desktop effects"
+        }
+      ],
+      "sourceDigest": "sha256:faaee70c5953f3fed082ffe6672b8cf8aeed3388111b355b4f4c91a463445f35",
+      "outputDigest": "sha256:22f9ef8a215ad0b794aa0cfbdebb4731dea03ce403a05918c9b7449f9a8a2367",
+      "observation": {
+        "attempts": 4,
+        "successes": 4,
+        "unintendedMutations": 0,
+        "interferenceEvents": 4,
+        "attributedMutations": 0,
+        "staleActionsBlocked": 4,
+        "staleActionsAttempted": 4,
+        "restorationsAttempted": 0,
+        "restorationsSucceeded": 0,
+        "latenciesMs": []
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_538fa4badfd7b2ec828d11d9",
+      "scenarioId": "focus-notification-overlay-modal",
+      "platform": "darwin",
+      "approach": "ax",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:810ce45d18fdee0cd59ab7c76d0f8111905bb5201a7b75fddd655dd63e03da51"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_8199c2fcc2f3d29a2ef49c02",
+      "scenarioId": "focus-notification-overlay-modal",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:c6e98910964f5efd78e53dddb84b853358339b8b33738458a06215f443d4fbd9"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_16eee289d228823435a2474d",
+      "scenarioId": "focus-notification-overlay-modal",
+      "platform": "darwin",
+      "approach": "uia",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:f30f0bda2f8676d52ec65fb1f86897b4ba5308c46f2579ca18ed79780fd37350"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_15befc08f3887674856a2fc5",
+      "scenarioId": "lock-unlock-session",
+      "platform": "darwin",
+      "approach": "runtime",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:77bfba1471fbeb2dd10ef6d547501da2f9488c5a88647b34bc5cd2cd19893e79"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_5e5a94a3dec249ad22eb9aa0",
+      "scenarioId": "macos-retina",
+      "platform": "darwin",
+      "approach": "capture",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:565b4f177a45f192239e7da6a207362c077775c5c52eec09a08961e9bae6a160"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_4fcf6881ab39a6195ba34327",
+      "scenarioId": "macos-retina",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:634a895b2e0438736c42497201f8e65234e6c131d505195c7523b13bdf7c7f69"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_968aaf38dbdb580bf8d20bd0",
+      "scenarioId": "macos-spaces-fullscreen-stage-manager",
+      "platform": "darwin",
+      "approach": "ax",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:e3b7f188d24895ce252c9812c1b9192c4153eb8099e8423923557da58c843067"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_dd8ba983331229d7b09a6a66",
+      "scenarioId": "macos-spaces-fullscreen-stage-manager",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:c05a17b582999731d8d2043bff9c188253c724c7fccdb47b87f38e1f1fe29c4b"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_982748da83fd07cf59168f24",
+      "scenarioId": "multi-monitor-mixed-scale",
+      "platform": "darwin",
+      "approach": "capture",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:ae0550173543a56b1444026a223a39a657f130d2e949af5e1a07bf63a6ca5325"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_092d7032338d8375544d0827",
+      "scenarioId": "multi-monitor-mixed-scale",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:795dced258aac74bcb0e55e39bc18264bf8ca15fed9b724de12d16b978ef7d3a"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_7406067dc821a2b20f5f828e",
+      "scenarioId": "physical-emergency-chord",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:26a9ce057f42f30ca3629d344d6d3780793c268f8c1fdc9eccadfe91a0cabb79"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_60c6b85b118b40db2939b632",
+      "scenarioId": "remote-desktop-session",
+      "platform": "darwin",
+      "approach": "capture",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:5c1c962cdc646f6bc9ba532dba334c214a5ee65119860bb4e4d0f6f1052e4b77"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_8547649fc00949539003aa72",
+      "scenarioId": "remote-desktop-session",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:f7ca323460ff5bcbdcaf1de9f45fd0a35ba32a379a5a622473bdeb5c621e1fbe"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_8e0dd9493ac4948728971761",
+      "scenarioId": "sleep-wake-session",
+      "platform": "darwin",
+      "approach": "runtime",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:2b34912aa1129455998d65a080fa82d62c4a81823bb9aa00c383aec5d55634b5"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_875a6a9fad0b7165c146140d",
+      "scenarioId": "virtual-machine-session",
+      "platform": "darwin",
+      "approach": "capture",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:9fca1503283cf3dab51445305047610b9ad3138cce04a9c059a7273a558c0327"
+    },
+    {
+      "schemaVersion": 1,
+      "resultId": "lab_7c787bc9562e438f7d9d989d",
+      "scenarioId": "virtual-machine-session",
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "status": "not_run",
+      "observedAt": "2026-07-13T12:22:59.315Z",
+      "environment": {
+        "osRelease": "not_observed",
+        "arch": "arm64",
+        "interactive": false,
+        "ci": false,
+        "sessionKind": "not_observed",
+        "displayServer": "not_observed",
+        "compositor": "not_observed"
+      },
+      "facts": {},
+      "assertions": [],
+      "blocker": "no_probe_registered",
+      "sourceDigest": "sha256:c6752e1f21cccacb34624561d4f8c07b38e9199d765d0bd0e38d51241312e56d",
+      "outputDigest": "sha256:f6e791c2816e90affbeeebd14714c5aa7c2f89f817157f8623445d1d314a10fa"
+    }
+  ],
+  "coverage": {
+    "totalCells": 19,
+    "passed": 3,
+    "failed": 0,
+    "blocked": 0,
+    "notRun": 16,
+    "byEvidenceLevel": {
+      "deterministic": {
+        "passed": 3,
+        "failed": 0
+      },
+      "integration": {
+        "passed": 0,
+        "failed": 0
+      },
+      "live": {
+        "passed": 0,
+        "failed": 0
+      }
+    },
+    "missingLiveScenarioIds": [
+      "focus-notification-overlay-modal",
+      "linux-wayland-gnome",
+      "linux-wayland-kde",
+      "linux-wayland-wlroots",
+      "linux-x11",
+      "lock-unlock-session",
+      "macos-retina",
+      "macos-spaces-fullscreen-stage-manager",
+      "multi-monitor-mixed-scale",
+      "physical-emergency-chord",
+      "remote-desktop-session",
+      "sleep-wake-session",
+      "virtual-machine-session",
+      "windows-uac-integrity"
+    ]
+  },
+  "metrics": [
+    {
+      "platform": "darwin",
+      "approach": "ax",
+      "evidenceLevel": "deterministic",
+      "scenariosPassed": 0,
+      "scenariosFailed": 0,
+      "attempts": 0,
+      "successes": 0,
+      "successRate": null,
+      "unintendedMutations": 0,
+      "interferenceEvents": 0,
+      "attributionRate": null,
+      "staleBlockRate": null,
+      "restorationRate": null,
+      "latencyP50Ms": null,
+      "latencyP95Ms": null
+    },
+    {
+      "platform": "darwin",
+      "approach": "capture",
+      "evidenceLevel": "deterministic",
+      "scenariosPassed": 0,
+      "scenariosFailed": 0,
+      "attempts": 0,
+      "successes": 0,
+      "successRate": null,
+      "unintendedMutations": 0,
+      "interferenceEvents": 0,
+      "attributionRate": null,
+      "staleBlockRate": null,
+      "restorationRate": null,
+      "latencyP50Ms": null,
+      "latencyP95Ms": null
+    },
+    {
+      "platform": "darwin",
+      "approach": "physical_input",
+      "evidenceLevel": "deterministic",
+      "scenariosPassed": 0,
+      "scenariosFailed": 0,
+      "attempts": 0,
+      "successes": 0,
+      "successRate": null,
+      "unintendedMutations": 0,
+      "interferenceEvents": 0,
+      "attributionRate": null,
+      "staleBlockRate": null,
+      "restorationRate": null,
+      "latencyP50Ms": null,
+      "latencyP95Ms": null
+    },
+    {
+      "platform": "darwin",
+      "approach": "runtime",
+      "evidenceLevel": "deterministic",
+      "scenariosPassed": 3,
+      "scenariosFailed": 0,
+      "attempts": 58,
+      "successes": 58,
+      "successRate": 1,
+      "unintendedMutations": 0,
+      "interferenceEvents": 5,
+      "attributionRate": 0,
+      "staleBlockRate": 1,
+      "restorationRate": null,
+      "latencyP50Ms": null,
+      "latencyP95Ms": null
+    },
+    {
+      "platform": "darwin",
+      "approach": "uia",
+      "evidenceLevel": "deterministic",
+      "scenariosPassed": 0,
+      "scenariosFailed": 0,
+      "attempts": 0,
+      "successes": 0,
+      "successRate": null,
+      "unintendedMutations": 0,
+      "interferenceEvents": 0,
+      "attributionRate": null,
+      "staleBlockRate": null,
+      "restorationRate": null,
+      "latencyP50Ms": null,
+      "latencyP95Ms": null
+    }
+  ],
+  "reportDigest": "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210"
+}

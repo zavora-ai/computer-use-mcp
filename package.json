@@ -14,7 +14,8 @@
     "linux"
   ],
   "bin": {
-    "computer-use-mcp": "dist/server.js"
+    "computer-use-mcp": "dist/server.js",
+    "computer-use-onboard": "dist/onboarding/cli.js"
   },
   "exports": {
     ".": {
@@ -32,12 +33,38 @@
     "./tool-catalog": {
       "import": "./dist/tool-catalog.js",
       "types": "./dist/tool-catalog.d.ts"
+    },
+    "./registry": {
+      "import": "./dist/registry/registry.js",
+      "types": "./dist/registry/registry.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime/index.js",
+      "types": "./dist/runtime/index.d.ts"
+    },
+    "./reliability": {
+      "import": "./dist/reliability/index.js",
+      "types": "./dist/reliability/index.d.ts"
+    },
+    "./onboarding": {
+      "import": "./dist/onboarding/index.js",
+      "types": "./dist/onboarding/index.d.ts"
+    },
+    "./host-native": {
+      "import": "./dist/native.js",
+      "types": "./dist/native.d.ts"
+    },
+    "./release": {
+      "import": "./dist/release/index.js",
+      "types": "./dist/release/index.d.ts"
     }
   },
   "files": [
     "AGENTS.md",
+    "contracts/",
     "LICENSE",
     "README.md",
+    "SECURITY.md",
     "dist/entrypoint.d.ts",
     "dist/entrypoint.js",
     "computer-use-napi.darwin-arm64.node",
@@ -60,11 +87,37 @@
     "dist/resources.js",
     "dist/result.d.ts",
     "dist/result.js",
+    "dist/registry/",
+    "dist/runtime/",
+    "dist/reliability/",
+    "dist/control/",
+    "dist/onboarding/",
+    "dist/release/",
+    "dist/policy/",
     "dist/server.d.ts",
     "dist/server.js",
     "dist/session.d.ts",
     "dist/session.js",
     "dist/session/",
+    "dist/targeting/",
+    "docs/specs/THREAT-MODEL-v8.md",
+    "docs/conformance/v8/",
+    "examples/v8-direct-sdk.mjs",
+    "examples/v8-langgraph.mjs",
+    "examples/v8-electron-setup.mjs",
+    "examples/v8-tauri-setup.mjs",
+    "examples/v8-setup-ui.mjs",
+    "scripts/verify-input-attribution.mjs",
+    "scripts/certify-background-adapter.mjs",
+    "scripts/certify-semantic-adapter.mjs",
+    "scripts/generate-v8-conformance.mjs",
+    "scripts/run-v8-reliability-lab.mjs",
+    "scripts/probes/v8-emergency-chord.mjs",
+    "scripts/generate-release-artifacts.mjs",
+    "scripts/evaluate-v8-readiness.mjs",
+    "release-artifacts.json",
+    "packages/computer-use-supervisor/",
+    "packages/computer-use-remote/",
     "dist/tool-catalog.d.ts",
     "dist/tool-catalog.js",
     "skills"
@@ -77,6 +130,15 @@
     "build": "npm run build:native && npm run build:ts",
     "prepare:packages": "node scripts/prepare-platform-packages.mjs",
     "test": "npm run build:ts && node --test test/*.test.mjs",
+    "test:input-attribution": "node scripts/verify-input-attribution.mjs",
+    "certify:background": "npm run build:ts && node scripts/certify-background-adapter.mjs",
+    "certify:semantic": "npm run build:ts && node scripts/certify-semantic-adapter.mjs",
+    "conformance:v8": "npm run build:ts && node scripts/generate-v8-conformance.mjs",
+    "reliability:v8": "npm run build:ts && node scripts/run-v8-reliability-lab.mjs",
+    "reliability:emergency-chord": "npm run build && node scripts/run-v8-reliability-lab.mjs --probe-module scripts/probes/v8-emergency-chord.mjs",
+    "release:manifest": "npm run build:ts && node scripts/generate-release-artifacts.mjs",
+    "readiness:v8": "npm run build:ts && node scripts/evaluate-v8-readiness.mjs --report-only",
+    "readiness:gate": "npm run build:ts && node scripts/evaluate-v8-readiness.mjs",
     "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",

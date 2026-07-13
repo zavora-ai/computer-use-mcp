@@ -88,8 +88,7 @@ fn shared_workspace() -> *mut Object {
 fn bundle_id_for_pid(pid: i32) -> Option<String> {
     unsafe {
         let cls = Class::get("NSRunningApplication").unwrap();
-        let app: *mut Object =
-            msg_send![cls, runningApplicationWithProcessIdentifier: pid];
+        let app: *mut Object = msg_send![cls, runningApplicationWithProcessIdentifier: pid];
         if app.is_null() {
             return None;
         }
@@ -102,8 +101,7 @@ fn bundle_id_for_pid(pid: i32) -> Option<String> {
 fn display_name_for_pid(pid: i32) -> Option<String> {
     unsafe {
         let cls = Class::get("NSRunningApplication").unwrap();
-        let app: *mut Object =
-            msg_send![cls, runningApplicationWithProcessIdentifier: pid];
+        let app: *mut Object = msg_send![cls, runningApplicationWithProcessIdentifier: pid];
         if app.is_null() {
             return None;
         }
@@ -193,7 +191,9 @@ fn dict_get_f64(dict: CFDictionaryRef, key: &str) -> Option<f64> {
     unsafe {
         let val = dict_raw_get(dict, key)?;
         let cf_num: CFNumber = TCFType::wrap_under_get_rule(val as *const _);
-        cf_num.to_f64().or_else(|| cf_num.to_i64().map(|n| n as f64))
+        cf_num
+            .to_f64()
+            .or_else(|| cf_num.to_i64().map(|n| n as f64))
     }
 }
 
@@ -259,10 +259,8 @@ fn window_record_from_dict(
 /// Get the count and raw dict pointers from the CG window list.
 fn cg_window_list_raw() -> Option<(CFArrayRef, usize)> {
     unsafe {
-        let array_ref = CGWindowListCopyWindowInfo(
-            K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
-            K_CG_NULL_WINDOW_ID,
-        );
+        let array_ref =
+            CGWindowListCopyWindowInfo(K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY, K_CG_NULL_WINDOW_ID);
         if array_ref.is_null() {
             return None;
         }
@@ -391,10 +389,7 @@ pub fn get_cursor_window() -> napi::Result<serde_json::Value> {
 /// 3. Enumerate AXUIElement children to find matching window
 /// 4. AXUIElementPerformAction(kAXRaiseAction)
 #[napi]
-pub fn activate_window(
-    window_id: u32,
-    timeout_ms: Option<i32>,
-) -> napi::Result<serde_json::Value> {
+pub fn activate_window(window_id: u32, timeout_ms: Option<i32>) -> napi::Result<serde_json::Value> {
     let _timeout = timeout_ms.unwrap_or(3000) as u64;
 
     // Step 1: Find the window info from CG to get PID, title, and bounds
@@ -537,18 +532,10 @@ pub fn activate_window(
 
                     // kAXValueCGPointType = 1, kAXValueCGSizeType = 2
                     let got_point = unsafe {
-                        AXValueGetValue(
-                            pos_val,
-                            1,
-                            &mut point as *mut _ as *mut std::ffi::c_void,
-                        )
+                        AXValueGetValue(pos_val, 1, &mut point as *mut _ as *mut std::ffi::c_void)
                     };
                     let got_size = unsafe {
-                        AXValueGetValue(
-                            size_val,
-                            2,
-                            &mut size as *mut _ as *mut std::ffi::c_void,
-                        )
+                        AXValueGetValue(size_val, 2, &mut size as *mut _ as *mut std::ffi::c_void)
                     };
 
                     if got_point && got_size {
@@ -572,9 +559,8 @@ pub fn activate_window(
         if matched {
             // Perform kAXRaiseAction
             let raise_action = CFString::new("AXRaise");
-            let raise_err = unsafe {
-                AXUIElementPerformAction(ax_win, raise_action.as_concrete_TypeRef())
-            };
+            let raise_err =
+                unsafe { AXUIElementPerformAction(ax_win, raise_action.as_concrete_TypeRef()) };
 
             if raise_err == K_AX_ERROR_SUCCESS {
                 raised = true;
@@ -609,8 +595,7 @@ pub fn activate_window(
                 let app: *mut Object = msg_send![apps, objectAtIndex: i];
                 let app_pid: i32 = msg_send![app, processIdentifier];
                 if app_pid == pid {
-                    let _: objc::runtime::BOOL =
-                        msg_send![app, activateWithOptions: 1u64]; // NSApplicationActivateIgnoringOtherApps
+                    let _: objc::runtime::BOOL = msg_send![app, activateWithOptions: 1u64]; // NSApplicationActivateIgnoringOtherApps
                     break;
                 }
             }

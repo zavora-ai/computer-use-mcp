@@ -41,6 +41,11 @@ jobs:
             rust-target: x86_64-unknown-linux-gnu
             artifact: computer-use-napi.linux-x64.node
             copy-from: target/x86_64-unknown-linux-gnu/release/libcomputer_use_napi.so
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-gnu
+            artifact: computer-use-napi.linux-arm64.node
+            copy-from: target/aarch64-unknown-linux-gnu/release/libcomputer_use_napi.so
     steps:
       - uses: actions/checkout@v4
 
@@ -90,6 +95,9 @@ jobs:
           - name: Linux x64
             runner: ubuntu-latest
             binary: computer-use-napi.linux-x64.node
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+            binary: computer-use-napi.linux-arm64.node
     steps:
       - uses: actions/checkout@v4
 
@@ -129,6 +137,47 @@ jobs:
       - name: Run new tools smoke test
         run: node test/smoke-new-tools.mjs
 
+      - name: Test supervisor protocol and renderer boundary
+        run: npm test
+        working-directory: packages/computer-use-supervisor
+
+      - name: Test authenticated remote sidecar boundaries
+        run: npm test
+        working-directory: packages/computer-use-remote
+
+      - name: Generate truthful v8 conformance report
+        shell: bash
+        run: node scripts/generate-v8-conformance.mjs --compact > conformance-${{ runner.os }}-${{ runner.arch }}.json
+
+      - name: Run v8 reliability matrix without claiming headless CI as live evidence
+        shell: bash
+        run: node scripts/run-v8-reliability-lab.mjs --compact > reliability-${{ runner.os }}-${{ runner.arch }}.json
+
+      - name: Evaluate release readiness without waiving missing external evidence
+        shell: bash
+        run: node scripts/evaluate-v8-readiness.mjs --stage stable --report-only --compact --conformance conformance-${{ runner.os }}-${{ runner.arch }}.json --reliability reliability-${{ runner.os }}-${{ runner.arch }}.json > readiness-${{ runner.os }}-${{ runner.arch }}.json
+
+      - name: Upload v8 conformance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-${{ matrix.os.name }}
+          path: conformance-${{ runner.os }}-${{ runner.arch }}.json
+          if-no-files-found: error
+
+      - name: Upload v8 reliability matrix and public metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: reliability-${{ matrix.os.name }}
+          path: reliability-${{ runner.os }}-${{ runner.arch }}.json
+          if-no-files-found: error
+
+      - name: Upload v8 release-readiness decision
+        uses: actions/upload-artifact@v4
+        with:
+          name: readiness-${{ matrix.os.name }}
+          path: readiness-${{ runner.os }}-${{ runner.arch }}.json
+          if-no-files-found: error
+
   package:
     name: Verify package contents
     needs: test
@@ -167,6 +216,66 @@ jobs:
               "dist/session/spawn.js",
               "dist/session/errors.js",
               "dist/session/constants.js",
+              "dist/session/openai-compat.js",
+              "dist/session/lock.js",
+              "dist/session/legacy-policy.js",
+              "dist/session/focus.js",
+              "dist/session/target-state.js",
+              "dist/session/virtual-pointer.js",
+              "dist/session/doctor.js",
+              "dist/session/admin-handlers.js",
+              "dist/session/window-handlers.js",
+              "dist/session/accessibility-handlers.js",
+              "dist/session/spaces-handlers.js",
+              "dist/session/screenshot-handlers.js",
+              "dist/session/input-handlers.js",
+              "dist/session/scripting-service.js",
+              "dist/session/openai-handler.js",
+              "dist/session/event-schema.js",
+              "dist/session/core-handlers.js",
+              "dist/registry/registry.js",
+              "dist/runtime/coordinator.js",
+              "dist/runtime/provider-adapters.js",
+              "dist/runtime/mcp-tasks.js",
+              "dist/runtime/manifest.js",
+              "dist/reliability/fake-desktop.js",
+              "dist/reliability/conformance.js",
+              "dist/reliability/lab.js",
+              "dist/release/artifacts.js",
+              "dist/release/readiness.js",
+              "dist/control/lease.js",
+              "dist/control/reservation.js",
+              "dist/policy/engine.js",
+              "dist/targeting/session-validator.js",
+              "dist/onboarding/manager.js",
+              "docs/specs/THREAT-MODEL-v8.md",
+              "packages/computer-use-supervisor/package.json",
+              "packages/computer-use-remote/package.json",
+              "packages/computer-use-remote/src/sidecar.mjs",
+              "contracts/v8/safety-corpus.json",
+              "contracts/v8/target-reservation.json",
+              "contracts/v8/session-deletion.json",
+              "contracts/v8/session-follow-up.json",
+              "contracts/v8/audit-export.schema.json",
+              "contracts/v8/capability-certification-trace.schema.json",
+              "contracts/v8/conformance-evidence.schema.json",
+              "contracts/v8/conformance-report.schema.json",
+              "contracts/v8/reliability-lab-corpus.json",
+              "contracts/v8/reliability-lab-corpus.schema.json",
+              "contracts/v8/reliability-lab-report.schema.json",
+              "contracts/v8/release-artifact-manifest.schema.json",
+              "contracts/v8/release-evidence.schema.json",
+              "contracts/v8/release-readiness-report.schema.json",
+              "contracts/v8/adk-evaluation-receipt.schema.json",
+              "docs/conformance/v8/macos-finder-comment-26.2.json",
+              "docs/conformance/v8/report-2026-07-13.json",
+              "docs/conformance/v8/reliability-report-2026-07-13.json",
+              "docs/conformance/v8/readiness-report-2026-07-13.json",
+              "docs/conformance/v8/adk-evaluation-receipt-7.0.0.json",
+              "scripts/generate-v8-conformance.mjs",
+              "scripts/run-v8-reliability-lab.mjs",
+              "scripts/generate-release-artifacts.mjs",
+              "scripts/evaluate-v8-readiness.mjs",
             ];
             const missing = required.filter(r => !files.includes(r));
             const skillFiles = files.filter(f => /^skills\/.+\/SKILL\.md$/.test(f));
@@ -178,11 +287,45 @@ jobs:
             for (const s of skillFiles) console.log("  - " + s);
           '
 
+  install-matrix:
+    name: Install packed tarball — Node ${{ matrix.node }}
+    needs: build-native
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22, current]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: computer-use-napi.linux-x64.node
+      - run: npm run build:ts
+      - name: Pack, install without optional packages, and import public entry points
+        shell: bash
+        run: |
+          npm pack --json > pack.json
+          tarball=$(node -p "require('./pack.json')[0].filename")
+          mkdir install-probe
+          cd install-probe
+          npm init -y >/dev/null
+          npm install "../$tarball" --ignore-scripts --omit=optional
+          node --input-type=module -e "await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/runtime'); await import('@zavora-ai/computer-use-mcp/reliability'); await import('@zavora-ai/computer-use-mcp/release'); console.log(process.version, 'packed entry points loaded')"
+
   publish:
     name: Publish to npm
-    needs: [build-native, test, package]
+    needs: [build-native, test, package, install-matrix]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -209,6 +352,7 @@ jobs:
           test -f computer-use-napi.darwin-x64.node
           test -f computer-use-napi.win32-x64.node
           test -f computer-use-napi.linux-x64.node
+          test -f computer-use-napi.linux-arm64.node
 
       - name: Build TypeScript
         run: npx tsc
@@ -216,14 +360,46 @@ jobs:
       - name: Prepare platform packages (stamp version + copy binaries)
         run: node scripts/prepare-platform-packages.mjs
 
-      - name: Pack platform packages (dry run)
-        run: |
-          for d in packages/computer-use-mcp-*; do
-            echo "--- $d ---"
-            ( cd "$d" && npm pack --dry-run )
-          done
+      - name: Bind package versions to exact native artifact bytes
+        run: node scripts/generate-release-artifacts.mjs --verify-copies --output release-artifacts.json --compact
 
-      - name: Publish platform packages (best-effort — main bundles binaries as fallback)
+      - name: Pack exact release tarballs
+        shell: bash
+        run: |
+          mkdir -p release/platform release/root
+          for d in packages/computer-use-mcp-*; do
+            ( cd "$d" && npm pack --pack-destination "$GITHUB_WORKSPACE/release/platform" )
+          done
+          npm pack --ignore-scripts --pack-destination release/root
+
+      - name: Generate CycloneDX software bill of materials
+        run: npm sbom --sbom-format cyclonedx > release-sbom.cdx.json
+
+      - name: Attest native binaries, manifests, and exact tarballs
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            computer-use-napi.*.node
+            release-artifacts.json
+            release/**/*.tgz
+
+      - name: Attach SBOM attestation to the exact main tarball
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: release/root/*.tgz
+          sbom-path: release-sbom.cdx.json
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-release-evidence-${{ github.sha }}
+          path: |
+            release/
+            release-artifacts.json
+            release-sbom.cdx.json
+          if-no-files-found: error
+
+      - name: Publish platform packages (fail closed before main package)
         run: |
           for d in packages/computer-use-mcp-*; do
             target="${d#packages/computer-use-mcp-}"
@@ -234,27 +410,51 @@ jobs:
               continue
             fi
             if npm view "$pkg@$ver" version >/dev/null 2>&1; then
-              echo "skip $pkg@$ver — already published"
+              tmp=$(mktemp -d)
+              archive=$(npm pack "$pkg@$ver" --pack-destination "$tmp" --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s)[0].filename))")
+              expected=$(node -e "const m=require('./release-artifacts.json'); process.stdout.write(m.artifacts.find(a=>a.filename==='computer-use-napi.${target}.node').sha256.slice(7))")
+              actual=$(tar -xOf "$tmp/$archive" "package/computer-use-napi.${target}.node" | sha256sum | cut -d' ' -f1)
+              rm -rf "$tmp"
+              if [ "$actual" != "$expected" ]; then
+                echo "published $pkg@$ver binary does not match this release manifest" >&2
+                exit 1
+              fi
+              echo "skip $pkg@$ver — published bytes match release manifest"
               continue
             fi
-            ( cd "$d" && npm publish --access public ) \
-              || echo "::warning::could not publish $pkg@$ver — first-time creation may need a broader NPM_TOKEN scope. The main package bundles all platform binaries, so installs still work via the resolver fallback."
+            archive=$(find release/platform -type f -name "*-${target}-${ver}.tgz" -print -quit)
+            if [ -z "$archive" ]; then
+              echo "packed tarball missing for $pkg@$ver" >&2
+              exit 1
+            fi
+            npm publish "$archive" --access public --provenance
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish (dry run)
-        run: npm publish --dry-run --ignore-scripts
+        run: npm publish release/root/*.tgz --dry-run --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package to npm (idempotent)
         run: |
           ver=$(node -p "require('./package.json').version")
+          archive=$(find release/root -type f -name '*.tgz' -print -quit)
+          if [ -z "$archive" ]; then
+            echo "main package tarball missing" >&2
+            exit 1
+          fi
           if npm view "@zavora-ai/computer-use-mcp@$ver" version >/dev/null 2>&1; then
-            echo "@zavora-ai/computer-use-mcp@$ver already published — skipping"
+            expected=$(npm view "@zavora-ai/computer-use-mcp@$ver" dist.integrity)
+            actual=$(node -e "const fs=require('fs'),c=require('crypto'); process.stdout.write('sha512-'+c.createHash('sha512').update(fs.readFileSync(process.argv[1])).digest('base64'))" "$archive")
+            if [ "$actual" != "$expected" ]; then
+              echo "published @zavora-ai/computer-use-mcp@$ver does not match the attested tarball; bump the version" >&2
+              exit 1
+            fi
+            echo "@zavora-ai/computer-use-mcp@$ver already published with identical integrity — skipping"
           else
-            npm publish --ignore-scripts --access public
+            npm publish "$archive" --ignore-scripts --access public --provenance
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 1,
+  "protocol": "computer-use-v8-release-readiness",
+  "runtimeVersion": "7.0.0",
+  "evaluatedAt": "2026-07-13T14:02:05.039Z",
+  "requestedStage": "stable",
+  "decision": "no_go",
+  "highestReadyStage": "none",
+  "inputs": {
+    "conformanceDigest": "sha256:bb9e83ec49c52f6f6bc554de43f8b94b146df7f0ed39f6f408fe7a406185c6cb",
+    "reliabilityDigest": "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210",
+    "signedEvidenceDigests": [],
+    "artifactManifestDigest": "sha256:3e28a4e773f0dd119b0af1493cfb90fef5f6e5fe044d4aecb3a1ad4b448ecd3b",
+    "adkEvaluationDigest": "sha256:caab085ed90304351c25a4571784439ef72ffe0d70dfd54f384ae05b93a55a14"
+  },
+  "gates": [
+    {
+      "id": "core.governed_runtime",
+      "requiredFor": [
+        "developer_preview",
+        "beta",
+        "stable"
+      ],
+      "status": "pass",
+      "evidenceLevel": "deterministic",
+      "reasons": [],
+      "evidenceDigests": [
+        "sha256:bb9e83ec49c52f6f6bc554de43f8b94b146df7f0ed39f6f408fe7a406185c6cb"
+      ]
+    },
+    {
+      "id": "background.dual_platform_purity",
+      "requiredFor": [
+        "developer_preview",
+        "beta",
+        "stable"
+      ],
+      "status": "fail",
+      "evidenceLevel": "live",
+      "reasons": [
+        "win32:valid_live_certification_trace",
+        "darwin: trusted signature over conformance digest required",
+        "win32: trusted signature over conformance digest required"
+      ],
+      "evidenceDigests": [
+        "sha256:bb9e83ec49c52f6f6bc554de43f8b94b146df7f0ed39f6f408fe7a406185c6cb"
+      ]
+    },
+    {
+      "id": "supervisor.cross_platform_boundary",
+      "requiredFor": [
+        "beta",
+        "stable"
+      ],
+      "status": "fail",
+      "evidenceLevel": "integration",
+      "reasons": [
+        "platform:win32",
+        "trusted cross-platform CI signature required"
+      ],
+      "evidenceDigests": [
+        "sha256:bb9e83ec49c52f6f6bc554de43f8b94b146df7f0ed39f6f408fe7a406185c6cb"
+      ]
+    },
+    {
+      "id": "adk.flagship_crash_resume",
+      "requiredFor": [
+        "developer_preview",
+        "beta",
+        "stable"
+      ],
+      "status": "missing",
+      "evidenceLevel": "none",
+      "reasons": [
+        "trusted signature over the ADK evaluation receipt is required"
+      ],
+      "evidenceDigests": [
+        "sha256:caab085ed90304351c25a4571784439ef72ffe0d70dfd54f384ae05b93a55a14"
+      ]
+    },
+    {
+      "id": "compatibility.supported_target_ci",
+      "requiredFor": [
+        "beta",
+        "stable"
+      ],
+      "status": "missing",
+      "evidenceLevel": "none",
+      "reasons": [
+        "signed all-target and Node-version CI evidence is required"
+      ],
+      "evidenceDigests": []
+    },
+    {
+      "id": "input.revocation_hardware",
+      "requiredFor": [
+        "beta",
+        "stable"
+      ],
+      "status": "missing",
+      "evidenceLevel": "none",
+      "reasons": [
+        "darwin: signed physical-chord/disconnect p95 and 10,000-race evidence bound to the reliability report is required",
+        "win32: signed physical-chord/disconnect p95 and 10,000-race evidence bound to the reliability report is required"
+      ],
+      "evidenceDigests": [
+        "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210"
+      ]
+    },
+    {
+      "id": "reliability.live_matrix",
+      "requiredFor": [
+        "stable"
+      ],
+      "status": "missing",
+      "evidenceLevel": "none",
+      "reasons": [
+        "focus-notification-overlay-modal",
+        "linux-wayland-gnome",
+        "linux-wayland-kde",
+        "linux-wayland-wlroots",
+        "linux-x11",
+        "lock-unlock-session",
+        "macos-retina",
+        "macos-spaces-fullscreen-stage-manager",
+        "multi-monitor-mixed-scale",
+        "physical-emergency-chord",
+        "remote-desktop-session",
+        "sleep-wake-session",
+        "virtual-machine-session",
+        "windows-uac-integrity"
+      ],
+      "evidenceDigests": [
+        "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210"
+      ]
+    },
+    {
+      "id": "release.all_native_artifacts",
+      "requiredFor": [
+        "stable"
+      ],
+      "status": "fail",
+      "evidenceLevel": "integration",
+      "reasons": [
+        "darwin-x64: artifact missing",
+        "linux-arm64: artifact missing",
+        "linux-x64: artifact missing",
+        "win32-x64: artifact missing"
+      ],
+      "evidenceDigests": [
+        "sha256:3e28a4e773f0dd119b0af1493cfb90fef5f6e5fe044d4aecb3a1ad4b448ecd3b"
+      ]
+    },
+    {
+      "id": "release.platform_signing",
+      "requiredFor": [
+        "stable"
+      ],
+      "status": "missing",
+      "evidenceLevel": "none",
+      "reasons": [
+        "darwin: verified signing evidence required",
+        "win32: verified signing evidence required"
+      ],
+      "evidenceDigests": []
+    },
+    {
+      "id": "security.independent_review",
+      "requiredFor": [
+        "stable"
+      ],
+      "status": "missing",
+      "evidenceLevel": "none",
+      "reasons": [
+        "signed independent security review evidence is required"
+      ],
+      "evidenceDigests": []
+    }
+  ],
+  "reportDigest": "sha256:61fe17b0d12471cc614360de2921e29d4089d1a0c950ea7a747f7e1e3b029e83"
+}

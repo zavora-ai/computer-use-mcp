@@ -17,7 +17,7 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `COMPUTER_USE_NATIVE_PATH` — override native `.node` resolution (else: optional platform package → bundled binary).
 - `COMPUTER_USE_LEGACY_FOCUS_TAG=true` — restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`).
 - `COMPUTER_USE_STRUCTURED_CONTENT=false` — legacy text-only results (omits `structuredContent` + `outputSchema`).
-- **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` kills its child).
+- **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` terminates its subprocess tree through a POSIX process group or recursive Windows `taskkill`).
 - **Progress:** long `filesystem` searches emit `notifications/progress` when a progress token is present.
 
 ## Tool priority guidance

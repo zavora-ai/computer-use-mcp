@@ -1,0 +1,19 @@
+{
+  "name": "@zavora-ai/computer-use-remote",
+  "version": "0.1.0",
+  "description": "Authenticated Streamable HTTP sidecar for computer-use-mcp v8",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "bin": { "computer-use-remote": "src/cli.mjs" },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./pairing": "./src/pairing.mjs",
+    "./os-vault": "./src/os-vault.mjs",
+    "./scope-policy": "./src/scope-policy.mjs"
+  },
+  "files": ["README.md", "src/"],
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.29.0" },
+  "peerDependencies": { "@zavora-ai/computer-use-mcp": "7.0.0" }
+}

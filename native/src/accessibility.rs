@@ -7,7 +7,10 @@ mod platform {
     // meaningful errors so the rest of the system works.
 
     #[napi]
-    pub fn get_ui_tree(_window_id: u32, _max_depth: Option<u32>) -> napi::Result<serde_json::Value> {
+    pub fn get_ui_tree(
+        _window_id: u32,
+        _max_depth: Option<u32>,
+    ) -> napi::Result<serde_json::Value> {
         Ok(serde_json::json!({
             "role": "AXWindow",
             "label": null,
@@ -42,7 +45,9 @@ mod platform {
         _label: String,
         _action: String,
     ) -> napi::Result<serde_json::Value> {
-        Err(napi::Error::from_reason("AT-SPI2 accessibility not yet implemented on Linux"))
+        Err(napi::Error::from_reason(
+            "AT-SPI2 accessibility not yet implemented on Linux",
+        ))
     }
 
     #[napi]
@@ -52,7 +57,9 @@ mod platform {
         _label: String,
         _value: String,
     ) -> napi::Result<serde_json::Value> {
-        Err(napi::Error::from_reason("AT-SPI2 accessibility not yet implemented on Linux"))
+        Err(napi::Error::from_reason(
+            "AT-SPI2 accessibility not yet implemented on Linux",
+        ))
     }
 
     #[napi]
@@ -67,7 +74,9 @@ mod platform {
         _item: String,
         _submenu: Option<String>,
     ) -> napi::Result<serde_json::Value> {
-        Err(napi::Error::from_reason("Menu bar access not yet implemented on Linux"))
+        Err(napi::Error::from_reason(
+            "Menu bar access not yet implemented on Linux",
+        ))
     }
 }
 
@@ -153,21 +162,34 @@ mod platform {
 
     fn element_to_json(elem: &IUIAutomationElement) -> serde_json::Value {
         unsafe {
-            let role = elem.CurrentControlType()
-                .map(|ct| control_type_to_role(ct)).unwrap_or("AXUnknown");
+            let role = elem
+                .CurrentControlType()
+                .map(|ct| control_type_to_role(ct))
+                .unwrap_or("AXUnknown");
             let label = elem.CurrentName().ok().map(|s| s.to_string());
-            let value = elem.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                .ok().and_then(|p| p.CurrentValue().ok().map(|s| s.to_string()));
+            let value = elem
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .ok()
+                .and_then(|p| p.CurrentValue().ok().map(|s| s.to_string()));
             let rect = elem.CurrentBoundingRectangle().unwrap_or_default();
             let mut actions = Vec::new();
-            if elem.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId).is_ok() {
+            if elem
+                .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                .is_ok()
+            {
                 actions.push("AXPress");
             }
-            if elem.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId).is_ok() {
+            if elem
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .is_ok()
+            {
                 actions.push("AXSetValue");
             }
-            if elem.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId).is_ok()
-                && !actions.contains(&"AXPress") {
+            if elem
+                .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                .is_ok()
+                && !actions.contains(&"AXPress")
+            {
                 actions.push("AXPress");
             }
             serde_json::json!({
@@ -181,9 +203,16 @@ mod platform {
 
     const NODE_LIMIT: usize = 500;
 
-    fn walk_tree(elem: &IUIAutomationElement, walker: &IUIAutomationTreeWalker,
-        depth: i32, max_depth: i32, count: &mut usize) -> serde_json::Value {
-        if *count >= NODE_LIMIT { return serde_json::json!({"truncated": true}); }
+    fn walk_tree(
+        elem: &IUIAutomationElement,
+        walker: &IUIAutomationTreeWalker,
+        depth: i32,
+        max_depth: i32,
+        count: &mut usize,
+    ) -> serde_json::Value {
+        if *count >= NODE_LIMIT {
+            return serde_json::json!({"truncated": true});
+        }
         *count += 1;
         let mut node = element_to_json(elem);
         let mut children = Vec::new();
@@ -202,20 +231,25 @@ mod platform {
             }
         }
         node["children"] = serde_json::json!(children);
-        if *count >= NODE_LIMIT { node["truncated"] = serde_json::json!(true); }
+        if *count >= NODE_LIMIT {
+            node["truncated"] = serde_json::json!(true);
+        }
         node
     }
 
-    fn build_condition(automation: &IUIAutomation, role: Option<&str>, label: Option<&str>)
-        -> napi::Result<IUIAutomationCondition> {
+    fn build_condition(
+        automation: &IUIAutomation,
+        role: Option<&str>,
+        label: Option<&str>,
+    ) -> napi::Result<IUIAutomationCondition> {
         unsafe {
             let mut conds: Vec<IUIAutomationCondition> = Vec::new();
             if let Some(r) = role {
                 let ct = role_to_control_type(r);
                 if ct.0 != 0 {
                     let v = windows::core::VARIANT::from(ct.0 as i32);
-                    let c = automation.CreatePropertyCondition(
-                        UIA_ControlTypePropertyId, &v)
+                    let c = automation
+                        .CreatePropertyCondition(UIA_ControlTypePropertyId, &v)
                         .map_err(|e| napi::Error::from_reason(format!("condition: {e}")))?;
                     conds.push(c);
                 }
@@ -228,35 +262,50 @@ mod platform {
                 }
             }
             if conds.is_empty() {
-                return automation.CreateTrueCondition()
+                return automation
+                    .CreateTrueCondition()
                     .map_err(|e| napi::Error::from_reason(format!("true_cond: {e}")));
             }
-            if conds.len() == 1 { return Ok(conds.into_iter().next().unwrap()); }
+            if conds.len() == 1 {
+                return Ok(conds.into_iter().next().unwrap());
+            }
             let mut combined = conds[0].clone();
             for c in &conds[1..] {
-                combined = automation.CreateAndCondition(&combined, c)
+                combined = automation
+                    .CreateAndCondition(&combined, c)
                     .map_err(|e| napi::Error::from_reason(format!("and_cond: {e}")))?;
             }
             Ok(combined)
         }
     }
 
-    fn find_first(automation: &IUIAutomation, hwnd: HWND, role: &str, label: &str)
-        -> napi::Result<Option<IUIAutomationElement>> {
+    fn find_first(
+        automation: &IUIAutomation,
+        hwnd: HWND,
+        role: &str,
+        label: &str,
+    ) -> napi::Result<Option<IUIAutomationElement>> {
         unsafe {
-            let root = automation.ElementFromHandle(hwnd)
+            let root = automation
+                .ElementFromHandle(hwnd)
                 .map_err(|e| napi::Error::from_reason(format!("ElementFromHandle: {e}")))?;
-            let cond = build_condition(automation, Some(role),
-                if label.is_empty() { None } else { Some(label) })?;
-            let elems = root.FindAll(TreeScope_Descendants, &cond)
+            let cond = build_condition(
+                automation,
+                Some(role),
+                if label.is_empty() { None } else { Some(label) },
+            )?;
+            let elems = root
+                .FindAll(TreeScope_Descendants, &cond)
                 .map_err(|e| napi::Error::from_reason(format!("FindAll: {e}")))?;
             let count = elems.Length().unwrap_or(0);
             for i in 0..count {
                 if let Ok(elem) = elems.GetElement(i) {
                     let name = elem.CurrentName().ok().map(|s| s.to_string());
                     let n = name.as_deref().unwrap_or("");
-                    if label.is_empty() || n.to_lowercase() == label.to_lowercase()
-                        || n.to_lowercase().contains(&label.to_lowercase()) {
+                    if label.is_empty()
+                        || n.to_lowercase() == label.to_lowercase()
+                        || n.to_lowercase().contains(&label.to_lowercase())
+                    {
                         return Ok(Some(elem));
                     }
                 }
@@ -270,9 +319,11 @@ mod platform {
         let md = max_depth.unwrap_or(10).clamp(1, 20);
         let a = uia()?;
         unsafe {
-            let root = a.ElementFromHandle(HWND(window_id as *mut _))
+            let root = a
+                .ElementFromHandle(HWND(window_id as *mut _))
                 .map_err(|e| napi::Error::from_reason(format!("ElementFromHandle: {e}")))?;
-            let w = a.ControlViewWalker()
+            let w = a
+                .ControlViewWalker()
                 .map_err(|e| napi::Error::from_reason(format!("ControlViewWalker: {e}")))?;
             let mut count = 0;
             Ok(walk_tree(&root, &w, 0, md, &mut count))
@@ -291,15 +342,22 @@ mod platform {
     }
 
     #[napi]
-    pub fn find_element(window_id: u32, role: Option<String>, label: Option<String>,
-        value: Option<String>, max_results: Option<i32>) -> napi::Result<serde_json::Value> {
+    pub fn find_element(
+        window_id: u32,
+        role: Option<String>,
+        label: Option<String>,
+        value: Option<String>,
+        max_results: Option<i32>,
+    ) -> napi::Result<serde_json::Value> {
         let max_r = max_results.unwrap_or(25).clamp(1, 100) as usize;
         let a = uia()?;
         unsafe {
-            let root = a.ElementFromHandle(HWND(window_id as *mut _))
+            let root = a
+                .ElementFromHandle(HWND(window_id as *mut _))
                 .map_err(|e| napi::Error::from_reason(format!("ElementFromHandle: {e}")))?;
             let cond = build_condition(&a, role.as_deref(), label.as_deref())?;
-            let elems = root.FindAll(TreeScope_Descendants, &cond)
+            let elems = root
+                .FindAll(TreeScope_Descendants, &cond)
                 .map_err(|e| napi::Error::from_reason(format!("FindAll: {e}")))?;
             let count = elems.Length().unwrap_or(0) as usize;
             let mut results = Vec::new();
@@ -308,15 +366,21 @@ mod platform {
                     let mut node = element_to_json(&elem);
                     if let Some(ref v) = value {
                         let ev = node.get("value").and_then(|x| x.as_str()).unwrap_or("");
-                        if !ev.to_lowercase().contains(&v.to_lowercase()) { continue; }
+                        if !ev.to_lowercase().contains(&v.to_lowercase()) {
+                            continue;
+                        }
                     }
                     if let Some(ref l) = label {
                         let el = node.get("label").and_then(|x| x.as_str()).unwrap_or("");
-                        if !el.to_lowercase().contains(&l.to_lowercase()) { continue; }
+                        if !el.to_lowercase().contains(&l.to_lowercase()) {
+                            continue;
+                        }
                     }
                     node["path"] = serde_json::json!([i]);
                     results.push(node);
-                    if results.len() >= max_r { break; }
+                    if results.len() >= max_r {
+                        break;
+                    }
                 }
             }
             Ok(serde_json::json!(results))
@@ -324,8 +388,12 @@ mod platform {
     }
 
     #[napi]
-    pub fn perform_action(window_id: u32, role: String, label: String, action: String)
-        -> napi::Result<serde_json::Value> {
+    pub fn perform_action(
+        window_id: u32,
+        role: String,
+        label: String,
+        action: String,
+    ) -> napi::Result<serde_json::Value> {
         let a = uia()?;
         let hwnd = HWND(window_id as *mut _);
         let elem = find_first(&a, hwnd, &role, &label)?;
@@ -339,11 +407,15 @@ mod platform {
                 }
             }
             if action == "AXPress" {
-                if let Ok(inv) = elem.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) {
+                if let Ok(inv) =
+                    elem.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                {
                     let _ = inv.Invoke();
                     return Ok(serde_json::json!({"performed": true}));
                 }
-                if let Ok(tog) = elem.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
+                if let Ok(tog) =
+                    elem.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                {
                     let _ = tog.Toggle();
                     return Ok(serde_json::json!({"performed": true}));
                 }
@@ -359,8 +431,12 @@ mod platform {
     }
 
     #[napi]
-    pub fn set_element_value(window_id: u32, role: String, label: String, value: String)
-        -> napi::Result<serde_json::Value> {
+    pub fn set_element_value(
+        window_id: u32,
+        role: String,
+        label: String,
+        value: String,
+    ) -> napi::Result<serde_json::Value> {
         let a = uia()?;
         let hwnd = HWND(window_id as *mut _);
         let elem = find_first(&a, hwnd, &role, &label)?;
@@ -368,7 +444,8 @@ mod platform {
             return Ok(serde_json::json!({"set": false, "reason": "not_found"}));
         };
         unsafe {
-            let pat: Result<IUIAutomationValuePattern, _> = elem.GetCurrentPatternAs(UIA_ValuePatternId);
+            let pat: Result<IUIAutomationValuePattern, _> =
+                elem.GetCurrentPatternAs(UIA_ValuePatternId);
             match pat {
                 Ok(vp) => {
                     if let Ok(ro) = vp.CurrentIsReadOnly() {
@@ -395,8 +472,14 @@ mod platform {
     }
 
     #[napi]
-    pub fn press_menu_item(_bundle_id: String, _menu: String, _item: String,
-        _submenu: Option<String>) -> napi::Result<serde_json::Value> {
-        Ok(serde_json::json!({"pressed": false, "reason": "windows_menu_navigation_not_yet_implemented"}))
+    pub fn press_menu_item(
+        _bundle_id: String,
+        _menu: String,
+        _item: String,
+        _submenu: Option<String>,
+    ) -> napi::Result<serde_json::Value> {
+        Ok(
+            serde_json::json!({"pressed": false, "reason": "windows_menu_navigation_not_yet_implemented"}),
+        )
     }
 }

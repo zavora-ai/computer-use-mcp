@@ -12,6 +12,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createSession } from '../dist/session.js'
+import { createLockPumpController } from '../dist/session/lock.js'
 
 // Minimal mock native — we only need drainRunloop counter + enough shape to
 // dispatch a mutating + observation tool.
@@ -47,6 +48,26 @@ function newLockPath() {
 // `disableSessionLock: false` explicitly (the default when a mock native is
 // injected is `true`, to keep property-based tests out of the filesystem).
 const LOCK_ON = { disableSessionLock: false }
+
+test('extracted lock controller is refcounted and releases only its final ownership', () => {
+  const lockPath = newLockPath()
+  const controller = createLockPumpController({ lockPath })
+  try {
+    controller.acquire()
+    controller.acquire()
+    assert.equal(controller.refcount, 2)
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), String(process.pid))
+    controller.release()
+    assert.equal(controller.refcount, 1)
+    assert.equal(fs.existsSync(lockPath), true)
+    controller.release()
+    assert.equal(controller.refcount, 0)
+    assert.equal(fs.existsSync(lockPath), false)
+  } finally {
+    while (controller.refcount > 0) controller.release()
+    try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
+  }
+})
 
 // ── Fresh-path lock lifecycle ────────────────────────────────────────────────
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/conformance-evidence.schema.json",
+  "title": "computer-use-mcp v8 conformance evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "evidenceId", "kind", "scope", "observedAt", "environment",
+    "command", "passed", "tests", "durationMs", "assertions", "sources", "sourceDigest", "outputDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "evidenceId": { "type": "string", "pattern": "^evidence_[a-z0-9_-]{3,128}$" },
+    "kind": { "enum": ["deterministic_suite", "integration_suite"] },
+    "scope": { "enum": ["policy", "multi_agent", "supervisor"] },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "arch", "node", "interactive", "source"],
+      "properties": {
+        "platform": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "node": { "type": "string", "pattern": "^v[0-9]+\\." },
+        "interactive": { "type": "boolean" },
+        "source": { "enum": ["local", "ci"] }
+      }
+    },
+    "command": { "type": "string", "minLength": 1 },
+    "passed": { "type": "boolean" },
+    "tests": { "type": "integer", "minimum": 0 },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$" }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "digest"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "digest": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "sourceDigest": { "$ref": "#/$defs/digest" },
+    "outputDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/contracts/computer-use/v8/setup-command.schema.json",
+  "title": "DesktopSetupCommand",
+  "oneOf": [
+    { "$ref": "#/$defs/start" },
+    { "$ref": "#/$defs/simple" },
+    { "$ref": "#/$defs/showPointer" },
+    { "$ref": "#/$defs/confirmPointer" },
+    { "$ref": "#/$defs/acknowledgeEmergency" },
+    { "$ref": "#/$defs/requestPermission" },
+    { "$ref": "#/$defs/openPermissionSettings" },
+    { "$ref": "#/$defs/testSemantic" },
+    { "$ref": "#/$defs/configure" }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "start": {
+      "type": "object", "additionalProperties": false, "required": ["action"],
+      "properties": { "action": { "const": "start" } }
+    },
+    "simple": {
+      "type": "object", "additionalProperties": false, "required": ["action", "onboardingId"],
+      "properties": {
+        "action": { "enum": ["status", "diagnose", "test_capture", "complete"] },
+        "onboardingId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "showPointer": {
+      "type": "object", "additionalProperties": false, "required": ["action", "onboardingId", "coordinate"],
+      "properties": {
+        "action": { "const": "show_pointer" }, "onboardingId": { "$ref": "#/$defs/id" },
+        "coordinate": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } }
+      }
+    },
+    "confirmPointer": {
+      "type": "object", "additionalProperties": false, "required": ["action", "onboardingId", "confirmed"],
+      "properties": {
+        "action": { "const": "confirm_pointer" }, "onboardingId": { "$ref": "#/$defs/id" },
+        "confirmed": { "type": "boolean" }
+      }
+    },
+    "acknowledgeEmergency": {
+      "type": "object", "additionalProperties": false, "required": ["action", "onboardingId", "confirmed"],
+      "properties": {
+        "action": { "const": "acknowledge_emergency" }, "onboardingId": { "$ref": "#/$defs/id" },
+        "confirmed": { "type": "boolean" }
+      }
+    },
+    "openPermissionSettings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "onboardingId", "permissionId"],
+      "properties": {
+        "action": { "const": "open_permission_settings" },
+        "onboardingId": { "$ref": "#/$defs/id" },
+        "permissionId": { "enum": ["display_capture", "accessibility", "automation"] }
+      }
+    },
+    "requestPermission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "onboardingId", "permissionId"],
+      "properties": {
+        "action": { "const": "request_permission" },
+        "onboardingId": { "$ref": "#/$defs/id" },
+        "permissionId": { "enum": ["display_capture", "accessibility"] }
+      }
+    },
+    "testSemantic": {
+      "type": "object", "additionalProperties": false, "required": ["action", "onboardingId", "windowId"],
+      "properties": {
+        "action": { "const": "test_semantic" }, "onboardingId": { "$ref": "#/$defs/id" },
+        "windowId": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "configure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "onboardingId", "filesystemRoots", "allowedAppIds", "allowScrape", "persistAudit"],
+      "properties": {
+        "action": { "const": "configure" }, "onboardingId": { "$ref": "#/$defs/id" },
+        "filesystemRoots": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 4096 } },
+        "allowedAppIds": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 4096 } },
+        "allowScrape": { "type": "boolean" }, "persistAudit": { "type": "boolean" }
+      }
+    }
+  }
+}
