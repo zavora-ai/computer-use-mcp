@@ -410,6 +410,8 @@ export class RuntimeCoordinator {
           expiresAt: envelope.expiresAt,
           targetAppId: envelope.target?.appId ?? null,
           targetWindowId: envelope.target?.windowId ?? null,
+          agentId: envelope.agentId ?? null,
+          executionGroupId: envelope.executionGroupId ?? null,
           reasons: policy.reasons,
           sessionScopeEligible: Boolean(sessionScopeDigest),
           ...(targetSensitivity ? this.#sensitivitySummary(targetSensitivity) : {}),
@@ -447,6 +449,10 @@ export class RuntimeCoordinator {
       if (consumed.remainingUses === 0) this.#forgetApprovalGrant(approvalGrantId)
       this.#pendingApprovals.delete(`${request.sessionId}\u0000${request.actionId}`)
     }
+    // A human review may legitimately outlive the ordinary target-observation
+    // freshness window. The approved envelope remains digest-bound; execution
+    // may proceed only if the live validator confirms the exact same target.
+    const allowAgedApprovedTarget = preview.policy.decision === 'confirm'
 
     const begun = await this.receipts.begin({
       sessionId: request.sessionId,
@@ -490,14 +496,14 @@ export class RuntimeCoordinator {
           this.leases.revoke(request.leaseId!, 'lease_expired')
         }, Math.max(0, Date.parse(lease.expiresAt) - Date.now()))
         leaseExpiryTimer.unref()
-        await this.#revalidateActionContext(preview.envelope, request)
+        await this.#revalidateActionContext(preview.envelope, request, allowAgedApprovedTarget)
         if (actionController.signal.aborted) throw new RuntimeError('interrupted', 'action cancelled before execution')
         if (preview.capability.backend !== 'browser') {
           snapshot = await this.#transactionHooks?.capture(preview.envelope)
           await this.#captureEvidence(preview.envelope, 'before')
           // Evidence capture is an observation between validation and actuation;
           // close that TOCTOU window before consuming the one-shot lease.
-          await this.#revalidateActionContext(preview.envelope, request)
+          await this.#revalidateActionContext(preview.envelope, request, allowAgedApprovedTarget)
         }
         this.leases.consume(request.leaseId)
         if (actionController.signal.aborted) throw new RuntimeError('interrupted', 'control lease revoked before execution')
@@ -581,7 +587,7 @@ export class RuntimeCoordinator {
         if (!verification.verified) {
           throw new RuntimeError('indeterminate', 'postcondition verification failed', { method: verification.method })
         }
-        await this.#revalidateTarget(preview.envelope)
+        await this.#revalidateTarget(preview.envelope, allowAgedApprovedTarget)
         await this.#captureEvidence(preview.envelope, 'after')
       } else if (!meta.mutates) {
         this.#recordEvidence(preview.envelope, 'observation', result)
@@ -1386,8 +1392,12 @@ export class RuntimeCoordinator {
     }
   }
 
-  async #revalidateActionContext(envelope: ActionEnvelope, request: ActionRequest): Promise<void> {
-    await this.#revalidateTarget(envelope)
+  async #revalidateActionContext(
+    envelope: ActionEnvelope,
+    request: ActionRequest,
+    allowAgedApprovedTarget = false,
+  ): Promise<void> {
+    await this.#revalidateTarget(envelope, allowAgedApprovedTarget)
     if (!envelope.targetSensitivity) return
     const current = await this.#assessTargetSensitivity(request)
     if (!current || current.assessment === 'unknown'
@@ -1517,9 +1527,10 @@ export class RuntimeCoordinator {
     return capabilityForTool(request.tool, meta, appId)
   }
 
-  async #revalidateTarget(envelope: ActionEnvelope): Promise<void> {
+  async #revalidateTarget(envelope: ActionEnvelope, allowAgedApprovedTarget = false): Promise<void> {
     if (!envelope.target) return
-    if (this.#now().getTime() - Date.parse(envelope.target.capturedAt) > this.#maxTargetAgeMs) {
+    if (!allowAgedApprovedTarget
+        && this.#now().getTime() - Date.parse(envelope.target.capturedAt) > this.#maxTargetAgeMs) {
       throw new RuntimeError('stale_target', 'target evidence is too old', { observationId: envelope.target.observationId })
     }
     if (!this.#validateTarget) {

@@ -1049,6 +1049,39 @@ test('stale evidence rejects before the side-effect boundary', async () => {
   assert.equal((await coordinator.receipts.get('s', 'a')).status, 'rejected')
 })
 
+test('human approval delay permits live revalidation of the same digest-bound target', async () => {
+  let now = new Date('2026-07-13T10:00:00.000Z')
+  const leases = new ControlLeaseManager(() => now.getTime())
+  let calls = 0
+  const coordinator = new RuntimeCoordinator({
+    leases,
+    policy: () => ({ decision: 'confirm', policyDigest: 'human-review', reasons: ['review'] }),
+    now: () => now,
+    maxTargetAgeMs: 100,
+    validateTarget: async target => target.appId === 'app.safe' && target.windowId === 7,
+    execute: async () => { calls++; return { content: [] } },
+  })
+  const session = await coordinator.startSession({ principalId: 'p', objective: 'Click the safe target' })
+  const request = {
+    sessionId: session.sessionId, principalId: 'p', actionId: 'human-delay', tool: 'left_click',
+    args: { coordinate: [10, 20] }, mode: 'foreground', expiresInMs: 5_000,
+    target: {
+      platform: 'darwin', appId: 'app.safe', windowId: 7, observationId: 'approved-target',
+      confidence: 1, capturedAt: now.toISOString(),
+    },
+  }
+  assert.equal((await coordinator.preview(request)).blocker, 'approval_required')
+  await coordinator.approveAction(session.sessionId, 'p', request.actionId, 5_000)
+  now = new Date('2026-07-13T10:00:01.000Z')
+  const lease = await leases.acquire({
+    sessionId: session.sessionId, principalId: 'p', kind: 'exclusive', executionMode: 'foreground',
+    ttlMs: 2_000, actionBudget: 1, boundaries: { appIds: ['app.safe'], windowIds: [7] },
+  })
+  const result = await coordinator.execute({ ...request, leaseId: lease.leaseId })
+  assert.equal(result.receipt.status, 'committed')
+  assert.equal(calls, 1)
+})
+
 test('executor failure after mutation boundary becomes indeterminate and is never retried', async () => {
   const leases = new ControlLeaseManager()
   const lease = await leases.acquire({

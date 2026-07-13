@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createRendererDeliveryGate,
+  describeAgentState,
+  describeApproval,
   emergencyResetCommand,
   initialViewModel,
   reduceSupervisorMessage,
@@ -51,6 +53,37 @@ test('view model allowlists approval metadata and never copies secret payload fi
   assert.equal(model.pendingApproval.sensitivityFieldsChecked, 1)
   assert.equal(model.pendingApproval.sessionScopeEligible, true)
   assert.doesNotMatch(JSON.stringify(model), /must-not-render|private account|private\/path|private password/)
+})
+
+test('supervisor presents agent work and approvals in plain language', () => {
+  const subscribed = sanitizeSupervisorMessage({
+    type: 'subscribed',
+    session: {
+      sessionId: 'session-1', state: 'running',
+      objective: 'Complete the public project form', executionGroupId: 'form-demo',
+      principalId: 'must-not-render', token: 'must-not-render',
+    },
+  })
+  let model = reduceSupervisorMessage(initialViewModel('local'), subscribed)
+  assert.equal(model.objective, 'Complete the public project form')
+  model = reduceSupervisorMessage(model, {
+    type: 'event',
+    event: {
+      sequence: 3, actionId: 'action-1', type: 'action.approval_required',
+      payload: {
+        tool: 'fill_form', agentId: 'sole-form-executor', targetAppId: 'ai.zavora.adk-form-showcase',
+        actionClass: 'edit_reversible', mode: 'foreground', sensitivityAssessment: 'non_sensitive',
+        sensitivitySource: 'accessibility', sensitivityFieldsChecked: 2, sessionScopeEligible: true,
+      },
+    },
+  })
+  const approval = describeApproval(model.pendingApproval)
+  assert.equal(approval.headline, 'Sole Form Executor wants to fill in a form')
+  assert.match(approval.explanation, /Adk Form Showcase.*2 fields.*verify/i)
+  assert.equal(approval.onceLabel, 'Allow this once')
+  assert.match(approval.sessionLabel, /similar form fills for 2 minutes/i)
+  assert.equal(describeAgentState(model).label, 'Waiting for your approval')
+  assert.doesNotMatch(JSON.stringify({ subscribed, model, approval }), /must-not-render/)
 })
 
 test('main-to-renderer sanitizer strips grants, secrets, and unrecognized event payloads', () => {

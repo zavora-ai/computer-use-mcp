@@ -49,6 +49,25 @@ test('v7 compatibility restores only documented unsafe policy defaults', () => {
   assert.notEqual(sensitive.decision, 'allow', 'compatibility cannot bypass sensitive-action confirmation')
 })
 
+test('v8 app and tool confirmation can be configured without the legacy approval gate', () => {
+  const evaluate = createDefaultV8PolicyFromEnvironment({
+    COMPUTER_USE_V8_CONFIRM_APPS: 'ai.zavora.form-demo',
+    COMPUTER_USE_V8_CONFIRM_TOOLS: 'fill_form',
+  })
+  const envelope = {
+    ...action('fill_form', { fields: [] }),
+    requestedMode: 'foreground',
+    target: {
+      platform: 'darwin', appId: 'ai.zavora.form-demo', observationId: 'observed',
+      confidence: 1, capturedAt: '2026-07-13T00:00:00.000Z',
+    },
+  }
+  assert.equal(evaluate(envelope).decision, 'confirm')
+  assert.match(evaluate(envelope).reasons[0], /confirm_tool/)
+  const screenshot = { ...envelope, tool: 'screenshot', operation: 'screenshot', actionClass: 'observe' }
+  assert.match(evaluate(screenshot).reasons[0], /confirm_app/)
+})
+
 test('migration report is exact, safer, disclosure-bounded, and shell-escaped', () => {
   const report = generateV8MigrationReport({
     COMPUTER_USE_V7_COMPAT: 'true',

@@ -91,7 +91,11 @@ test('local supervisor IPC authenticates, replays events, controls lifecycle, an
     assert.equal((await connected.waitFor(message => message.type === 'hello')).protocolVersion, 2)
     assert.equal((await connected.waitFor(message => message.type === 'emergency_status' && !message.active)).backend, 'cooperative_runtime_only')
     connected.send({ type: 'subscribe', sessionId: session.sessionId, afterSequence: 0 })
-    assert.equal((await connected.waitFor(message => message.type === 'subscribed')).sessionId, session.sessionId)
+    const subscription = await connected.waitFor(message => message.type === 'subscribed')
+    assert.equal(subscription.session.sessionId, session.sessionId)
+    assert.equal(subscription.session.objective, 'supervise')
+    assert.equal(subscription.session.state, 'running')
+    assert.equal(subscription.session.principalId, undefined)
     assert.ok(await connected.waitFor(message => message.type === 'event' && message.event.type === 'session.created'))
 
     connected.send({ type: 'get_frame', sessionId: session.sessionId, frameId: evidence.frameId })

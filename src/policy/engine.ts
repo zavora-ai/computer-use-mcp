@@ -8,6 +8,7 @@ export interface PolicyV2Config {
   allowedAppIds?: string[]
   blockedAppIds?: string[]
   confirmAppIds?: string[]
+  confirmTools?: string[]
   filesystemRoots?: string[]
   registryHives?: string[]
   allowedDomains?: string[]
@@ -97,12 +98,14 @@ export class PolicyV2Engine {
       'communicate_external', 'authentication', 'financial', 'destructive', 'privilege_change', 'secret_access',
     ])
     const confirmApp = Boolean(targetAppId && appMatches(this.config.confirmAppIds, targetAppId))
-    if (confirmApp || confirm.has(envelope.actionClass)
+    const confirmTool = this.config.confirmTools?.includes(envelope.tool) ?? false
+    if (confirmTool || confirmApp || confirm.has(envelope.actionClass)
       || (envelope.actionClass === 'edit_reversible' && envelope.externalSideEffect)
       || envelope.dataLabels.some(label => label === 'credential' || label === 'payment')) {
       return {
         decision: 'confirm', policyDigest: this.policyDigest,
-        reasons: [confirmApp ? `confirm_app:${targetAppId}` : `confirm:${envelope.actionClass}`],
+        reasons: [confirmTool ? `confirm_tool:${envelope.tool}`
+          : confirmApp ? `confirm_app:${targetAppId}` : `confirm:${envelope.actionClass}`],
       }
     }
     return { decision: 'allow', policyDigest: this.policyDigest, reasons: [`allow:${envelope.actionClass}`] }
@@ -125,7 +128,11 @@ export function createDefaultV8PolicyFromEnvironment(env: NodeJS.ProcessEnv = pr
     ...(filesystemRoots?.length ? { filesystemRoots } : {}),
     allowedAppIds: list('COMPUTER_USE_ALLOWED_APPS'),
     blockedAppIds: list('COMPUTER_USE_BLOCKED_APPS'),
-    confirmAppIds: list('COMPUTER_USE_CREDENTIAL_APPS', defaultSensitiveApps),
+    confirmAppIds: list(
+      'COMPUTER_USE_V8_CONFIRM_APPS',
+      list('COMPUTER_USE_CREDENTIAL_APPS', defaultSensitiveApps),
+    ),
+    confirmTools: list('COMPUTER_USE_V8_CONFIRM_TOOLS'),
     allowedDomains: list('COMPUTER_USE_V8_ALLOWED_DOMAINS'),
     registryHives: list('COMPUTER_USE_V8_REGISTRY_HIVES'),
     blockedProcesses: list('COMPUTER_USE_V8_BLOCKED_PROCESSES'),

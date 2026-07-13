@@ -4,38 +4,62 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
-  <title>Computer Use</title>
+  <title>Agent Computer Use</title>
   <link rel="stylesheet" href="renderer.css">
 </head>
 <body>
-  <header><span class="signal" id="signal"></span><strong>Computer Use</strong><span id="mode">connecting</span></header>
+  <header>
+    <span class="signal" id="signal"></span>
+    <div><strong>Agent Computer Use</strong><span class="header-subtitle">Local safety control</span></div>
+    <span class="connection" id="mode">Connecting</span>
+  </header>
   <main>
-    <section><small>Session</small><div id="session">Local session</div></section>
-    <section><small>Current activity</small><div id="activity">Waiting for runtime…</div><div class="meta" id="event"></div></section>
-    <div class="evidence-grid" aria-label="Memory-only visual evidence">
-      <section class="evidence-card" id="before-card" hidden><small>Before</small><img id="before-frame" hidden><div class="frame-placeholder" id="before-placeholder">Capturing target…</div></section>
-      <section class="evidence-card" id="after-card" hidden><small>After</small><img id="after-frame" hidden><div class="frame-placeholder" id="after-placeholder">Awaiting verified result…</div></section>
-      <section class="evidence-card observation" id="observation-card" hidden><small>Observation</small><img id="observation-frame" hidden><div class="frame-placeholder" id="observation-placeholder"></div></section>
+    <section class="status-card" id="status-card">
+      <div class="status-icon" id="status-icon">●</div>
+      <div><strong id="activity">Connecting to the safety runtime…</strong><p id="activity-detail">The agent cannot act yet.</p></div>
+    </section>
+
+    <div class="evidence-grid" aria-label="What the agent sees before and after acting">
+      <section class="evidence-card" id="before-card" hidden><small>What the agent sees now</small><img id="before-frame" hidden><div class="frame-placeholder" id="before-placeholder">Capturing the target…</div></section>
+      <section class="evidence-card" id="after-card" hidden><small>Verified result</small><img id="after-frame" hidden><div class="frame-placeholder" id="after-placeholder">Waiting for the result…</div></section>
+      <section class="evidence-card observation" id="observation-card" hidden><small>What the agent observed</small><img id="observation-frame" hidden><div class="frame-placeholder" id="observation-placeholder"></div></section>
     </div>
-    <div class="privacy-note">Target-only · memory-only · expires automatically</div>
-    <section class="emergency-card">
-      <small>Emergency boundary</small>
-      <div id="emergency-state">Ready</div>
-      <div class="chord" id="emergency-chord">Loading chord…</div>
-      <div class="meta" id="emergency-generation"></div>
-      <button class="reset" id="reset-emergency" hidden>Inspect and reset…</button>
+    <div class="privacy-note" id="privacy-note" hidden>Target-only image · memory-only · expires automatically</div>
+
+    <section class="task-card">
+      <small>Your request</small>
+      <div class="task" id="objective">Waiting for the agent to describe its task…</div>
     </section>
-    <section id="approval" hidden>
-      <small>Approval required</small><h2 id="approval-title">Action</h2>
-      <dl><dt>Class</dt><dd id="approval-class"></dd><dt>Target</dt><dd id="approval-target"></dd><dt>Sensitivity</dt><dd id="approval-sensitivity"></dd><dt id="approval-expected-label">Expected</dt><dd id="approval-expected"></dd></dl>
-      <button class="approve" id="approve">Approve exact action</button>
-      <button class="approve" id="approve-session" hidden>Approve same fields · 10 uses · 2 min</button>
+
+    <section class="approval-card" id="approval" hidden>
+      <div class="eyebrow">Your decision is needed</div>
+      <h1 id="approval-title">The agent wants to make a change</h1>
+      <p class="approval-explanation" id="approval-explanation"></p>
+      <div class="why"><strong>Why am I seeing this?</strong><span id="approval-safety"></span></div>
+      <button class="approve primary" id="approve">Allow this once</button>
+      <button class="approve secondary" id="approve-session" hidden>Allow similar actions for 2 minutes</button>
+      <p class="approval-help">Nothing changes until you approve. The agent receives only your decision—not an approval token.</p>
     </section>
+
+    <details class="safety-details">
+      <summary>Safety controls and developer details</summary>
+      <div class="safety-body">
+        <div class="emergency-copy"><strong id="emergency-state">Emergency stop is ready</strong><span id="emergency-chord">Loading keyboard shortcut…</span><span class="meta" id="emergency-generation"></span></div>
+        <button class="reset" id="reset-emergency" hidden>Review and reset emergency stop…</button>
+        <dl>
+          <dt>Runtime state</dt><dd id="technical-state">connecting</dd>
+          <dt>Last event</dt><dd id="event">None yet</dd>
+          <dt>Session</dt><dd id="session">Local session</dd>
+          <dt>Agent</dt><dd id="agent">Not identified</dd>
+          <dt>Target</dt><dd id="approval-target">Not selected</dd>
+        </dl>
+      </div>
+    </details>
   </main>
   <footer>
-    <button data-command="pause">Pause</button><button data-command="resume">Resume</button>
-    <button data-command="takeover">Take over</button><button data-command="stop">Stop</button>
-    <button class="danger" id="emergency">Emergency stop</button>
+    <button data-command="pause">Pause agent</button><button data-command="resume">Continue agent</button>
+    <button data-command="takeover">Take control myself</button><button data-command="stop">End this task</button>
+    <button class="danger" id="emergency">Stop everything now</button>
   </footer>
   <script type="module" src="renderer.mjs"></script>
 </body>

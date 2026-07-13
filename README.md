@@ -854,6 +854,8 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_CREDENTIAL_APPS` | Override the default sensitive-app list that requires approval. |
 | `COMPUTER_USE_REQUIRE_APPROVAL` | Set `true` to require approval for every mutating tool. |
 | `COMPUTER_USE_REQUIRE_APPROVAL_FOR` | Comma-separated tool names that require approval. |
+| `COMPUTER_USE_V8_CONFIRM_APPS` | Comma-separated app IDs that require governed v8 approval without enabling the legacy dispatcher approval gate. |
+| `COMPUTER_USE_V8_CONFIRM_TOOLS` | Comma-separated tool names that require governed v8 approval without enabling the legacy dispatcher approval gate. |
 | `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL` | Set `true` to require approval for destructive filesystem/process/registry/script operations. |
 | `COMPUTER_USE_APPROVAL_TOKEN` | Private token callers must pass as `approval_token` after user approval. |
 | `COMPUTER_USE_AUDIT_LOG` | JSONL audit destination. Set `false` to disable, `true` for the default `~/.computer-use-mcp/audit.jsonl`, or an explicit path. |

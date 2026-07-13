@@ -17,8 +17,14 @@ COMPUTER_USE_SESSION_ID=... \
 npm start
 ```
 
-The window shows lifecycle/action status and supports exact-action approval,
-pause, resume, takeover, stop, and emergency stop. The emergency card displays
+The window leads with the session's natural-language `objective`, identifies
+which agent is asking to act, and translates runtime tools into plain-language
+descriptions such as “fill in a form.” Approval choices explain their duration
+and scope; raw session IDs, event names, and runtime state remain available only
+under **Safety controls and developer details**. Agent hosts should pass a short,
+user-readable objective to `start_session` and a stable `agent_id` with each
+proposed action. The window also supports exact-action approval, pause, resume,
+takeover, stop, and emergency stop. The emergency details display
 the configured physical chord and native latch generation. Reset requires an
 explicit main-process confirmation and travels only over the authenticated
 supervisor socket; it is never an MCP/model tool. Arbitrary event payloads are

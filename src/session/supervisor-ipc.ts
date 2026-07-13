@@ -137,11 +137,19 @@ export class SupervisorIpcServer {
     const principalId = state.principalId!
     const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined
     if (type === 'subscribe' && sessionId) {
-      await this.#runtime.getSession(sessionId, principalId)
+      const session = await this.#runtime.getSession(sessionId, principalId)
       state.sessionIds.add(sessionId)
       const after = typeof message.afterSequence === 'number' ? message.afterSequence : 0
       for (const event of this.#runtime.events.query(sessionId, after, 1000)) this.#send(socket, { type: 'event', event })
-      this.#send(socket, { type: 'subscribed', sessionId })
+      this.#send(socket, {
+        type: 'subscribed',
+        session: {
+          sessionId: session.sessionId,
+          state: session.state,
+          objective: session.objective ?? null,
+          executionGroupId: session.executionGroupId ?? null,
+        },
+      })
       return
     }
     if (type === 'emergency_stop') {

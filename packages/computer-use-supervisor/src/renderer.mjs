@@ -1,37 +1,41 @@
-import { initialViewModel, reduceSupervisorMessage } from './model.mjs'
+import { describeAgentState, describeApproval, initialViewModel, reduceSupervisorMessage } from './model.mjs'
 
 let model = initialViewModel('local')
 const byId = id => document.getElementById(id)
 
 function render() {
+  const status = describeAgentState(model)
+  const approval = describeApproval(model.pendingApproval)
   byId('signal').classList.toggle('live', model.connected)
-  byId('mode').textContent = model.state
-  byId('activity').textContent = model.currentAction?.tool ?? (model.connected ? 'Ready' : 'Connecting…')
-  byId('event').textContent = model.lastEvent ? `${model.lastEvent} · #${model.sequence}` : ''
-  byId('emergency-state').textContent = model.emergency.active ? 'LATCHED — mutations blocked' : 'Ready'
+  byId('mode').textContent = model.connected ? 'Connected' : 'Connecting'
+  byId('objective').textContent = model.objective || 'The agent has not provided a task summary yet.'
+  byId('activity').textContent = status.label
+  byId('activity-detail').textContent = status.detail
+  byId('status-card').dataset.tone = status.tone
+  byId('event').textContent = model.lastEvent ? `${model.lastEvent} · event ${model.sequence}` : 'None yet'
+  byId('technical-state').textContent = model.state
+  byId('session').textContent = model.sessionId || 'Local session'
+  byId('emergency-state').textContent = model.emergency.active
+    ? 'Emergency stop is active — all changes are blocked'
+    : 'Emergency stop is ready'
   byId('emergency-state').classList.toggle('latched', model.emergency.active)
   byId('emergency-chord').textContent = model.emergency.supported
-    ? (model.emergency.chord || 'Configured by host')
-    : 'Native global chord unavailable'
+    ? `Keyboard shortcut: ${model.emergency.chord || 'configured by the host'}`
+    : 'A system-wide keyboard shortcut is not available on this machine.'
   byId('emergency-generation').textContent = model.emergency.generation
-    ? `Stop generation ${model.emergency.generation}` : ''
+    ? `Safety stop generation ${model.emergency.generation}` : ''
   byId('reset-emergency').hidden = !model.emergency.active
-  const approval = model.pendingApproval
   byId('approval').hidden = !approval
   if (approval) {
-    byId('approval-title').textContent = approval.operation ?? approval.tool ?? 'Action'
-    byId('approval-class').textContent = `${approval.actionClass ?? 'unknown'} · ${approval.mode ?? 'unknown'}`
-    byId('approval-target').textContent = approval.targetAppId ?? 'Local desktop'
-    byId('approval-sensitivity').textContent = approval.sensitivityAssessment
-      ? `${approval.sensitivityAssessment} · ${approval.sensitivityFieldsChecked ?? 0} checked`
-      : 'not applicable'
-    const expected = [approval.postconditionKind, approval.postconditionExpectedState]
-      .filter(Boolean).join(' · ')
-    byId('approval-expected-label').hidden = !expected
-    byId('approval-expected').hidden = !expected
-    byId('approval-expected').textContent = expected
-    byId('approve-session').hidden = approval.sessionScopeEligible !== true
+    byId('approval-title').textContent = approval.headline
+    byId('approval-explanation').textContent = approval.explanation
+    byId('approval-safety').textContent = approval.safety
+    byId('approve').textContent = approval.onceLabel
+    byId('approve-session').textContent = approval.sessionLabel
+    byId('approve-session').hidden = model.pendingApproval.sessionScopeEligible !== true
   }
+  byId('agent').textContent = approval?.actor ?? 'Waiting for an action'
+  byId('approval-target').textContent = approval?.target ?? 'Not selected'
   for (const phase of ['before', 'after', 'observation']) {
     const frame = model.evidenceFrames[phase]
     const image = byId(`${phase}-frame`)
@@ -48,6 +52,8 @@ function render() {
   byId('before-card').hidden = !model.evidenceFrames.before && !model.currentAction
   byId('after-card').hidden = !model.evidenceFrames.after && !model.evidenceFrames.before
   byId('observation-card').hidden = !model.evidenceFrames.observation
+  byId('privacy-note').hidden = !model.evidenceFrames.before
+    && !model.evidenceFrames.after && !model.evidenceFrames.observation
 }
 
 window.computerUseSupervisor.onMessage(message => {

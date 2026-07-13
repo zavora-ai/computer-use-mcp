@@ -1,6 +1,6 @@
 const SAFE_APPROVAL_FIELDS = [
   'actionDigest', 'tool', 'operation', 'actionClass', 'mode', 'expiresAt',
-  'targetAppId', 'targetWindowId',
+  'targetAppId', 'targetWindowId', 'agentId', 'executionGroupId',
 ]
 const SAFE_POSTCONDITION_FIELDS = [
   'postconditionKind', 'postconditionExpectedState', 'postconditionExpectedDigest',
@@ -104,7 +104,19 @@ export function sanitizeSupervisorMessage(message) {
   if (!message || typeof message !== 'object') return { type: 'error', error: 'invalid_message' }
   if (message.type === 'hello') return { type: 'hello', protocolVersion: Number(message.protocolVersion ?? 0) }
   if (message.type === 'disconnected') return { type: 'disconnected' }
-  if (message.type === 'subscribed') return { type: 'subscribed', sessionId: String(message.sessionId ?? '') }
+  if (message.type === 'subscribed' && message.session && typeof message.session === 'object') {
+    return {
+      type: 'subscribed',
+      session: {
+        sessionId: String(message.session.sessionId ?? '').slice(0, 128),
+        state: String(message.session.state ?? 'connected').slice(0, 40),
+        objective: typeof message.session.objective === 'string'
+          ? message.session.objective.trim().slice(0, 500) : '',
+        executionGroupId: typeof message.session.executionGroupId === 'string'
+          ? message.session.executionGroupId.slice(0, 128) : '',
+      },
+    }
+  }
   if (message.type === 'emergency_status') {
     return {
       type: 'emergency_status',
@@ -145,7 +157,7 @@ export function sanitizeSupervisorMessage(message) {
 
 export function initialViewModel(sessionId) {
   return {
-    sessionId, state: 'connecting', currentAction: null, pendingApproval: null,
+    sessionId, objective: '', executionGroupId: '', state: 'connecting', currentAction: null, pendingApproval: null,
     lastEvent: null, sequence: 0, connected: false,
     emergency: { active: false, supported: false, generation: 0, backend: 'unknown', chord: '' },
     stateBeforeEmergency: null,
@@ -156,6 +168,16 @@ export function initialViewModel(sessionId) {
 
 export function reduceSupervisorMessage(model, message) {
   if (message.type === 'hello') return { ...model, connected: true, state: 'connected' }
+  if (message.type === 'subscribed' && message.session) {
+    return {
+      ...model,
+      sessionId: message.session.sessionId || model.sessionId,
+      objective: message.session.objective || '',
+      executionGroupId: message.session.executionGroupId || '',
+      connected: true,
+      state: message.session.state || model.state,
+    }
+  }
   if (message.type === 'emergency_status') {
     const active = message.active === true
     return {
@@ -223,4 +245,67 @@ export function reduceSupervisorMessage(model, message) {
     next.state = 'waiting_for_user'
   }
   return next
+}
+
+const TOOL_PHRASES = Object.freeze({
+  fill_form: 'fill in a form',
+  set_value: 'enter text in a field',
+  click_element: 'click a control',
+  press_button: 'press a button',
+  select_menu_item: 'choose a menu item',
+  write_clipboard: 'copy text to the clipboard',
+  run_script: 'run a local automation script',
+  filesystem: 'change a local file',
+  registry: 'change a Windows setting',
+  notification: 'show a notification',
+  open_application: 'open an application',
+})
+
+function words(value) {
+  return String(value ?? '')
+    .replace(/^.*[.:/]/, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase())
+    .trim()
+}
+
+export function describeApproval(approval) {
+  if (!approval) return null
+  const actor = approval.agentId ? words(approval.agentId) : 'The agent'
+  const action = TOOL_PHRASES[approval.tool] ?? words(approval.operation ?? approval.tool ?? 'perform an action').toLowerCase()
+  const target = approval.targetAppId ? words(approval.targetAppId) : 'your computer'
+  const fieldCount = Number(approval.sensitivityFieldsChecked ?? 0)
+  const detail = approval.tool === 'fill_form' && fieldCount > 0
+    ? ` It checked ${fieldCount} ${fieldCount === 1 ? 'field' : 'fields'} and will verify the result afterward.`
+    : approval.postconditionKind ? ' The result will be checked automatically afterward.' : ''
+  const safety = approval.sensitivityAssessment === 'sensitive'
+    ? 'This may involve a password or other sensitive field. Review carefully.'
+    : approval.sensitivityAssessment === 'unknown'
+      ? 'The field sensitivity could not be confirmed, so approval is required.'
+      : 'The safety policy requires your confirmation before the computer changes.'
+  return {
+    actor,
+    action,
+    target,
+    headline: `${actor} wants to ${action}`,
+    explanation: `Target: ${target}.${detail}`,
+    safety,
+    onceLabel: 'Allow this once',
+    sessionLabel: approval.tool === 'fill_form'
+      ? 'Allow similar form fills for 2 minutes'
+      : 'Allow similar actions for 2 minutes',
+  }
+}
+
+export function describeAgentState(model) {
+  if (model.emergency.active) return { label: 'Stopped for safety', tone: 'danger', detail: 'All computer changes are blocked.' }
+  if (!model.connected) return { label: 'Connecting to the safety runtime…', tone: 'waiting', detail: 'The agent cannot act yet.' }
+  if (model.pendingApproval) return { label: 'Waiting for your approval', tone: 'attention', detail: 'The agent is paused before making a change.' }
+  if (model.currentAction) {
+    const action = TOOL_PHRASES[model.currentAction.tool] ?? words(model.currentAction.tool).toLowerCase()
+    return { label: `Agent is working: ${action}`, tone: 'working', detail: 'The runtime will verify the result.' }
+  }
+  if (model.state === 'completed') return { label: 'Task completed', tone: 'success', detail: 'The requested work has finished.' }
+  if (model.state === 'paused_by_user') return { label: 'Agent paused', tone: 'waiting', detail: 'Continue when you are ready.' }
+  return { label: 'Ready for the agent', tone: 'success', detail: 'Waiting for the next safe action.' }
 }
