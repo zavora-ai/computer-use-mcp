@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-preview",
   "runtimeVersion": "7.0.0",
-  "generatedAt": "2026-07-13T14:14:28.199Z",
+  "generatedAt": "2026-07-13T14:23:24.332Z",
   "evidence": [
     {
       "schemaVersion": 1,
       "evidenceId": "evidence_multi_agent_4965fc8bf835c7d3",
       "kind": "deterministic_suite",
       "scope": "multi_agent",
-      "observedAt": "2026-07-13T14:14:27.283Z",
+      "observedAt": "2026-07-13T14:23:23.422Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -20,7 +20,7 @@
       "command": "node --test test/v8-reliability-corpus.test.mjs test/v8-mcp-facade.test.mjs",
       "passed": true,
       "tests": 17,
-      "durationMs": 377,
+      "durationMs": 379,
       "assertions": [
         "lease.one_writer",
         "lease.terminal_revocation",
@@ -39,14 +39,14 @@
         }
       ],
       "sourceDigest": "sha256:bb2b8d3548e23ecedb8f36f5c7d7d814423f2160d12e44684965fc8bf835c7d3",
-      "outputDigest": "sha256:3fde2882c482b89f90519ef501701f2c102b0d808fe9ad8ac41466e525923614"
+      "outputDigest": "sha256:5bd4a8ceb441232116d80a3da4db26954eff701a5df567ab9616d42d771f808e"
     },
     {
       "schemaVersion": 1,
       "evidenceId": "evidence_policy_73f43849bcfda153",
       "kind": "deterministic_suite",
       "scope": "policy",
-      "observedAt": "2026-07-13T14:14:26.905Z",
+      "observedAt": "2026-07-13T14:23:23.042Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -57,7 +57,7 @@
       "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs test/v8-migration.test.mjs && npm test --prefix packages/computer-use-remote",
       "passed": true,
       "tests": 115,
-      "durationMs": 3070,
+      "durationMs": 3045,
       "assertions": [
         "policy.operation_boundaries",
         "policy.approval_binding",
@@ -265,14 +265,14 @@
         }
       ],
       "sourceDigest": "sha256:c26c30f2cb7676e41b8fbaa1b0a402759683bd626bfe2b5c73f43849bcfda153",
-      "outputDigest": "sha256:b7f5fde0de06b9fb5806de47fb5b2eddbd3dea7cd5e469df19c1637628f996c6"
+      "outputDigest": "sha256:dcb9ea44c3ed11ac7fae1b4bce099d2bfd0c8de00249565832d05171aa08ff31"
     },
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_supervisor_4d5e38efd6862ae8",
+      "evidenceId": "evidence_supervisor_53c8afd1c550d5ff",
       "kind": "integration_suite",
       "scope": "supervisor",
-      "observedAt": "2026-07-13T14:14:28.199Z",
+      "observedAt": "2026-07-13T14:23:24.332Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -283,7 +283,7 @@
       "command": "node --test test/v8-supervisor-ipc.test.mjs test/v8-emergency-stop.test.mjs test/cancellation.test.mjs && npm test --prefix packages/computer-use-supervisor",
       "passed": true,
       "tests": 18,
-      "durationMs": 916,
+      "durationMs": 910,
       "assertions": [
         "supervisor.authentication",
         "supervisor.principal_isolation",
@@ -297,7 +297,7 @@
       "sources": [
         {
           "path": "native/src/activity.rs",
-          "digest": "sha256:e9fbedcdcb0f21845e6701d0d11ea567f97ee9812758714b084565dc5c862c13"
+          "digest": "sha256:e04fb1a8e23436a2a81a6668dd600091d28f32d7abc089ab96150acb104d5525"
         },
         {
           "path": "native/src/keyboard.rs",
@@ -364,8 +364,8 @@
           "digest": "sha256:ce860d8bc79edcbad969e382b33986ed853f6d078b0be50ca0a9a9e144d3fb7b"
         }
       ],
-      "sourceDigest": "sha256:82459139f944d700a0e777937d4b63081f9807e1b0897fbe4d5e38efd6862ae8",
-      "outputDigest": "sha256:f99cf5e2f3ecf9c7cc577ce6f08bd0865276a65deb69351fa04e5157a7c80d0f"
+      "sourceDigest": "sha256:0efe4f845fd8de9ec2544fddfb293593776f640e45484b5553c8afd1c550d5ff",
+      "outputDigest": "sha256:03ba40319b3cfa690c50e669aaa0134426f6c0d830d7760591fe066d99d90a9c"
     }
   ],
   "certifications": [
@@ -446,5 +446,5 @@
       ]
     }
   ],
-  "reportDigest": "sha256:c06b0af47751cb5b1069d86ea63d5eb35f7da4f2aa71b8ac09ab6c619e50b609"
+  "reportDigest": "sha256:90a770955c900aa9140a385a8c6cfb52720dc37dbb33f32b2a061ab3d6ce9e53"
 }

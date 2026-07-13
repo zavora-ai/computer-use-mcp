@@ -128,6 +128,14 @@ pub struct EmergencyStopWaitResult {
 
 #[napi]
 pub fn configure_emergency_stop_chord(chord: String) -> napi::Result<EmergencyStopCapability> {
+    #[cfg(target_os = "linux")]
+    {
+        parse_emergency_chord(&chord).map_err(napi::Error::from_reason)?;
+        return Err(napi::Error::from_reason(
+            "global physical emergency-stop chord is unsupported on this Linux backend",
+        ));
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let encoded = parse_emergency_chord(&chord).map_err(napi::Error::from_reason)?;
     #[cfg(target_os = "macos")]
     macos_monitor::ensure_started()
@@ -137,11 +145,9 @@ pub fn configure_emergency_stop_chord(chord: String) -> napi::Result<EmergencySt
     windows_monitor::ensure_started()
         .as_ref()
         .map_err(|reason| napi::Error::from_reason(reason.clone()))?;
-    #[cfg(target_os = "linux")]
-    return Err(napi::Error::from_reason(
-        "global physical emergency-stop chord is unsupported on this Linux backend",
-    ));
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     EMERGENCY_CHORD.store(encoded, Ordering::Release);
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     Ok(get_emergency_stop_capability(Some(chord)))
 }
 
@@ -229,6 +235,32 @@ fn macos_source_state_is_physical(source_state_id: i64) -> bool {
 #[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
 fn windows_flags_are_physical(flags: u32, injected_mask: u32) -> bool {
     flags & injected_mask == 0
+}
+
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn linux_x11_device_is_physical(name: &str, device_use: i32) -> bool {
+    // XI2 raw events identify the originating slave device. XTEST synthesis
+    // uses the server-created XTEST devices, which are excluded here. Other
+    // virtual/uinput devices are not universally identifiable, so the public
+    // capability deliberately remains best-effort rather than claiming full
+    // injected-versus-physical attribution.
+    let slave = device_use == 3 || device_use == 4; // XISlavePointer/Keyboard
+    let normalized = name.to_ascii_lowercase();
+    slave && !normalized.contains("xtest") && !normalized.contains("virtual core")
+}
+
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn linux_session_is_native_wayland(
+    session_type: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
+    session_type
+        .map(|value| value.eq_ignore_ascii_case("wayland"))
+        .unwrap_or(false)
+        || (wayland_display.is_some()
+            && !session_type
+                .map(|value| value.eq_ignore_ascii_case("x11"))
+                .unwrap_or(false))
 }
 
 #[napi(object)]
@@ -490,8 +522,9 @@ mod windows_monitor {
 #[cfg(test)]
 mod tests {
     use super::{
-        chord_matches, macos_source_state_is_physical, parse_emergency_chord,
-        windows_flags_are_physical, EMERGENCY_CHORD, MOD_ALT, MOD_CTRL, MOD_SHIFT, TRIGGER_ESCAPE,
+        chord_matches, linux_session_is_native_wayland, linux_x11_device_is_physical,
+        macos_source_state_is_physical, parse_emergency_chord, windows_flags_are_physical,
+        EMERGENCY_CHORD, MOD_ALT, MOD_CTRL, MOD_SHIFT, TRIGGER_ESCAPE,
     };
     use std::sync::atomic::Ordering;
 
@@ -524,6 +557,35 @@ mod tests {
         assert!(windows_flags_are_physical(0x02, 0x10));
         assert!(!windows_flags_are_physical(0x12, 0x10));
     }
+
+    #[test]
+    fn linux_x11_excludes_server_xtest_and_master_devices() {
+        assert!(linux_x11_device_is_physical("USB Optical Mouse", 3));
+        assert!(linux_x11_device_is_physical(
+            "AT Translated Set 2 keyboard",
+            4
+        ));
+        assert!(!linux_x11_device_is_physical(
+            "Virtual core XTEST pointer",
+            3
+        ));
+        assert!(!linux_x11_device_is_physical("Virtual core pointer", 1));
+        assert!(!linux_x11_device_is_physical("Some floating device", 5));
+    }
+
+    #[test]
+    fn linux_x11_monitor_never_claims_native_wayland_or_xwayland() {
+        assert!(linux_session_is_native_wayland(
+            Some("wayland"),
+            Some("wayland-0")
+        ));
+        assert!(linux_session_is_native_wayland(None, Some("wayland-0")));
+        assert!(!linux_session_is_native_wayland(Some("x11"), None));
+        assert!(!linux_session_is_native_wayland(
+            Some("x11"),
+            Some("wayland-0")
+        ));
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -533,9 +595,209 @@ pub fn get_user_idle_time_ms() -> Option<f64> {
 }
 
 #[cfg(target_os = "linux")]
+mod linux_x11_monitor {
+    use std::collections::HashSet;
+    use std::ffi::CStr;
+    use std::os::raw::{c_int, c_uchar};
+    use std::ptr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{mpsc, OnceLock};
+    use std::time::{Duration, Instant};
+    use x11::{xinput2, xlib};
+
+    static CLOCK_ORIGIN: OnceLock<Instant> = OnceLock::new();
+    static LAST_PHYSICAL_MS: AtomicU64 = AtomicU64::new(0);
+    static MONITOR_STATUS: OnceLock<Result<(), String>> = OnceLock::new();
+
+    fn monotonic_ms() -> u64 {
+        CLOCK_ORIGIN
+            .get_or_init(Instant::now)
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64
+    }
+
+    unsafe fn physical_devices(display: *mut xlib::Display) -> Result<HashSet<c_int>, String> {
+        let mut count = 0;
+        let devices = xinput2::XIQueryDevice(display, xinput2::XIAllDevices, &mut count);
+        if devices.is_null() {
+            return Err("XIQueryDevice returned no device table".into());
+        }
+        let mut physical = HashSet::new();
+        for index in 0..count.max(0) as usize {
+            let device = &*devices.add(index);
+            if device.name.is_null() || device.enabled == 0 {
+                continue;
+            }
+            let name = CStr::from_ptr(device.name).to_string_lossy();
+            if super::linux_x11_device_is_physical(&name, device._use) {
+                physical.insert(device.deviceid);
+            }
+        }
+        xinput2::XIFreeDeviceInfo(devices);
+        if physical.is_empty() {
+            return Err("XI2 reported no enabled non-XTEST slave input devices".into());
+        }
+        Ok(physical)
+    }
+
+    unsafe fn run_monitor(sender: mpsc::SyncSender<Result<(), String>>) {
+        let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+        let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+        if super::linux_session_is_native_wayland(
+            session_type.as_deref(),
+            wayland_display.as_deref(),
+        ) {
+            let _ = sender.send(Err(
+                "native Wayland does not expose an equivalent attributed global input stream; X11 only"
+                    .into(),
+            ));
+            return;
+        }
+        let display = xlib::XOpenDisplay(ptr::null());
+        if display.is_null() {
+            let _ = sender.send(Err("cannot open DISPLAY for XI2 input monitoring".into()));
+            return;
+        }
+
+        let mut opcode = 0;
+        let mut first_event = 0;
+        let mut first_error = 0;
+        let extension = b"XInputExtension\0";
+        if xlib::XQueryExtension(
+            display,
+            extension.as_ptr().cast(),
+            &mut opcode,
+            &mut first_event,
+            &mut first_error,
+        ) == xlib::False
+        {
+            let _ = xlib::XCloseDisplay(display);
+            let _ = sender.send(Err(
+                "XInput extension is unavailable on this X server".into()
+            ));
+            return;
+        }
+        let mut major = 2;
+        let mut minor = 0;
+        if xinput2::XIQueryVersion(display, &mut major, &mut minor) != xlib::Success as c_int {
+            let _ = xlib::XCloseDisplay(display);
+            let _ = sender.send(Err("XInput2 2.0 or newer is unavailable".into()));
+            return;
+        }
+
+        let mut devices = match physical_devices(display) {
+            Ok(devices) => devices,
+            Err(reason) => {
+                let _ = xlib::XCloseDisplay(display);
+                let _ = sender.send(Err(reason));
+                return;
+            }
+        };
+        let mask_len = ((xinput2::XI_LASTEVENT + 7) / 8) as usize;
+        let mut raw_mask = vec![0u8; mask_len];
+        for event in [
+            xinput2::XI_RawKeyPress,
+            xinput2::XI_RawKeyRelease,
+            xinput2::XI_RawButtonPress,
+            xinput2::XI_RawButtonRelease,
+            xinput2::XI_RawMotion,
+            xinput2::XI_RawTouchBegin,
+            xinput2::XI_RawTouchUpdate,
+            xinput2::XI_RawTouchEnd,
+        ] {
+            xinput2::XISetMask(&mut raw_mask, event);
+        }
+        let mut hierarchy_mask = vec![0u8; mask_len];
+        xinput2::XISetMask(&mut hierarchy_mask, xinput2::XI_HierarchyChanged);
+        let mut masks = [
+            xinput2::XIEventMask {
+                deviceid: xinput2::XIAllMasterDevices,
+                mask_len: raw_mask.len() as c_int,
+                mask: raw_mask.as_mut_ptr() as *mut c_uchar,
+            },
+            xinput2::XIEventMask {
+                deviceid: xinput2::XIAllDevices,
+                mask_len: hierarchy_mask.len() as c_int,
+                mask: hierarchy_mask.as_mut_ptr() as *mut c_uchar,
+            },
+        ];
+        let root = xlib::XDefaultRootWindow(display);
+        if xinput2::XISelectEvents(display, root, masks.as_mut_ptr(), masks.len() as c_int)
+            != xlib::Success as c_int
+        {
+            let _ = xlib::XCloseDisplay(display);
+            let _ = sender.send(Err("failed to select XI2 raw input events".into()));
+            return;
+        }
+        xlib::XFlush(display);
+        LAST_PHYSICAL_MS.store(monotonic_ms(), Ordering::Release);
+        if sender.send(Ok(())).is_err() {
+            let _ = xlib::XCloseDisplay(display);
+            return;
+        }
+
+        loop {
+            let mut event: xlib::XEvent = std::mem::zeroed();
+            xlib::XNextEvent(display, &mut event);
+            if event.get_type() != xlib::GenericEvent {
+                continue;
+            }
+            let mut cookie = event.generic_event_cookie;
+            if cookie.extension != opcode || xlib::XGetEventData(display, &mut cookie) != xlib::True
+            {
+                continue;
+            }
+            if cookie.evtype == xinput2::XI_HierarchyChanged {
+                if let Ok(updated) = physical_devices(display) {
+                    devices = updated;
+                }
+            } else if matches!(
+                cookie.evtype,
+                xinput2::XI_RawKeyPress
+                    | xinput2::XI_RawKeyRelease
+                    | xinput2::XI_RawButtonPress
+                    | xinput2::XI_RawButtonRelease
+                    | xinput2::XI_RawMotion
+                    | xinput2::XI_RawTouchBegin
+                    | xinput2::XI_RawTouchUpdate
+                    | xinput2::XI_RawTouchEnd
+            ) && !cookie.data.is_null()
+            {
+                let raw = &*(cookie.data as *const xinput2::XIRawEvent);
+                if devices.contains(&raw.sourceid) {
+                    LAST_PHYSICAL_MS.store(monotonic_ms(), Ordering::Release);
+                }
+            }
+            xlib::XFreeEventData(display, &mut cookie);
+        }
+    }
+
+    fn install() -> Result<(), String> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("computer-use-x11-input-monitor".into())
+            .spawn(move || unsafe { run_monitor(sender) })
+            .map_err(|error| format!("failed to start XI2 monitor thread: {error}"))?;
+        receiver
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|error| format!("XI2 monitor initialization timed out: {error}"))?
+    }
+
+    pub fn ensure_started() -> &'static Result<(), String> {
+        MONITOR_STATUS.get_or_init(install)
+    }
+
+    pub fn idle_time_ms() -> Option<f64> {
+        ensure_started().as_ref().ok()?;
+        Some(monotonic_ms().saturating_sub(LAST_PHYSICAL_MS.load(Ordering::Acquire)) as f64)
+    }
+}
+
+#[cfg(target_os = "linux")]
 #[napi]
 pub fn get_user_idle_time_ms() -> Option<f64> {
-    None
+    linux_x11_monitor::idle_time_ms()
 }
 
 #[napi]
@@ -565,13 +827,16 @@ pub fn get_input_monitor_capability() -> InputMonitorCapability {
     }
 
     #[cfg(target_os = "linux")]
-    return InputMonitorCapability {
-        supported: false,
-        backend: "unavailable".into(),
+    {
+        let status = linux_x11_monitor::ensure_started();
+        return InputMonitorCapability {
+        supported: status.is_ok(),
+        backend: if status.is_ok() { "xinput2_raw_non_xtest" } else { "unavailable" }.into(),
         distinguishes_injected: false,
-        recommended_poll_ms: 50,
-        reason: Some(
-            "X11/Wayland physical-input attribution is not available in this build".into(),
-        ),
-    };
+        recommended_poll_ms: 20,
+        reason: status.as_ref().err().cloned().or_else(|| Some(
+            "best-effort X11 monitor excludes XTEST sources, but arbitrary virtual/uinput devices cannot be proven physical; Wayland is unsupported".into(),
+        )),
+        };
+    }
 }

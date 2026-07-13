@@ -56,7 +56,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev libxi-dev
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -132,7 +132,7 @@ jobs:
 
       - name: Run smoke test (Linux)
         if: runner.os == 'Linux'
-        run: node -e "const { loadNative } = await import('./dist/native.js'); const n = loadNative(); console.log('Native module loaded:', Object.keys(n).length, 'functions')"
+        run: node -e "const { loadNative } = await import('./dist/native.js'); const n = loadNative(); const c = n.getInputMonitorCapability(); if (typeof c.supported !== 'boolean' || c.distinguishesInjected !== false) throw new Error('invalid honest Linux input-monitor capability'); console.log('Native module loaded:', Object.keys(n).length, 'functions; input monitor:', c)"
 
       - name: Run new tools smoke test
         run: node test/smoke-new-tools.mjs
@@ -243,6 +243,8 @@ jobs:
               "dist/reliability/lab.js",
               "dist/release/artifacts.js",
               "dist/release/readiness.js",
+              "dist/migration/cli.js",
+              "dist/migration/v8.js",
               "dist/control/lease.js",
               "dist/control/reservation.js",
               "dist/policy/engine.js",

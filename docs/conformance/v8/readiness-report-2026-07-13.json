@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-release-readiness",
   "runtimeVersion": "7.0.0",
-  "evaluatedAt": "2026-07-13T14:14:28.257Z",
+  "evaluatedAt": "2026-07-13T14:23:24.392Z",
   "requestedStage": "stable",
   "decision": "no_go",
   "highestReadyStage": "none",
   "inputs": {
-    "conformanceDigest": "sha256:c06b0af47751cb5b1069d86ea63d5eb35f7da4f2aa71b8ac09ab6c619e50b609",
+    "conformanceDigest": "sha256:90a770955c900aa9140a385a8c6cfb52720dc37dbb33f32b2a061ab3d6ce9e53",
     "reliabilityDigest": "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210",
     "signedEvidenceDigests": [],
     "artifactManifestDigest": "sha256:3e28a4e773f0dd119b0af1493cfb90fef5f6e5fe044d4aecb3a1ad4b448ecd3b",
@@ -25,7 +25,7 @@
       "evidenceLevel": "deterministic",
       "reasons": [],
       "evidenceDigests": [
-        "sha256:c06b0af47751cb5b1069d86ea63d5eb35f7da4f2aa71b8ac09ab6c619e50b609"
+        "sha256:90a770955c900aa9140a385a8c6cfb52720dc37dbb33f32b2a061ab3d6ce9e53"
       ]
     },
     {
@@ -43,7 +43,7 @@
         "win32: trusted signature over conformance digest required"
       ],
       "evidenceDigests": [
-        "sha256:c06b0af47751cb5b1069d86ea63d5eb35f7da4f2aa71b8ac09ab6c619e50b609"
+        "sha256:90a770955c900aa9140a385a8c6cfb52720dc37dbb33f32b2a061ab3d6ce9e53"
       ]
     },
     {
@@ -59,7 +59,7 @@
         "trusted cross-platform CI signature required"
       ],
       "evidenceDigests": [
-        "sha256:c06b0af47751cb5b1069d86ea63d5eb35f7da4f2aa71b8ac09ab6c619e50b609"
+        "sha256:90a770955c900aa9140a385a8c6cfb52720dc37dbb33f32b2a061ab3d6ce9e53"
       ]
     },
     {
@@ -177,5 +177,5 @@
       "evidenceDigests": []
     }
   ],
-  "reportDigest": "sha256:84015eb2f09ec342924bb29ab33bd4d5c9bbb9700bcb344e0db2e2c7f23b9246"
+  "reportDigest": "sha256:0679befb45d265dfb7979117efd4f2cd57303da1c7fa314bc2b068e14942f022"
 }

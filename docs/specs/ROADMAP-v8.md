@@ -441,7 +441,12 @@ Use MCP Tasks behind an experimental capability flag for long-running/resumable 
    mouse and keyboard hooks and rejects the OS injected flags. Governed
    physical input fails closed on these platforms if attributed monitoring is
    unavailable, and a packaged conformance probe proves synthetic exclusion on
-   the local macOS build. Windows live hardware results, physical-event latency
+   the local macOS build. Linux X11 now uses XI2 raw events, tracks originating
+   slave-device IDs, excludes the X server's XTEST devices, and refreshes the
+   device set after hierarchy changes. It is explicitly best-effort because
+   arbitrary virtual/uinput devices cannot be proven physical; native Wayland
+   remains unsupported and the capability never claims injected-event
+   distinction. Windows live hardware results, physical-event latency
    distributions, lifecycle fault injection, and the 10,000 interactive race
    corpus remain release evidence—not inferred from compilation.
 

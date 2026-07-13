@@ -942,7 +942,11 @@ actions if the native monitor cannot distinguish physical user activity from
 injected events. macOS uses a passive hardware-source event tap; Windows uses
 low-level hook injection flags. The capability and fail-closed setting are
 published in `computer://capabilities/manifest`. Linux currently reports this
-attribution unavailable. After building the native module, run
+as a best-effort X11 XI2 raw-event monitor: server-created XTEST devices are
+excluded by source ID, but arbitrary virtual/uinput devices cannot be proven
+physical, so `distinguishesInjected` remains false and governed physical input
+does not borrow a certified attribution claim. Native Wayland reports the
+monitor unavailable. After building the native module, run
 `npm run test:input-attribution`; add `-- --interactive` to measure a real
 physical event against the 100 ms release target.
 
@@ -1277,7 +1281,7 @@ You need:
 
 ```bash
 # Install dependencies (Ubuntu/Debian)
-sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev xdotool wmctrl xclip scrot
+sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev libxi-dev xdotool wmctrl xclip scrot
 
 git clone https://github.com/zavora-ai/computer-use-mcp
 cd computer-use-mcp
@@ -1291,6 +1295,7 @@ npm run build:ts            # compiles TypeScript
 | What | How |
 |---|---|
 | Mouse & keyboard | X11/XTest — direct synthetic events via `XTestFakeKeyEvent`/`XTestFakeButtonEvent` |
+| User activity | XI2 raw-event monitor excluding XTEST source devices; best-effort only (`distinguishesInjected: false`) |
 | Text input | `xdotool type` — reliable Unicode text entry |
 | App management | `wmctrl` + `xdotool` + `/proc` |
 | Window enumeration | `wmctrl -l -p` + `xdotool` |
