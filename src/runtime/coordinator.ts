@@ -403,6 +403,7 @@ export class RuntimeCoordinator {
         type: 'action.approval_required',
         payload: {
           actionDigest: envelope.argsDigest,
+          policyDigest: policy.policyDigest,
           tool: envelope.tool,
           operation: envelope.operation,
           actionClass: envelope.actionClass,

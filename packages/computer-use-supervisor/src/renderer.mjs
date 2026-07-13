@@ -2,6 +2,9 @@ import { describeAgentState, describeApproval, initialViewModel, reduceSuperviso
 
 let model = initialViewModel('local')
 const byId = id => document.getElementById(id)
+const shortDigest = digest => typeof digest === 'string' && digest
+  ? `${digest.slice(0, 19)}…`
+  : 'Waiting for review'
 
 function render() {
   const status = describeAgentState(model)
@@ -36,6 +39,8 @@ function render() {
   }
   byId('agent').textContent = approval?.actor ?? 'Waiting for an action'
   byId('approval-target').textContent = approval?.target ?? 'Not selected'
+  byId('action-digest').textContent = shortDigest(model.pendingApproval?.actionDigest)
+  byId('policy-digest').textContent = shortDigest(model.pendingApproval?.policyDigest)
   for (const phase of ['before', 'after', 'observation']) {
     const frame = model.evidenceFrames[phase]
     const image = byId(`${phase}-frame`)

@@ -452,10 +452,12 @@ test('action digest is deterministic across object key order', () => {
 
 test('approval grants bind principal, session, digest, class, mode, and action idempotently', async () => {
   let now = Date.parse('2026-07-13T10:00:00Z')
+  let approvalPolicyDigest = 'approval-binding-policy-v1'
   const grants = new MemoryApprovalGrantStore(() => now)
   const coordinator = new RuntimeCoordinator({
     grants,
     now: () => new Date(now),
+    policy: () => ({ decision: 'confirm', policyDigest: approvalPolicyDigest, reasons: ['review'] }),
     execute: async () => ({ content: [{ type: 'text', text: 'sent' }] }),
   })
   const request = {
@@ -478,6 +480,28 @@ test('approval grants bind principal, session, digest, class, mode, and action i
   }), /exact-action.*one use/)
   const approved = await coordinator.preview({ ...request, approvalGrantId: grant.grantId })
   assert.equal(approved.executable, true)
+  const changedField = await coordinator.preview({
+    ...request, args: { ...request.args, message: 'Different field value' },
+    approvalGrantId: grant.grantId,
+  })
+  assert.equal(changedField.blocker, 'approval_required')
+  const changedApp = await coordinator.preview({
+    ...request,
+    target: { platform: process.platform, appId: 'app.other', confidence: 1,
+      observationId: 'changed-app', capturedAt: new Date(now).toISOString() },
+    approvalGrantId: grant.grantId,
+  })
+  assert.equal(changedApp.blocker, 'approval_required')
+  const changedRecipient = await coordinator.preview({
+    ...request, args: { ...request.args, recipient: 'different@example.com' },
+    approvalGrantId: grant.grantId,
+  })
+  assert.equal(changedRecipient.blocker, 'approval_required')
+  approvalPolicyDigest = 'approval-binding-policy-v2'
+  const changedPolicy = await coordinator.preview({ ...request, approvalGrantId: grant.grantId })
+  assert.equal(changedPolicy.blocker, 'approval_required')
+  approvalPolicyDigest = 'approval-binding-policy-v1'
+  assert.equal((await coordinator.preview({ ...request, approvalGrantId: grant.grantId })).executable, true)
   const wrongPrincipal = await coordinator.preview({
     ...request, principalId: 'attacker', approvalGrantId: grant.grantId,
   })

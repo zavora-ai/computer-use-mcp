@@ -1,5 +1,5 @@
 const SAFE_APPROVAL_FIELDS = [
-  'actionDigest', 'tool', 'operation', 'actionClass', 'mode', 'expiresAt',
+  'actionDigest', 'policyDigest', 'tool', 'operation', 'actionClass', 'mode', 'expiresAt',
   'targetAppId', 'targetWindowId', 'agentId', 'executionGroupId',
 ]
 const SAFE_POSTCONDITION_FIELDS = [

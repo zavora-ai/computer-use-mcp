@@ -26,11 +26,6 @@
     </div>
     <div class="privacy-note" id="privacy-note" hidden>Target-only image · memory-only · expires automatically</div>
 
-    <section class="task-card">
-      <small>Your request</small>
-      <div class="task" id="objective">Waiting for the agent to describe its task…</div>
-    </section>
-
     <section class="approval-card" id="approval" hidden>
       <div class="eyebrow">Your decision is needed</div>
       <h1 id="approval-title">The agent wants to make a change</h1>
@@ -39,6 +34,11 @@
       <button class="approve primary" id="approve">Allow this once</button>
       <button class="approve secondary" id="approve-session" hidden>Allow similar actions for 2 minutes</button>
       <p class="approval-help">Nothing changes until you approve. The agent receives only your decision—not an approval token.</p>
+    </section>
+
+    <section class="task-card">
+      <small>Your request</small>
+      <div class="task" id="objective">Waiting for the agent to describe its task…</div>
     </section>
 
     <details class="safety-details">
@@ -52,6 +52,8 @@
           <dt>Session</dt><dd id="session">Local session</dd>
           <dt>Agent</dt><dd id="agent">Not identified</dd>
           <dt>Target</dt><dd id="approval-target">Not selected</dd>
+          <dt>Action binding</dt><dd id="action-digest">Waiting for review</dd>
+          <dt>Policy binding</dt><dd id="policy-digest">Waiting for review</dd>
         </dl>
       </div>
     </details>

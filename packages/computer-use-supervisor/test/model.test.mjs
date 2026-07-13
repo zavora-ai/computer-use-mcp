@@ -32,6 +32,7 @@ test('view model allowlists approval metadata and never copies secret payload fi
       sequence: 2, actionId: 'a', type: 'action.approval_required',
       payload: {
         tool: 'set_value', actionClass: 'secret_access', mode: 'foreground',
+        actionDigest: `sha256:${'b'.repeat(64)}`, policyDigest: `sha256:${'c'.repeat(64)}`,
         targetAppId: 'app.safe', postconditionKind: 'ui_element',
         postconditionExpectedState: 'exists', postconditionExpectedDigest: `sha256:${'a'.repeat(64)}`,
         sensitivityAssessment: 'sensitive', sensitivitySource: 'accessibility',
@@ -44,6 +45,8 @@ test('view model allowlists approval metadata and never copies secret payload fi
     },
   })
   assert.equal(model.pendingApproval.actionId, 'a')
+  assert.match(model.pendingApproval.actionDigest, /^sha256:/)
+  assert.match(model.pendingApproval.policyDigest, /^sha256:/)
   assert.equal(model.pendingApproval.password, undefined)
   assert.equal(model.pendingApproval.postconditionKind, 'ui_element')
   assert.equal(model.pendingApproval.postconditionExpectedState, 'exists')
@@ -97,7 +100,7 @@ test('main-to-renderer sanitizer strips grants, secrets, and unrecognized event 
     event: {
       sequence: 7, type: 'action.approval_required', actionId: 'a1', principalId: 'private-principal',
       payload: {
-        tool: 'notification', actionDigest: 'safe-digest', secret: 'do-not-render',
+        tool: 'notification', actionDigest: 'safe-digest', policyDigest: 'safe-policy', secret: 'do-not-render',
         sessionScopeEligible: 'yes',
         arguments: { password: 'hunter2' },
       },
@@ -107,7 +110,7 @@ test('main-to-renderer sanitizer strips grants, secrets, and unrecognized event 
     type: 'event',
     event: {
       sequence: 7, type: 'action.approval_required', actionId: 'a1',
-      payload: { tool: 'notification', actionDigest: 'safe-digest' },
+      payload: { tool: 'notification', actionDigest: 'safe-digest', policyDigest: 'safe-policy' },
     },
   })
   assert.doesNotMatch(JSON.stringify(event), /private-principal|do-not-render|hunter2/)
