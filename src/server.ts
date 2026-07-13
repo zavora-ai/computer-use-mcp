@@ -34,6 +34,7 @@ import { FileSessionStore } from './session/store.js'
 import { FileEventJournal, SupervisorEventBus } from './session/events.js'
 import { SessionLifecycle } from './session/lifecycle.js'
 import { SupervisorIpcServer } from './session/supervisor-ipc.js'
+import { MemoryEvidenceFrameStore } from './session/evidence-frames.js'
 import { FileOnboardingStore, OnboardingManager } from './onboarding/manager.js'
 import { McpSessionTaskAdapter } from './runtime/mcp-tasks.js'
 import { InMemoryTaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js'
@@ -100,6 +101,8 @@ export interface ServerOptions extends SessionOptions {
   principalId?: string
   /** Embedding hook for attaching a local supervisor transport to the enforced runtime. */
   onRuntime?: (runtime: RuntimeCoordinator) => void
+  /** Opt in to short-lived, process-memory-only supervisor before/after frames. */
+  enableSupervisorFrames?: boolean
   /** Embedding hook for host-controlled dynamic tool profile negotiation. */
   onRegistry?: (registry: ToolRegistry) => void
   /** Opt in to the experimental MCP Tasks projection over the v8 lifecycle. */
@@ -131,6 +134,17 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   if (opts.browserBridge && !enableV8) throw new Error('browser bridge requires the enforced v8 runtime')
   if (opts.browserBridge && opts.runtime) {
     throw new Error('browser bridge cannot be attached to an opaque prebuilt runtime; configure it when constructing the runtime')
+  }
+  const enableSupervisorFrames = opts.enableSupervisorFrames
+    ?? (process.env.COMPUTER_USE_SUPERVISOR_FRAMES === 'true')
+  const supervisorFramesEnabled = enableSupervisorFrames
+    || Boolean(opts.runtime?.evidenceFrames)
+    || Boolean(opts.runtimeOptions?.evidenceFrames)
+  if (enableSupervisorFrames && !enableV8) {
+    throw new Error('supervisor evidence frames require the enforced v8 runtime')
+  }
+  if (enableSupervisorFrames && opts.runtime) {
+    throw new Error('configure evidenceFrames on a prebuilt runtime instead of enableSupervisorFrames')
   }
   const experimentalTaskStore = enableExperimentalTasks
     ? opts.experimentalTaskStore ?? new InMemoryTaskStore()
@@ -305,6 +319,9 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       ...(events ? { events } : {}),
       ...(lifecycle ? { lifecycle } : {}),
       requireManagedSession: true,
+      ...(enableSupervisorFrames && !opts.runtimeOptions?.evidenceFrames
+        ? { evidenceFrames: new MemoryEvidenceFrameStore() }
+        : {}),
       transactionHooks: opts.runtimeOptions?.transactionHooks ?? new SessionTransactionHooks(session),
       policy: opts.runtimeOptions?.policy ?? createDefaultV8PolicyFromEnvironment(),
       resolveToolMeta: opts.runtimeOptions?.resolveToolMeta ?? (tool => registry.getMeta(tool)),
@@ -404,6 +421,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
         durableReceipts: Boolean(process.env.COMPUTER_USE_RECEIPT_DIR),
         durableEvents: Boolean(process.env.COMPUTER_USE_EVENT_JOURNAL),
         supervisorIpcConfigured: Boolean(process.env.COMPUTER_USE_SUPERVISOR_SOCKET),
+        supervisorFramesEnabled,
         browserBridgeConfigured: Boolean(opts.browserBridge),
         physicalInputRequiresAttributedMonitor: v8PhysicalInputRequiresAttributedMonitor,
         ...(v8InputMonitorCapability ? { inputMonitor: v8InputMonitorCapability } : {}),

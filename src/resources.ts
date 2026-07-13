@@ -165,6 +165,7 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
         durableReceipts: ctx.capabilityManifest?.durableReceipts ?? false,
         durableEvents: ctx.capabilityManifest?.durableEvents ?? false,
         supervisorIpcConfigured: ctx.capabilityManifest?.supervisorIpcConfigured ?? false,
+        supervisorFramesEnabled: ctx.capabilityManifest?.supervisorFramesEnabled ?? false,
         browserBridgeConfigured: ctx.capabilityManifest?.browserBridgeConfigured ?? false,
         ...(ctx.capabilityManifest?.inputMonitor ? { inputMonitor: ctx.capabilityManifest.inputMonitor } : {}),
       }))),

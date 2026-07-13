@@ -16,6 +16,7 @@ export interface CapabilityManifestOptions {
   durableReceipts: boolean
   durableEvents: boolean
   supervisorIpcConfigured: boolean
+  supervisorFramesEnabled?: boolean
   browserBridgeConfigured?: boolean
   physicalInputRequiresAttributedMonitor?: boolean
   inputMonitor?: {
@@ -80,6 +81,7 @@ export function createCapabilityManifest(options: CapabilityManifestOptions) {
       sessionResources: true,
       supervisorLocalIpc: true,
       supervisorIpcConfigured: options.supervisorIpcConfigured,
+      supervisorFramesEnabled: options.supervisorFramesEnabled ?? false,
       browserBridgeConfigured: options.browserBridgeConfigured ?? false,
       physicalInputRequiresAttributedMonitor: options.physicalInputRequiresAttributedMonitor ?? false,
       experimentalMcpTasks: options.experimentalTasks,

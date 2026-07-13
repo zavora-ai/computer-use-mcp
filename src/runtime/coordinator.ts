@@ -8,6 +8,12 @@ import type { DesktopStateSnapshot, TransactionHooks } from '../control/transact
 import { defaultPolicyEvaluator, type PolicyDecision, type PolicyEvaluator } from '../policy/evaluate.js'
 import { MemoryApprovalGrantStore, type ApprovalGrantStore } from '../policy/grants.js'
 import { SupervisorEventBus } from '../session/events.js'
+import {
+  MemoryEvidenceFrameStore,
+  type EvidenceFrame,
+  type EvidenceFrameMetadata,
+  type EvidenceFramePhase,
+} from '../session/evidence-frames.js'
 import { SessionLifecycle } from '../session/lifecycle.js'
 import { MemorySessionStore, type RuntimeSession, type SessionCompletionEvidence } from '../session/store.js'
 import { getToolMeta, type ToolMeta } from '../tool-catalog.js'
@@ -65,6 +71,7 @@ export interface SessionDeletionResult {
   deleted: boolean
   deletedEvents: number
   deletedReceipts: number
+  deletedEvidenceFrames: number
   revokedGrants: number
   retainedEvents: number
   retentionMarkerId?: string
@@ -120,6 +127,8 @@ export interface RuntimeCoordinatorOptions {
   /** Resolve host-internal v8 actuators without adding them to the frozen v7 catalog. */
   resolveToolMeta?: (tool: string) => ToolMeta | undefined
   reservations?: TargetReservationManager
+  /** Explicit opt-in short-lived process-memory-only supervisor frames. */
+  evidenceFrames?: MemoryEvidenceFrameStore
 }
 
 function canonical(value: unknown): string {
@@ -156,6 +165,7 @@ export class RuntimeCoordinator {
   readonly grants: ApprovalGrantStore
   readonly sessions: SessionLifecycle
   readonly reservations: TargetReservationManager
+  readonly evidenceFrames?: MemoryEvidenceFrameStore
   readonly #requireManagedSession: boolean
   readonly #transactionHooks?: TransactionHooks
   readonly #resolveToolMeta: (tool: string) => ToolMeta | undefined
@@ -188,6 +198,7 @@ export class RuntimeCoordinator {
     this.grants = options.grants ?? new MemoryApprovalGrantStore()
     this.sessions = options.lifecycle ?? new SessionLifecycle(new MemorySessionStore(), this.events)
     this.reservations = options.reservations ?? new TargetReservationManager()
+    this.evidenceFrames = options.evidenceFrames
     this.#requireManagedSession = options.requireManagedSession ?? false
     this.#transactionHooks = options.transactionHooks
     this.#resolveToolMeta = options.resolveToolMeta ?? getToolMeta
@@ -390,6 +401,10 @@ export class RuntimeCoordinator {
         if (actionController.signal.aborted) throw new RuntimeError('interrupted', 'action cancelled before execution')
         if (preview.capability.backend !== 'browser') {
           snapshot = await this.#transactionHooks?.capture(preview.envelope)
+          await this.#captureEvidence(preview.envelope, 'before')
+          // Evidence capture is an observation between validation and actuation;
+          // close that TOCTOU window before consuming the one-shot lease.
+          await this.#revalidateTarget(preview.envelope)
         }
         this.leases.consume(request.leaseId)
         if (actionController.signal.aborted) throw new RuntimeError('interrupted', 'control lease revoked before execution')
@@ -456,6 +471,10 @@ export class RuntimeCoordinator {
         if (!verification.verified) {
           throw new RuntimeError('indeterminate', 'postcondition verification failed', { method: verification.method })
         }
+        await this.#revalidateTarget(preview.envelope)
+        await this.#captureEvidence(preview.envelope, 'after')
+      } else if (!meta.mutates) {
+        this.#recordEvidence(preview.envelope, 'observation', result)
       }
       if (snapshot && this.#transactionHooks && request.leaseId) {
         const active = this.leases.current()
@@ -734,6 +753,7 @@ export class RuntimeCoordinator {
     }
     const eventDeletion = this.events.deleteSession(sessionId)
     const deletedReceipts = await this.receipts.deleteSession(sessionId)
+    const deletedEvidenceFrames = this.evidenceFrames?.deleteSession(sessionId) ?? 0
     const revokedGrants = this.grants.revokeSession(sessionId, principalId)
     for (const key of [...this.#pendingApprovals.keys()]) {
       if (key.startsWith(`${sessionId}\u0000`)) this.#pendingApprovals.delete(key)
@@ -749,6 +769,7 @@ export class RuntimeCoordinator {
       deleted: true,
       deletedEvents: eventDeletion.deletedEvents,
       deletedReceipts,
+      deletedEvidenceFrames,
       revokedGrants,
       retainedEvents: eventDeletion.retainedEvents,
       ...(eventDeletion.retentionMarkerId ? { retentionMarkerId: eventDeletion.retentionMarkerId } : {}),
@@ -841,6 +862,74 @@ export class RuntimeCoordinator {
     this.#emergencyListeners.clear()
     for (const active of this.#activeExecutions.values()) active.controller.abort('runtime_disposed')
     this.#activeExecutions.clear()
+    this.evidenceFrames?.clear()
+  }
+
+  async getEvidenceFrame(sessionId: string, principalId: string, frameId: string): Promise<EvidenceFrame | undefined> {
+    await this.getSession(sessionId, principalId)
+    return this.evidenceFrames?.get(sessionId, frameId)
+  }
+
+  async listEvidenceFrames(sessionId: string, principalId: string): Promise<EvidenceFrameMetadata[]> {
+    await this.getSession(sessionId, principalId)
+    return this.evidenceFrames?.list(sessionId) ?? []
+  }
+
+  async #captureEvidence(envelope: ActionEnvelope, phase: 'before' | 'after'): Promise<void> {
+    if (!this.evidenceFrames || !this.#transactionHooks?.captureEvidence) return
+    if (!envelope.target?.appId && envelope.target?.windowId === undefined) return
+    try {
+      const result = await this.#transactionHooks.captureEvidence(envelope, phase)
+      if (result && !result.isError) this.#recordEvidence(envelope, phase, result)
+      else if (result?.isError) this.#publishEvidenceUnavailable(envelope, phase, 'capture_error')
+    } catch {
+      // Visual review is observability, never a second authority or a reason to
+      // convert an otherwise governed action into an indeterminate mutation.
+      this.#publishEvidenceUnavailable(envelope, phase, 'capture_error')
+    }
+  }
+
+  #recordEvidence(envelope: ActionEnvelope, phase: EvidenceFramePhase, result: ToolResult): boolean {
+    if (!this.evidenceFrames) return false
+    try {
+      const frame = this.evidenceFrames.putFromToolResult({
+        sessionId: envelope.sessionId, actionId: envelope.actionId, phase, result,
+      })
+      if (!frame) return false
+      this.events.publish({
+        sessionId: envelope.sessionId,
+        actionId: envelope.actionId,
+        principalId: envelope.principalId,
+        type: 'evidence.frame_available',
+        payload: {
+          frameId: frame.frameId,
+          phase: frame.phase,
+          mimeType: frame.mimeType,
+          byteLength: frame.byteLength,
+          digest: frame.digest,
+          capturedAt: frame.capturedAt,
+          expiresAt: frame.expiresAt,
+        },
+      })
+      return true
+    } catch {
+      this.#publishEvidenceUnavailable(envelope, phase, 'invalid_or_oversize')
+      return false
+    }
+  }
+
+  #publishEvidenceUnavailable(
+    envelope: ActionEnvelope,
+    phase: EvidenceFramePhase,
+    code: 'capture_error' | 'invalid_or_oversize',
+  ): void {
+    this.events.publish({
+      sessionId: envelope.sessionId,
+      actionId: envelope.actionId,
+      principalId: envelope.principalId,
+      type: 'evidence.frame_unavailable',
+      payload: { phase, code },
+    })
   }
 
   #cancelReservations(sessionId: string, principalId: string, reason: string): void {

@@ -4,6 +4,7 @@ import { createCapabilityManifest } from '../dist/runtime/manifest.js'
 import { RuntimeCoordinator } from '../dist/runtime/coordinator.js'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
+import { MemoryEvidenceFrameStore } from '../dist/session/evidence-frames.js'
 
 const runtime = () => new RuntimeCoordinator({ execute: async () => ({ content: [] }) })
 
@@ -12,6 +13,7 @@ test('capability manifest is deterministic, profile-bounded, and honest about in
     runtime: runtime(), maximumProfile: 'full', activeProfile: 'v8-safe',
     experimentalTasks: true, durableSessions: true, durableReceipts: false,
     durableEvents: true, supervisorIpcConfigured: false,
+    supervisorFramesEnabled: true,
     physicalInputRequiresAttributedMonitor: true,
     platform: 'win32', architecture: 'x64', generatedAt: new Date('2026-07-13T00:00:00.000Z'),
     inputMonitor: {
@@ -33,13 +35,16 @@ test('capability manifest is deterministic, profile-bounded, and honest about in
   })
   assert.equal(first.inputMonitor.distinguishesInjected, false)
   assert.equal(first.features.physicalInputRequiresAttributedMonitor, true)
+  assert.equal(first.features.supervisorFramesEnabled, true)
 })
 
 test('v8 server publishes the capability manifest as a machine-readable resource', async () => {
   const session = { async dispatch() { return { content: [] } } }
   let registry
   const client = await connectInProcess(createComputerUseServer({
-    session, runtime: runtime(), enableV8: true, enableExperimentalTasks: true,
+    session, runtime: new RuntimeCoordinator({
+      evidenceFrames: new MemoryEvidenceFrameStore(), execute: async () => ({ content: [] }),
+    }), enableV8: true, enableExperimentalTasks: true,
     profile: 'full', activeProfile: 'v8-safe', principalId: 'manifest-owner',
     onRegistry: value => { registry = value },
     native: {
@@ -56,6 +61,7 @@ test('v8 server publishes the capability manifest as a machine-readable resource
     assert.equal(manifest.schemaVersion, 1)
     assert.equal(manifest.host.activeProfile, 'v8-safe')
     assert.equal(manifest.features.experimentalMcpTasks, true)
+    assert.equal(manifest.features.supervisorFramesEnabled, true)
     assert.equal(manifest.inputMonitor.distinguishesInjected, true)
     assert.match(manifest.manifestDigest, /^sha256:[a-f0-9]{64}$/)
     registry.setActiveProfile('core')

@@ -21,6 +21,7 @@
     "release-readiness-report.schema.json",
     "adk-evaluation-receipt.schema.json",
     "capability-certification-trace.schema.json",
+    "evidence-frame.schema.json",
     "conformance-evidence.schema.json",
     "conformance-report.schema.json",
     "session-deletion.json",

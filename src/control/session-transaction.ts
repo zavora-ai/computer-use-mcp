@@ -40,6 +40,22 @@ export class SessionTransactionHooks implements TransactionHooks {
     }
   }
 
+  async captureEvidence(envelope: ActionEnvelope, _phase: 'before' | 'after'): Promise<ToolResult | undefined> {
+    // Never fall back to a whole-display capture: evidence is limited to the
+    // already-authorized action target so unrelated desktop content is absent.
+    if (typeof envelope.target?.windowId === 'number') {
+      return this.session.dispatch('screenshot', {
+        target_window_id: envelope.target.windowId, width: 480, quality: 45,
+      })
+    }
+    if (envelope.target?.appId) {
+      return this.session.dispatch('screenshot', {
+        target_app: envelope.target.appId, width: 480, quality: 45,
+      })
+    }
+    return undefined
+  }
+
   async verify(envelope: ActionEnvelope, result: ToolResult): Promise<VerificationResult> {
     if (result.isError) return { verified: false, method: 'tool_result', details: { isError: true } }
     if (!envelope.target?.windowId) return { verified: true, method: 'successful_result' }

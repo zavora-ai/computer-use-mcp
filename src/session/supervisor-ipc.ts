@@ -130,7 +130,7 @@ export class SupervisorIpcServer {
       }
       state.authenticated = true
       state.principalId = suppliedPrincipal
-      this.#send(socket, { type: 'hello', protocolVersion: 1 })
+      this.#send(socket, { type: 'hello', protocolVersion: 2 })
       this.#sendEmergencyStatus(socket)
       return
     }
@@ -160,6 +160,16 @@ export class SupervisorIpcServer {
     }
     if (!sessionId) throw new TypeError('sessionId is required')
     await this.#runtime.getSession(sessionId, principalId)
+    if (type === 'get_frame') {
+      if (!state.sessionIds.has(sessionId)) throw new Error('session subscription is required')
+      if (typeof message.frameId !== 'string' || !message.frameId || message.frameId.length > 128) {
+        throw new TypeError('a valid frameId is required')
+      }
+      const frame = await this.#runtime.getEvidenceFrame(sessionId, principalId, message.frameId)
+      if (!frame) throw new Error('evidence frame is unavailable or expired')
+      this.#send(socket, { type: 'evidence_frame', frame })
+      return
+    }
     if (type === 'pause') await this.#runtime.pauseSession(sessionId, principalId, String(message.reason ?? 'supervisor_pause'))
     else if (type === 'resume') await this.#runtime.resumeSession(sessionId, principalId)
     else if (type === 'takeover') await this.#runtime.takeOver(sessionId, principalId)

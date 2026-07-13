@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RuntimeCoordinator } from '../dist/runtime/coordinator.js'
 import { SupervisorIpcServer } from '../dist/session/supervisor-ipc.js'
+import { MemoryEvidenceFrameStore } from '../dist/session/evidence-frames.js'
+
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 
 function client(path) {
   const socket = createConnection(path)
@@ -46,7 +49,9 @@ function client(path) {
 test('local supervisor IPC authenticates, replays events, controls lifecycle, and binds approvals', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'computer-use-supervisor-'))
   const socketPath = join(directory, 'supervisor.sock')
+  const evidenceFrames = new MemoryEvidenceFrameStore()
   const coordinator = new RuntimeCoordinator({
+    evidenceFrames,
     requireManagedSession: true,
     policy: envelope => envelope.tool === 'notification'
       ? { decision: 'confirm', policyDigest: 'supervisor-test', reasons: ['confirm'] }
@@ -54,11 +59,16 @@ test('local supervisor IPC authenticates, replays events, controls lifecycle, an
     execute: async () => ({ content: [{ type: 'text', text: 'done' }] }),
   })
   const session = await coordinator.startSession({ principalId: 'owner', objective: 'supervise' })
+  const evidence = evidenceFrames.put({
+    sessionId: session.sessionId, actionId: 'visual-action', phase: 'before',
+    mimeType: 'image/png', data: PNG,
+  })
   const server = new SupervisorIpcServer({
     runtime: coordinator, socketPath, token: 'local-secret', principalId: 'owner',
   })
   await server.start()
   let connected
+  let unsubscribed
   try {
     if (process.platform !== 'win32') assert.equal((await stat(socketPath)).mode & 0o777, 0o600)
 
@@ -70,13 +80,26 @@ test('local supervisor IPC authenticates, replays events, controls lifecycle, an
     impersonation.send({ type: 'hello', token: 'local-secret', principalId: 'other-principal' })
     assert.equal((await impersonation.waitFor(message => message.error === 'unauthorized')).type, 'error')
 
+    unsubscribed = client(socketPath)
+    unsubscribed.send({ type: 'hello', token: 'local-secret', principalId: 'owner' })
+    await unsubscribed.waitFor(message => message.type === 'hello')
+    unsubscribed.send({ type: 'get_frame', sessionId: session.sessionId, frameId: evidence.frameId })
+    assert.match((await unsubscribed.waitFor(message => message.error === 'request_failed')).message, /subscription/)
+
     connected = client(socketPath)
     connected.send({ type: 'hello', token: 'local-secret', principalId: 'owner' })
-    assert.equal((await connected.waitFor(message => message.type === 'hello')).protocolVersion, 1)
+    assert.equal((await connected.waitFor(message => message.type === 'hello')).protocolVersion, 2)
     assert.equal((await connected.waitFor(message => message.type === 'emergency_status' && !message.active)).backend, 'cooperative_runtime_only')
     connected.send({ type: 'subscribe', sessionId: session.sessionId, afterSequence: 0 })
     assert.equal((await connected.waitFor(message => message.type === 'subscribed')).sessionId, session.sessionId)
     assert.ok(await connected.waitFor(message => message.type === 'event' && message.event.type === 'session.created'))
+
+    connected.send({ type: 'get_frame', sessionId: session.sessionId, frameId: evidence.frameId })
+    const visual = await connected.waitFor(message => message.type === 'evidence_frame')
+    assert.equal(visual.frame.data, PNG)
+    assert.equal(visual.frame.sessionId, session.sessionId)
+    connected.send({ type: 'get_frame', sessionId: session.sessionId, frameId: 'not-present' })
+    assert.match((await connected.waitFor(message => message.error === 'request_failed')).message, /unavailable/)
 
     connected.send({ type: 'pause', sessionId: session.sessionId, reason: 'inspect' })
     await connected.waitFor(message => message.type === 'ack' && message.command === 'pause')
@@ -129,6 +152,7 @@ test('local supervisor IPC authenticates, replays events, controls lifecycle, an
     )).active, true)
     coordinator.resetEmergencyStop()
   } finally {
+    unsubscribed?.socket.destroy()
     connected?.socket.destroy()
     await server.stop()
     coordinator.dispose()

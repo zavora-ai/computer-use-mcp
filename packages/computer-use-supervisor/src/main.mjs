@@ -28,7 +28,7 @@ function connectSupervisor() {
   socket.on('connect', () => send({ type: 'hello', token, principalId }))
   socket.on('data', chunk => {
     buffer += chunk
-    if (Buffer.byteLength(buffer) > 64 * 1024) return socket.destroy(new Error('supervisor frame too large'))
+    if (Buffer.byteLength(buffer) > 2 * 1024 * 1024) return socket.destroy(new Error('supervisor frame too large'))
     let newline
     while ((newline = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, newline)
@@ -57,6 +57,10 @@ function registerControls() {
     if (typeof actionId !== 'string' || !actionId) throw new Error('actionId is required')
     send({ type: 'approve', sessionId, actionId, ttlMs: 60_000 })
   })
+  ipcMain.handle('supervisor:get-frame', (_event, frameId) => {
+    if (typeof frameId !== 'string' || !frameId || frameId.length > 128) throw new Error('frameId is required')
+    send({ type: 'get_frame', sessionId, frameId })
+  })
   ipcMain.handle('supervisor:emergency-stop', () => send({ type: 'emergency_stop', reason: 'pip_emergency_stop' }))
   ipcMain.handle('supervisor:emergency-reset', async () => {
     const choice = await dialog.showMessageBox(window, {
@@ -79,7 +83,7 @@ function registerControls() {
 app.whenReady().then(() => {
   registerControls()
   window = new BrowserWindow({
-    width: 400, height: 520, minWidth: 340, minHeight: 360,
+    width: 440, height: 720, minWidth: 360, minHeight: 480,
     alwaysOnTop: true, title: 'Computer Use', show: false,
     webPreferences: {
       preload: join(here, 'preload.mjs'), contextIsolation: true, sandbox: true,

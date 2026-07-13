@@ -7,7 +7,39 @@ const SAFE_EVENT_FIELDS = ['sequence', 'type', 'actionId']
 const SAFE_EVENT_PAYLOAD_FIELDS = [
   'to', 'state', 'tool', 'mode', 'actionClass', 'interference', 'policyDecision',
   'executable', 'blocker', ...SAFE_APPROVAL_FIELDS,
+  'frameId', 'phase', 'mimeType', 'byteLength', 'digest', 'capturedAt', 'expiresAt', 'code',
 ]
+
+const FRAME_PHASES = new Set(['before', 'after', 'observation'])
+const FRAME_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+const MAX_ENCODED_FRAME_BYTES = Math.ceil((1024 * 1024) / 3) * 4
+
+function sanitizeEvidenceFrame(frame) {
+  if (!frame || typeof frame !== 'object') return null
+  const mimeType = frame.mimeType
+  const phase = frame.phase
+  const data = frame.data
+  const byteLength = frame.byteLength
+  const hasMagic = mimeType === 'image/png'
+    ? typeof data === 'string' && data.startsWith('iVBORw0KGgo')
+    : mimeType === 'image/jpeg' && typeof data === 'string' && data.startsWith('/9j/')
+  const padding = typeof data === 'string' ? (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) : 0
+  const decodedLength = typeof data === 'string' ? (data.length / 4) * 3 - padding : 0
+  if (!FRAME_PHASES.has(phase) || !hasMagic || !FRAME_BASE64.test(data)
+      || data.length > MAX_ENCODED_FRAME_BYTES
+      || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > 1024 * 1024
+      || decodedLength !== byteLength
+      || typeof frame.frameId !== 'string' || !frame.frameId || frame.frameId.length > 128
+      || typeof frame.actionId !== 'string' || !frame.actionId || frame.actionId.length > 256
+      || typeof frame.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(frame.digest)) return null
+  return {
+    frameId: frame.frameId, actionId: frame.actionId, phase, mimeType, byteLength,
+    digest: frame.digest,
+    capturedAt: String(frame.capturedAt ?? '').slice(0, 40),
+    expiresAt: String(frame.expiresAt ?? '').slice(0, 40),
+    data,
+  }
+}
 
 /** Converts only an explicit secondary-button confirmation into a reset command. */
 export function emergencyResetCommand(dialogResult) {
@@ -37,6 +69,10 @@ export function sanitizeSupervisorMessage(message) {
     // The runtime keeps the action-bound grant. It is never renderer data.
     return { type: 'approved', actionId: String(message.actionId ?? '') }
   }
+  if (message.type === 'evidence_frame') {
+    const frame = sanitizeEvidenceFrame(message.frame)
+    return frame ? { type: 'evidence_frame', frame } : { type: 'error', error: 'invalid_evidence_frame' }
+  }
   if (message.type === 'event' && message.event && typeof message.event === 'object') {
     const event = {}
     for (const field of SAFE_EVENT_FIELDS) {
@@ -58,6 +94,8 @@ export function initialViewModel(sessionId) {
     lastEvent: null, sequence: 0, connected: false,
     emergency: { active: false, supported: false, generation: 0, backend: 'unknown', chord: '' },
     stateBeforeEmergency: null,
+    evidenceFrames: { before: null, after: null, observation: null },
+    evidenceActionId: null,
   }
 }
 
@@ -86,6 +124,13 @@ export function reduceSupervisorMessage(model, message) {
           }),
     }
   }
+  if (message.type === 'evidence_frame' && message.frame) {
+    if (model.evidenceActionId && message.frame.actionId !== model.evidenceActionId) return model
+    return {
+      ...model,
+      evidenceFrames: { ...model.evidenceFrames, [message.frame.phase]: message.frame },
+    }
+  }
   if (message.type !== 'event' || !message.event) return model
   const event = message.event
   const next = {
@@ -93,7 +138,12 @@ export function reduceSupervisorMessage(model, message) {
     sequence: Number(event.sequence ?? model.sequence),
     lastEvent: String(event.type ?? 'event'),
   }
-  if (event.type === 'session.state_changed' || event.type === 'session.recovered') {
+  if (event.type === 'evidence.frame_available') {
+    next.evidenceActionId = event.actionId ?? null
+    if (event.payload?.phase === 'before' || event.payload?.phase === 'observation') {
+      next.evidenceFrames = { before: null, after: null, observation: null }
+    }
+  } else if (event.type === 'session.state_changed' || event.type === 'session.recovered') {
     next.state = String(event.payload?.to ?? event.payload?.state ?? model.state)
   } else if (event.type === 'session.completed') {
     next.state = 'completed'

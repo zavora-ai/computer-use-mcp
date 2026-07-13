@@ -879,6 +879,7 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_CERTIFICATION_SANDBOX` | Root used by reversible reference-adapter probes. Paths are realpath-confined and symlink escape is rejected. Defaults to `~/.computer-use-mcp/certification-sandbox`. |
 | `COMPUTER_USE_SUPERVISOR_SOCKET` | Opt-in local PiP supervisor socket. Requires v8 and a supervisor token. |
 | `COMPUTER_USE_SUPERVISOR_TOKEN` | Explicit local supervisor secret of at least 32 characters; never exposed to renderer code. |
+| `COMPUTER_USE_SUPERVISOR_FRAMES` | Set `true` to enable target-only before/after/observation frames in PiP. Frames are process-memory-only, limited to 1 MiB each and six per session, expire after five minutes, and require authenticated local session subscription. |
 | `COMPUTER_USE_SCRIPT_ENV_ALLOWLIST` | Comma-separated variable names that model-authored scripts may inherit when their names look secret-bearing. Supervisor/remote/principal/session/approval control-plane variables are always stripped and cannot be allowlisted. |
 | `COMPUTER_USE_REMOTE_HOST_MODULE` | Host adapter module required by the optional remote-sidecar CLI. It constructs principal-bound `v8-safe` servers and handles authorization loss. |
 | `COMPUTER_USE_REMOTE_AUTH_STORE` | Private device-authorization file used by the remote CLI. Stores token hashes, never bearer-token bytes. |

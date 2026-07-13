@@ -23,6 +23,8 @@ export interface RestorationResult {
 
 export interface TransactionHooks {
   capture(envelope: ActionEnvelope): Promise<DesktopStateSnapshot>
+  /** Optional, explicitly enabled process-memory-only supervisor evidence. */
+  captureEvidence?(envelope: ActionEnvelope, phase: 'before' | 'after'): Promise<ToolResult | undefined>
   verify(envelope: ActionEnvelope, result: ToolResult): Promise<VerificationResult>
   restore(snapshot: DesktopStateSnapshot, envelope: ActionEnvelope): Promise<RestorationResult>
 }

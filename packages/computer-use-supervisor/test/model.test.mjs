@@ -7,6 +7,8 @@ import {
   sanitizeSupervisorMessage,
 } from '../src/model.mjs'
 
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
 test('view model allowlists approval metadata and never copies secret payload fields', () => {
   const model = reduceSupervisorMessage(initialViewModel('s'), {
     type: 'event',
@@ -77,4 +79,46 @@ test('emergency reset command requires the explicit destructive confirmation cho
   assert.deepEqual(emergencyResetCommand({ response: 1, token: 'ignored' }), {
     type: 'reset_emergency_stop',
   })
+})
+
+test('visual evidence crosses only the explicit frame response and remains phase bounded', () => {
+  const event = sanitizeSupervisorMessage({
+    type: 'event', event: { sequence: 8, type: 'evidence.frame_available', actionId: 'a1', payload: {
+      frameId: 'frame-1', phase: 'before', mimeType: 'image/png', byteLength: 68,
+      digest: `sha256:${'a'.repeat(64)}`, data: PNG, secret: 'event-secret',
+    } },
+  })
+  assert.equal(event.event.payload.frameId, 'frame-1')
+  assert.equal(event.event.payload.data, undefined)
+  assert.doesNotMatch(JSON.stringify(event), /iVBOR|event-secret/)
+
+  const frame = sanitizeSupervisorMessage({ type: 'evidence_frame', frame: {
+    frameId: 'frame-1', sessionId: 'must-not-render', actionId: 'a1', phase: 'before',
+    mimeType: 'image/png', byteLength: 68, digest: `sha256:${'b'.repeat(64)}`,
+    capturedAt: '2026-07-13T10:00:00.000Z', expiresAt: '2026-07-13T10:05:00.000Z',
+    data: PNG, accessibilityTree: 'private UI text', token: 'secret-token',
+  } })
+  assert.equal(frame.type, 'evidence_frame')
+  assert.equal(frame.frame.data, PNG)
+  assert.equal(frame.frame.sessionId, undefined)
+  assert.doesNotMatch(JSON.stringify(frame), /private UI text|secret-token|must-not-render/)
+  const reduced = reduceSupervisorMessage(initialViewModel('s'), frame)
+  assert.equal(reduced.evidenceFrames.before.frameId, 'frame-1')
+  assert.equal(reduced.evidenceFrames.after, null)
+})
+
+test('visual evidence sanitizer rejects malformed, unsupported, and oversized payloads', () => {
+  const base = {
+    frameId: 'frame', actionId: 'a', phase: 'after', byteLength: 8,
+    digest: `sha256:${'c'.repeat(64)}`, capturedAt: '', expiresAt: '',
+  }
+  assert.equal(sanitizeSupervisorMessage({ type: 'evidence_frame', frame: {
+    ...base, mimeType: 'image/svg+xml', data: Buffer.from('<svg/>').toString('base64'),
+  } }).error, 'invalid_evidence_frame')
+  assert.equal(sanitizeSupervisorMessage({ type: 'evidence_frame', frame: {
+    ...base, mimeType: 'image/png', data: 'not base64!',
+  } }).error, 'invalid_evidence_frame')
+  assert.equal(sanitizeSupervisorMessage({ type: 'evidence_frame', frame: {
+    ...base, mimeType: 'image/png', byteLength: 1024 * 1024 + 1, data: PNG,
+  } }).error, 'invalid_evidence_frame')
 })

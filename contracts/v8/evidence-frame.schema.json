@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zavora.ai/schemas/computer-use/v8/evidence-frame.schema.json",
+  "title": "Ephemeral supervisor evidence frame",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["frameId", "sessionId", "actionId", "phase", "mimeType", "byteLength", "digest", "capturedAt", "expiresAt"],
+  "properties": {
+    "frameId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "actionId": { "type": "string", "minLength": 1 },
+    "phase": { "enum": ["before", "after", "observation"] },
+    "mimeType": { "enum": ["image/png", "image/jpeg"] },
+    "byteLength": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "data": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "description": "Present only on an authenticated, subscribed, local get_frame response; never in events or journals."
+    }
+  }
+}

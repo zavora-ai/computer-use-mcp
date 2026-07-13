@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-preview",
   "runtimeVersion": "7.0.0",
-  "generatedAt": "2026-07-13T14:23:24.332Z",
+  "generatedAt": "2026-07-13T14:43:17.030Z",
   "evidence": [
     {
       "schemaVersion": 1,
       "evidenceId": "evidence_multi_agent_4965fc8bf835c7d3",
       "kind": "deterministic_suite",
       "scope": "multi_agent",
-      "observedAt": "2026-07-13T14:23:23.422Z",
+      "observedAt": "2026-07-13T14:43:16.115Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -20,7 +20,7 @@
       "command": "node --test test/v8-reliability-corpus.test.mjs test/v8-mcp-facade.test.mjs",
       "passed": true,
       "tests": 17,
-      "durationMs": 379,
+      "durationMs": 388,
       "assertions": [
         "lease.one_writer",
         "lease.terminal_revocation",
@@ -39,14 +39,14 @@
         }
       ],
       "sourceDigest": "sha256:bb2b8d3548e23ecedb8f36f5c7d7d814423f2160d12e44684965fc8bf835c7d3",
-      "outputDigest": "sha256:5bd4a8ceb441232116d80a3da4db26954eff701a5df567ab9616d42d771f808e"
+      "outputDigest": "sha256:75d5d8bee55178639f90da5d8c2b3646fd71797cbd758ad3e9f3ff1b49bb0a77"
     },
     {
       "schemaVersion": 1,
       "evidenceId": "evidence_policy_73f43849bcfda153",
       "kind": "deterministic_suite",
       "scope": "policy",
-      "observedAt": "2026-07-13T14:23:23.042Z",
+      "observedAt": "2026-07-13T14:43:15.725Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -57,7 +57,7 @@
       "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs test/v8-migration.test.mjs && npm test --prefix packages/computer-use-remote",
       "passed": true,
       "tests": 115,
-      "durationMs": 3045,
+      "durationMs": 3036,
       "assertions": [
         "policy.operation_boundaries",
         "policy.approval_binding",
@@ -265,14 +265,14 @@
         }
       ],
       "sourceDigest": "sha256:c26c30f2cb7676e41b8fbaa1b0a402759683bd626bfe2b5c73f43849bcfda153",
-      "outputDigest": "sha256:dcb9ea44c3ed11ac7fae1b4bce099d2bfd0c8de00249565832d05171aa08ff31"
+      "outputDigest": "sha256:3b3c4e32478237ccd5183a6810c745a1aaa06e33977bbc9f5a26bef5961f58c2"
     },
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_supervisor_53c8afd1c550d5ff",
+      "evidenceId": "evidence_supervisor_7f6841bd443c496f",
       "kind": "integration_suite",
       "scope": "supervisor",
-      "observedAt": "2026-07-13T14:23:24.332Z",
+      "observedAt": "2026-07-13T14:43:17.030Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -280,10 +280,10 @@
         "interactive": false,
         "source": "local"
       },
-      "command": "node --test test/v8-supervisor-ipc.test.mjs test/v8-emergency-stop.test.mjs test/cancellation.test.mjs && npm test --prefix packages/computer-use-supervisor",
+      "command": "node --test test/v8-supervisor-ipc.test.mjs test/v8-evidence-frames.test.mjs test/v8-emergency-stop.test.mjs test/cancellation.test.mjs && npm test --prefix packages/computer-use-supervisor",
       "passed": true,
-      "tests": 18,
-      "durationMs": 910,
+      "tests": 24,
+      "durationMs": 915,
       "assertions": [
         "supervisor.authentication",
         "supervisor.principal_isolation",
@@ -292,9 +292,17 @@
         "supervisor.renderer_boundary",
         "supervisor.emergency_out_of_band",
         "supervisor.emergency_confirmed_reset",
-        "supervisor.credential_not_inherited"
+        "supervisor.credential_not_inherited",
+        "supervisor.frame_subscription",
+        "supervisor.frame_memory_bounds",
+        "supervisor.frame_journal_exclusion",
+        "supervisor.before_after_evidence"
       ],
       "sources": [
+        {
+          "path": "contracts/v8/evidence-frame.schema.json",
+          "digest": "sha256:816281a59754f4a3095303c3b4641c1fb7421edf1d905b3010ca7f4d3d502303"
+        },
         {
           "path": "native/src/activity.rs",
           "digest": "sha256:e04fb1a8e23436a2a81a6668dd600091d28f32d7abc089ab96150acb104d5525"
@@ -309,27 +317,31 @@
         },
         {
           "path": "packages/computer-use-supervisor/src/main.mjs",
-          "digest": "sha256:412e621d10302321ef912c17c35506cd26a6dce0754d5298b89abe040d1b82e5"
+          "digest": "sha256:ead62c4937e50d5c079d20f1e00e360ac091c27de7ce84a4c44a855c8b21d60e"
         },
         {
           "path": "packages/computer-use-supervisor/src/model.mjs",
-          "digest": "sha256:ff18fca43d6b8d798ff4cf92b213ee3bd5228158b5463c9cd29b57d0e1b751a4"
+          "digest": "sha256:f6f7bf140708711e9ecae44a927191bd34765e0c3b274ac6f37f68853b581429"
         },
         {
           "path": "packages/computer-use-supervisor/src/preload.mjs",
-          "digest": "sha256:eabd6fac480036a2da7e7b72f7cde0c49c6e7e3d2ce1e3c7bfdd7a2f7d5b2c41"
+          "digest": "sha256:e02c63cc4da6a7775b89b457f34f3953853b1bec21b8c1f45de8f6d8ff354f10"
+        },
+        {
+          "path": "packages/computer-use-supervisor/src/renderer.css",
+          "digest": "sha256:40e6a7660577eb26c7d2eff63e6d6b542ce56b836375b95863e3bfaccaa90e35"
         },
         {
           "path": "packages/computer-use-supervisor/src/renderer.html",
-          "digest": "sha256:a96c0b3af9e328c5d03c81f90533bfa65a1ecfa5126df2860e963ceb922777a8"
+          "digest": "sha256:6174f840ae6ecc780feb155ed6cdbe16f394b869fbb319433944c149c2fd8448"
         },
         {
           "path": "packages/computer-use-supervisor/src/renderer.mjs",
-          "digest": "sha256:c02173d428b5cc02db714b64ea787fb9b61dea5e3c80334110e79dc736ed7ccc"
+          "digest": "sha256:773771410bc39f7a61fe0e9a9f466bd0ce610b1351d2a21fb980b2bcbee8d22f"
         },
         {
           "path": "packages/computer-use-supervisor/test/model.test.mjs",
-          "digest": "sha256:d40c8e4213c78a4d5b392b4af5cdda63377fd4896afee348b16b6a0b9495050c"
+          "digest": "sha256:98b0bcce58515adc74b14fd6bed2718bc42ca5a352e8ef489b80085e108f7c30"
         },
         {
           "path": "src/control/activity-monitor.ts",
@@ -337,11 +349,15 @@
         },
         {
           "path": "src/runtime/coordinator.ts",
-          "digest": "sha256:a27fef9d12f50921f7569ed17543593a1b60e0ae5ce5677b235b12dc95ef9edb"
+          "digest": "sha256:5e4e2482f2aae44e8e58b27fbc9254653cac69dc55354507a539707403b5dae7"
         },
         {
           "path": "src/server.ts",
-          "digest": "sha256:7625d6abfd9e7f7d34757aedd50781a14e53cfc3fd2135ca1bebcf669397b9cd"
+          "digest": "sha256:6f4c2aa98b175cd2113f743945ebb88530dc49ccd0c3edb4b6158bbc38d76c04"
+        },
+        {
+          "path": "src/session/evidence-frames.ts",
+          "digest": "sha256:cb27ad8fd2fe03576dba986ade3c74f7864516ea6de2c4e9417bfe4dd8275eab"
         },
         {
           "path": "src/session/spawn.ts",
@@ -349,7 +365,7 @@
         },
         {
           "path": "src/session/supervisor-ipc.ts",
-          "digest": "sha256:475879ff95d549ebf41d46fc43d3d7f42250b41d5672c0de61b0f7c9a50ff161"
+          "digest": "sha256:44701f8d59df240c05bd7277d409ea551bd005c1067f316dbbb99b23b13890b6"
         },
         {
           "path": "test/cancellation.test.mjs",
@@ -360,12 +376,16 @@
           "digest": "sha256:811bc6d1d04e53c96e21db0924cdfd2ac22bbb5030145d0820a5dc584bcffd7f"
         },
         {
+          "path": "test/v8-evidence-frames.test.mjs",
+          "digest": "sha256:2492d83c397b5854547711efa986a19f9215090b2e6abadc0f01e27f33774098"
+        },
+        {
           "path": "test/v8-supervisor-ipc.test.mjs",
-          "digest": "sha256:ce860d8bc79edcbad969e382b33986ed853f6d078b0be50ca0a9a9e144d3fb7b"
+          "digest": "sha256:e08e5c3bbf4fa075120587896d06fa7f1055838be7dd001af995e446a8b1ade7"
         }
       ],
-      "sourceDigest": "sha256:0efe4f845fd8de9ec2544fddfb293593776f640e45484b5553c8afd1c550d5ff",
-      "outputDigest": "sha256:03ba40319b3cfa690c50e669aaa0134426f6c0d830d7760591fe066d99d90a9c"
+      "sourceDigest": "sha256:ffb8cd820d5fe7f4f44d100d5835e402ddd8ff13e35d3d907f6841bd443c496f",
+      "outputDigest": "sha256:fa69dfdb89497ab33df67ca0757df6cf361cb0ac24e948032542c8c24f66b6ce"
     }
   ],
   "certifications": [
@@ -446,5 +466,5 @@
       ]
     }
   ],
-  "reportDigest": "sha256:90a770955c900aa9140a385a8c6cfb52720dc37dbb33f32b2a061ab3d6ce9e53"
+  "reportDigest": "sha256:1ea814aa41aa195f060e3000a2a6a853542b1e6eedc46ff2f789c5dce48cdbcd"
 }
