@@ -2,13 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { createConnection } from 'node:net'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { emergencyResetCommand, sanitizeSupervisorMessage } from './model.mjs'
+import { createRendererDeliveryGate, emergencyResetCommand, sanitizeSupervisorMessage } from './model.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const socketPath = process.env.COMPUTER_USE_SUPERVISOR_SOCKET
 const token = process.env.COMPUTER_USE_SUPERVISOR_TOKEN
 const principalId = process.env.COMPUTER_USE_PRINCIPAL_ID ?? 'local-user'
 const sessionId = process.env.COMPUTER_USE_SESSION_ID
+const debugEnabled = process.env.COMPUTER_USE_SUPERVISOR_DEBUG === 'true'
 if (!socketPath || !token || !sessionId) {
   throw new Error('COMPUTER_USE_SUPERVISOR_SOCKET, _TOKEN, and _SESSION_ID are required')
 }
@@ -16,6 +17,19 @@ if (!socketPath || !token || !sessionId) {
 let window
 let socket
 let buffer = ''
+const rendererGate = createRendererDeliveryGate(message => {
+  window?.webContents.send('supervisor:event', message)
+})
+
+function debug(message) {
+  if (debugEnabled) console.error(`[computer-use-supervisor] ${message}`)
+}
+
+function deliverToRenderer(message) {
+  const safe = sanitizeSupervisorMessage(message)
+  const delivered = rendererGate.push(safe)
+  debug(`${delivered ? 'delivered' : 'buffered'} renderer message type=${safe.type}`)
+}
 
 function send(message) {
   if (!socket || socket.destroyed) throw new Error('supervisor socket is disconnected')
@@ -23,9 +37,13 @@ function send(message) {
 }
 
 function connectSupervisor() {
+  debug('opening local supervisor socket')
   socket = createConnection(socketPath)
   socket.setEncoding('utf8')
-  socket.on('connect', () => send({ type: 'hello', token, principalId }))
+  socket.on('connect', () => {
+    debug('socket connected; sending authenticated hello')
+    send({ type: 'hello', token, principalId })
+  })
   socket.on('data', chunk => {
     buffer += chunk
     if (Buffer.byteLength(buffer) > 2 * 1024 * 1024) return socket.destroy(new Error('supervisor frame too large'))
@@ -35,19 +53,30 @@ function connectSupervisor() {
       buffer = buffer.slice(newline + 1)
       if (!line) continue
       const message = JSON.parse(line)
-      if (message.type === 'hello') send({ type: 'subscribe', sessionId, afterSequence: 0 })
-      window?.webContents.send('supervisor:event', sanitizeSupervisorMessage(message))
+      debug(`received socket message type=${String(message.type ?? 'unknown')}`)
+      if (message.type === 'hello') {
+        debug('hello accepted; subscribing to session replay')
+        send({ type: 'subscribe', sessionId, afterSequence: 0 })
+      }
+      deliverToRenderer(message)
     }
   })
-  socket.on('close', () => window?.webContents.send(
-    'supervisor:event', sanitizeSupervisorMessage({ type: 'disconnected' }),
-  ))
-  socket.on('error', error => window?.webContents.send('supervisor:event', {
-    ...sanitizeSupervisorMessage({ type: 'error', error: 'socket_error', message: error.message }),
-  }))
+  socket.on('close', () => {
+    debug('socket closed')
+    deliverToRenderer({ type: 'disconnected' })
+  })
+  socket.on('error', error => {
+    debug(`socket error code=${String(error.code ?? 'unknown')}`)
+    deliverToRenderer({ type: 'error', error: 'socket_error', message: error.message })
+  })
 }
 
 function registerControls() {
+  ipcMain.handle('supervisor:renderer-ready', () => {
+    const flushed = rendererGate.ready()
+    debug(`renderer ready; flushed ${flushed} buffered messages`)
+    return { ready: true }
+  })
   const commands = new Set(['pause', 'resume', 'takeover', 'stop'])
   ipcMain.handle('supervisor:command', (_event, command, payload = {}) => {
     if (!commands.has(command)) throw new Error('unsupported supervisor command')
@@ -85,25 +114,46 @@ function registerControls() {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  debug('electron ready; creating PiP window')
   registerControls()
   window = new BrowserWindow({
     width: 440, height: 720, minWidth: 360, minHeight: 480,
     alwaysOnTop: true, title: 'Computer Use', show: false,
     webPreferences: {
-      preload: join(here, 'preload.mjs'), contextIsolation: true, sandbox: true,
+      preload: join(here, 'preload.cjs'), contextIsolation: true, sandbox: true,
       nodeIntegration: false, webSecurity: true,
     },
   })
   window.setAlwaysOnTop(true, 'floating')
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  window.webContents.on('console-message', (_event, details) => {
+    const message = typeof details === 'object' ? details.message : String(details)
+    debug(`renderer console: ${String(message).slice(0, 500)}`)
+  })
+  window.webContents.on('preload-error', (_event, _preloadPath, error) => {
+    debug(`preload error: ${String(error?.message ?? error).slice(0, 500)}`)
+  })
+  window.webContents.on('did-fail-load', (_event, code, description) => {
+    debug(`load failed code=${code} description=${String(description).slice(0, 200)}`)
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    debug(`renderer gone reason=${String(details?.reason ?? 'unknown')}`)
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) void shell.openExternal(url)
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', event => event.preventDefault())
-  void window.loadFile(join(here, 'renderer.html'))
-  window.once('ready-to-show', () => window.showInactive())
+  window.once('ready-to-show', () => {
+    debug('PiP ready to show')
+    window.showInactive()
+  })
+  // Connect only after the isolated renderer has installed its preload event
+  // listener. Otherwise the initial hello/subscription replay can arrive while
+  // the document is loading and leave PiP permanently showing "connecting".
+  await window.loadFile(join(here, 'renderer.html'))
+  debug('PiP document loaded')
   connectSupervisor()
 })
 

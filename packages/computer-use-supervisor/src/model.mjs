@@ -43,6 +43,30 @@ const FRAME_PHASES = new Set(['before', 'after', 'observation'])
 const FRAME_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 const MAX_ENCODED_FRAME_BYTES = Math.ceil((1024 * 1024) / 3) * 4
 
+/** Buffer main-process messages until the isolated renderer installs its listener. */
+export function createRendererDeliveryGate(deliver) {
+  let ready = false
+  const pending = []
+  return Object.freeze({
+    push(message) {
+      if (!ready) {
+        pending.push(message)
+        return false
+      }
+      deliver(message)
+      return true
+    },
+    ready() {
+      if (ready) return 0
+      ready = true
+      const count = pending.length
+      for (const message of pending.splice(0)) deliver(message)
+      return count
+    },
+    pendingCount: () => pending.length,
+  })
+}
+
 function sanitizeEvidenceFrame(frame) {
   if (!frame || typeof frame !== 'object') return null
   const mimeType = frame.mimeType

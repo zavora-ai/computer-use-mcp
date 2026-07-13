@@ -234,12 +234,13 @@ test('approve_action grants only the exact pending v8 action through the MCP bou
     const duplicate = await client.approveAction(sessionId, 'reviewed-action', 30_000)
     assert.equal(duplicate.isError, true)
     assert.match(duplicate.content[0].text, /no exact pending action/)
+    const runtimeHeld = await client.previewAction(request)
+    assert.equal(runtimeHeld.structuredContent.executable, true)
     const lease = await client.acquireControlLease({
       sessionId, kind: 'cooperative', mode: 'background', ttlMs: 10_000, actionBudget: 1,
     })
     const executed = await client.executeAction({
       ...request,
-      approvalGrantId: approval.structuredContent.grant.grantId,
       leaseId: lease.structuredContent.lease.leaseId,
     })
     assert.equal(executed.structuredContent.receipt.status, 'committed')

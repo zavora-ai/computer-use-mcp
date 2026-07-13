@@ -1077,7 +1077,11 @@ test('legacy error results cannot be committed as successful v8 receipts', async
     leases, policy: allow,
     execute: async () => {
       calls++
-      return { content: [{ type: 'text', text: 'native handler failed' }], isError: true }
+      return { content: [{ type: 'text', text: JSON.stringify({
+        error: 'FocusFailure', message: 'target did not become frontmost',
+        frontmostAfter: 'app.overlay', suggestedRecovery: 'activate_window',
+        secret: 'must-not-cross-runtime-boundary',
+      }) }], isError: true }
     },
   })
   const lease = await leases.acquire({
@@ -1088,8 +1092,19 @@ test('legacy error results cannot be committed as successful v8 receipts', async
     sessionId: 'handler-error', principalId: 'p', actionId: 'handler-error-action',
     tool: 'write_clipboard', args: { text: 'value' }, mode: 'background', leaseId: lease.leaseId,
   }
-  await assert.rejects(coordinator.execute(request), error =>
-    error instanceof RuntimeError && error.code === 'indeterminate')
+  await assert.rejects(coordinator.execute(request), error => {
+    assert.ok(error instanceof RuntimeError)
+    assert.equal(error.code, 'indeterminate')
+    assert.deepEqual(error.details.handler, {
+      reported: true,
+      error: 'FocusFailure',
+      message: 'target did not become frontmost',
+      frontmostAfter: 'app.overlay',
+      suggestedRecovery: 'activate_window',
+    })
+    assert.doesNotMatch(JSON.stringify(error.details), /must-not-cross/)
+    return true
+  })
   assert.equal(leases.current(), undefined)
   const replay = await coordinator.execute({ ...request, attempt: 2 })
   assert.equal(replay.receipt.status, 'indeterminate')

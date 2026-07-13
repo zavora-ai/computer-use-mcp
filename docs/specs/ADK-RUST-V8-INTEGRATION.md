@@ -15,7 +15,7 @@ principal/tenant binding, typed v8 contracts, a live MCP example, and safety
 evaluation. Pre-effect and post-commit crash points are separately injected and
 prove exactly one physical mutation across retry. `adk-tool` preserves
 structured text and real MCP image blocks. A canonical Rust-verified evaluation
-receipt binds 18 executed tests, 11 named assertions, 19 source files, output and
+receipt binds 19 executed tests, 12 named assertions, 21 source files, output and
 source digests, two crash points, zero duplicate mutations, auth binding, and
 multimodal evidence. ADK CI regenerates and uploads the receipt. The v8 release
 evaluator accepts it only when a trusted release authority signs an `adk_graph`

@@ -998,6 +998,10 @@ reference UI uses 10 uses/two minutes. A changed field, window, policy,
 sensitivity assessment, provenance boundary, or use budget requires new
 review. Pause, takeover, authorization loss, emergency stop, stop, completion,
 and deletion revoke both grants and pending approvals before work can resume.
+PiP-issued grants remain inside the v8 runtime and are matched to the exact
+action or approved semantic scope during preview and execution. The renderer
+and orchestrating graph resume with reviewed action/policy digests without
+receiving the bearer grant ID.
 
 ### Effect-level postconditions
 

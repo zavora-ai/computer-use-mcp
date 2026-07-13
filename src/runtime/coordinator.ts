@@ -76,6 +76,33 @@ export interface ExecutionOutcome {
   replay: boolean
 }
 
+function safeHandlerErrorDetails(result: ToolResult): Record<string, unknown> {
+  let source: Record<string, unknown> | undefined = result.structuredContent
+  if (!source) {
+    const text = result.content.find(item => item.type === 'text')?.text
+    if (text) {
+      try {
+        const parsed: unknown = JSON.parse(text)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          source = parsed as Record<string, unknown>
+        }
+      } catch { /* Non-JSON tool errors remain intentionally opaque. */ }
+    }
+  }
+  if (!source) return { reported: false }
+  const safeKeys = [
+    'error', 'reason', 'message', 'requestedBundleId', 'requestedWindowId',
+    'frontmostBefore', 'frontmostAfter', 'focusStrategy', 'suggestedRecovery',
+  ]
+  const details: Record<string, unknown> = { reported: true }
+  for (const key of safeKeys) {
+    const value = source[key]
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+        || value === null) details[key] = value
+  }
+  return details
+}
+
 export interface SessionDeletionResult {
   sessionId: string
   deleted: boolean
@@ -183,6 +210,8 @@ export class RuntimeCoordinator {
   readonly #transactionHooks?: TransactionHooks
   readonly #resolveToolMeta: (tool: string) => ToolMeta | undefined
   readonly #pendingApprovals = new Map<string, PendingApproval>()
+  readonly #approvedActionGrants = new Map<string, string>()
+  readonly #approvedScopeGrants = new Map<string, string>()
   readonly #emergencyListeners = new Set<(status: ReturnType<RuntimeCoordinator['emergencyStopStatus']>) => void>()
   readonly #followUps = new Map<string, SessionFollowUp[]>()
   readonly #activeExecutions = new Map<string, {
@@ -329,10 +358,14 @@ export class RuntimeCoordinator {
       blocker = 'postcondition_unavailable'
     }
     else if (policy.decision === 'confirm') {
-      if (!request.approvalGrantId) blocker = 'approval_required'
+      const approvalGrantId = this.#resolveApprovalGrant(request, envelope, sessionScopeDigest)
+      if (!approvalGrantId) blocker = 'approval_required'
       else {
-        try { this.grants.validate(request.approvalGrantId, envelope, policy.policyDigest, sessionScopeDigest) }
-        catch { blocker = 'approval_required' }
+        try { this.grants.validate(approvalGrantId, envelope, policy.policyDigest, sessionScopeDigest) }
+        catch {
+          this.#forgetApprovalGrant(approvalGrantId)
+          blocker = 'approval_required'
+        }
       }
     }
 
@@ -402,13 +435,16 @@ export class RuntimeCoordinator {
     }
 
     if (preview.policy.decision === 'confirm') {
-      if (!request.approvalGrantId) throw new RuntimeError('approval_required', 'action-bound approval is required')
-      this.grants.consume(
-        request.approvalGrantId,
+      const sessionScopeDigest = this.#sessionApprovalScopeDigest(request, preview.envelope)
+      const approvalGrantId = this.#resolveApprovalGrant(request, preview.envelope, sessionScopeDigest)
+      if (!approvalGrantId) throw new RuntimeError('approval_required', 'action-bound approval is required')
+      const consumed = this.grants.consume(
+        approvalGrantId,
         preview.envelope,
         preview.policy.policyDigest,
-        this.#sessionApprovalScopeDigest(request, preview.envelope),
+        sessionScopeDigest,
       )
+      if (consumed.remainingUses === 0) this.#forgetApprovalGrant(approvalGrantId)
       this.#pendingApprovals.delete(`${request.sessionId}\u0000${request.actionId}`)
     }
 
@@ -512,12 +548,16 @@ export class RuntimeCoordinator {
         throw new RuntimeError('indeterminate', 'control was revoked while the action was executing')
       }
       if (result.isError) {
+        const handler = safeHandlerErrorDetails(result)
+        if (process.env.COMPUTER_USE_RUNTIME_DEBUG === 'true') {
+          console.error(`[computer-use-runtime] handler error tool=${request.tool} details=${JSON.stringify(handler)}`)
+        }
         throw new RuntimeError(
           meta.mutates ? 'indeterminate' : 'execution_failed',
           meta.mutates
             ? 'mutating handler returned an error after entering the side-effect boundary'
             : 'observation handler returned an error',
-          { tool: request.tool },
+          { tool: request.tool, handler },
         )
       }
       if (meta.mutates && (certifiedVerifier || (this.#transactionHooks && preview.capability.backend !== 'browser'))) {
@@ -710,6 +750,11 @@ export class RuntimeCoordinator {
     // pending item before publishing so duplicate UI/IPC submissions cannot
     // mint parallel authority from the same review event.
     this.#pendingApprovals.delete(`${sessionId}\u0000${actionId}`)
+    if (grant.scope === 'exact_action') {
+      this.#approvedActionGrants.set(`${sessionId}\u0000${actionId}`, grant.grantId)
+    } else {
+      this.#approvedScopeGrants.set(`${sessionId}\u0000${grant.scopeDigest}`, grant.grantId)
+    }
     this.events.publish({
       sessionId,
       actionId,
@@ -1170,6 +1215,18 @@ export class RuntimeCoordinator {
 
   #revokeApprovalAuthority(sessionId: string, principalId: string, reason: string): number {
     const revokedGrants = this.grants.revokeSession(sessionId, principalId)
+    for (const [key, grantId] of [...this.#approvedActionGrants]) {
+      if (key.startsWith(`${sessionId}\u0000`)) {
+        this.#approvedActionGrants.delete(key)
+        this.#forgetApprovalGrant(grantId)
+      }
+    }
+    for (const [key, grantId] of [...this.#approvedScopeGrants]) {
+      if (key.startsWith(`${sessionId}\u0000`)) {
+        this.#approvedScopeGrants.delete(key)
+        this.#forgetApprovalGrant(grantId)
+      }
+    }
     let pendingApprovals = 0
     for (const key of [...this.#pendingApprovals.keys()]) {
       if (!key.startsWith(`${sessionId}\u0000`)) continue
@@ -1207,6 +1264,8 @@ export class RuntimeCoordinator {
       return created
     }
     const revoked = this.grants.revokeAll()
+    this.#approvedActionGrants.clear()
+    this.#approvedScopeGrants.clear()
     for (const grant of revoked) entry(grant.sessionId, grant.principalId).revokedGrants++
     for (const pending of this.#pendingApprovals.values()) {
       const envelope = pending.preview.envelope
@@ -1226,6 +1285,28 @@ export class RuntimeCoordinator {
       })
     }
     return revoked.length
+  }
+
+  #resolveApprovalGrant(
+    request: ActionRequest,
+    envelope: ActionEnvelope,
+    sessionScopeDigest?: string,
+  ): string | undefined {
+    if (request.approvalGrantId) return request.approvalGrantId
+    const exact = this.#approvedActionGrants.get(`${envelope.sessionId}\u0000${envelope.actionId}`)
+    if (exact) return exact
+    return sessionScopeDigest
+      ? this.#approvedScopeGrants.get(`${envelope.sessionId}\u0000${sessionScopeDigest}`)
+      : undefined
+  }
+
+  #forgetApprovalGrant(grantId: string): void {
+    for (const [key, value] of this.#approvedActionGrants) {
+      if (value === grantId) this.#approvedActionGrants.delete(key)
+    }
+    for (const [key, value] of this.#approvedScopeGrants) {
+      if (value === grantId) this.#approvedScopeGrants.delete(key)
+    }
   }
 
   #requiresSensitivityInspection(request: Pick<ActionRequest, 'tool'>): boolean {

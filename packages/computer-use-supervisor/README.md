@@ -3,6 +3,10 @@
 Local Picture-in-Picture supervisor alpha for the v8 runtime. It connects only
 to the authenticated local supervisor socket and never loads the desktop native
 module. The renderer is sandboxed and does not receive the socket token.
+The CommonJS preload is required by Electron's sandboxed preload loader. Main
+buffers authenticated socket replay until the renderer atomically installs its
+message listener and acknowledges readiness, preventing a permanent
+`connecting` state during fast local startup.
 
 ```bash
 COMPUTER_USE_SUPERVISOR_SOCKET=/path/to/supervisor.sock \

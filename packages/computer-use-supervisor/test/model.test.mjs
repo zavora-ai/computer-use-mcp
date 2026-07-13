@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  createRendererDeliveryGate,
   emergencyResetCommand,
   initialViewModel,
   reduceSupervisorMessage,
@@ -8,6 +9,19 @@ import {
 } from '../src/model.mjs'
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
+test('renderer delivery gate replays startup messages only after listener readiness', () => {
+  const delivered = []
+  const gate = createRendererDeliveryGate(message => delivered.push(message))
+  assert.equal(gate.push({ type: 'hello' }), false)
+  assert.equal(gate.push({ type: 'event', sequence: 1 }), false)
+  assert.equal(gate.pendingCount(), 2)
+  assert.equal(gate.ready(), 2)
+  assert.deepEqual(delivered, [{ type: 'hello' }, { type: 'event', sequence: 1 }])
+  assert.equal(gate.ready(), 0)
+  assert.equal(gate.push({ type: 'subscribed' }), true)
+  assert.deepEqual(delivered.at(-1), { type: 'subscribed' })
+})
 
 test('view model allowlists approval metadata and never copies secret payload fields', () => {
   const model = reduceSupervisorMessage(initialViewModel('s'), {
