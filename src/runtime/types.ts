@@ -81,6 +81,39 @@ export interface ActionProvenance {
 
 export type DataLabel = 'public' | 'private' | 'credential' | 'payment' | 'health' | 'unknown'
 
+/** Digest-only expected state. Raw secret values remain in action arguments, never events. */
+export type ActionPostcondition =
+  | {
+      kind: 'ui_element'
+      role?: string
+      label?: string
+      exists: boolean
+      valueDigest?: string
+    }
+  | {
+      kind: 'filesystem'
+      path: string
+      exists: boolean
+      contentDigest?: string
+    }
+  | {
+      kind: 'registry'
+      path: string
+      name: string
+      exists: boolean
+      valueDigest?: string
+    }
+  | {
+      kind: 'process'
+      pid: number
+      running: false
+    }
+  | {
+      kind: 'window'
+      windowId: number
+      exists: boolean
+    }
+
 export interface ActionEnvelope {
   actionId: string
   sessionId: string
@@ -95,6 +128,7 @@ export interface ActionEnvelope {
   resource?: ActionResourceContext
   provenance?: ActionProvenance
   dataLabels: DataLabel[]
+  postcondition?: ActionPostcondition
   reversible: boolean
   externalSideEffect: boolean
   proposedAt: string
@@ -117,6 +151,7 @@ export type RuntimeErrorCode =
   | 'action_id_conflict'
   | 'indeterminate'
   | 'execution_failed'
+  | 'postcondition_unavailable'
   | 'session_not_found'
   | 'session_not_running'
   | 'session_not_terminal'

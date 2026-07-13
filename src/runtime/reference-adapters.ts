@@ -501,6 +501,26 @@ export class SemanticValueAdapter implements AppCapabilityAdapter {
       : { content: [{ type: 'text', text: `semantic set failed: ${result.reason ?? 'unknown'}` }], isError: true }
   }
 
+  async verifyEffect(
+    appId: string,
+    operation: string,
+    args: Readonly<Record<string, unknown>>,
+    _result: ToolResult,
+    signal?: AbortSignal,
+  ) {
+    if (signal?.aborted || !(await this.matchesAction(appId, operation, args))) {
+      return { verified: false, method: 'certified_semantic_readback', details: { checks: 0 } }
+    }
+    const observed = await this.host.findElements(
+      this.target.windowId, this.target.role, this.target.label, 2,
+    )
+    return {
+      verified: observed.length === 1 && observed[0]?.value === args.value,
+      method: 'certified_semantic_readback',
+      details: { checks: 1 },
+    }
+  }
+
   async probe(appId: string, appVersion: string): Promise<CapabilityProbeResult> {
     const quietPeriodSatisfied = await waitForPhysicalQuiet(this.host)
     const before = await capture(this.host)

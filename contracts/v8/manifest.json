@@ -3,6 +3,7 @@
   "protocol": "computer-use-v8-preview",
   "fixtures": [
     "action-preview.json",
+    "action-postcondition.schema.json",
     "execution-receipt.json",
     "session-event.json",
     "session-follow-up.json",
@@ -42,6 +43,7 @@
     "action_id_conflict",
     "indeterminate",
     "execution_failed",
+    "postcondition_unavailable",
     "session_not_terminal"
   ]
 }

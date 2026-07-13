@@ -7,6 +7,7 @@ import type {
   TransactionHooks,
   VerificationResult,
 } from './transaction.js'
+import { verifySessionPostcondition } from './postconditions.js'
 
 function payload(result: ToolResult): Record<string, unknown> {
   if (result.structuredContent) return result.structuredContent
@@ -56,8 +57,14 @@ export class SessionTransactionHooks implements TransactionHooks {
     return undefined
   }
 
-  async verify(envelope: ActionEnvelope, result: ToolResult): Promise<VerificationResult> {
+  async verify(
+    envelope: ActionEnvelope,
+    result: ToolResult,
+    args: Readonly<Record<string, unknown>> = {},
+  ): Promise<VerificationResult> {
     if (result.isError) return { verified: false, method: 'tool_result', details: { isError: true } }
+    const postcondition = await verifySessionPostcondition(this.session, envelope, args)
+    if (postcondition) return postcondition
     if (!envelope.target?.windowId) return { verified: true, method: 'successful_result' }
     if (typeof envelope.target.windowId !== 'number') {
       return { verified: true, method: 'successful_result_non_numeric_window' }

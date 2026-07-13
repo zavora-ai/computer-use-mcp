@@ -2,12 +2,17 @@ const SAFE_APPROVAL_FIELDS = [
   'actionDigest', 'tool', 'operation', 'actionClass', 'mode', 'expiresAt',
   'targetAppId', 'targetWindowId',
 ]
+const SAFE_POSTCONDITION_FIELDS = [
+  'postconditionKind', 'postconditionExpectedState', 'postconditionExpectedDigest',
+]
 
 const SAFE_EVENT_FIELDS = ['sequence', 'type', 'actionId']
 const SAFE_EVENT_PAYLOAD_FIELDS = [
   'to', 'state', 'tool', 'mode', 'actionClass', 'interference', 'policyDecision',
   'executable', 'blocker', ...SAFE_APPROVAL_FIELDS,
   'frameId', 'phase', 'mimeType', 'byteLength', 'digest', 'capturedAt', 'expiresAt', 'code',
+  'verificationRequired', 'verified', 'method', 'checks', 'postconditionKind',
+  'postconditionExpectedState', 'postconditionExpectedDigest',
 ]
 
 const FRAME_PHASES = new Set(['before', 'after', 'observation'])
@@ -157,6 +162,9 @@ export function reduceSupervisorMessage(model, message) {
   } else if (event.type === 'action.approval_required') {
     const safe = { actionId: event.actionId }
     for (const field of SAFE_APPROVAL_FIELDS) {
+      if (event.payload?.[field] !== undefined) safe[field] = event.payload[field]
+    }
+    for (const field of SAFE_POSTCONDITION_FIELDS) {
       if (event.payload?.[field] !== undefined) safe[field] = event.payload[field]
     }
     next.pendingApproval = safe

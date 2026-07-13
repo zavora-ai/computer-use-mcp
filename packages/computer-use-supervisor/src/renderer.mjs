@@ -22,6 +22,11 @@ function render() {
     byId('approval-title').textContent = approval.operation ?? approval.tool ?? 'Action'
     byId('approval-class').textContent = `${approval.actionClass ?? 'unknown'} · ${approval.mode ?? 'unknown'}`
     byId('approval-target').textContent = approval.targetAppId ?? 'Local desktop'
+    const expected = [approval.postconditionKind, approval.postconditionExpectedState]
+      .filter(Boolean).join(' · ')
+    byId('approval-expected-label').hidden = !expected
+    byId('approval-expected').hidden = !expected
+    byId('approval-expected').textContent = expected
   }
   for (const phase of ['before', 'after', 'observation']) {
     const frame = model.evidenceFrames[phase]

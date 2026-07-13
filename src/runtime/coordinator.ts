@@ -25,11 +25,13 @@ import {
   type ActionEnvelope,
   type ActionResourceContext,
   type ActionProvenance,
+  type ActionPostcondition,
   type DataLabel,
   type ExecutionCapability,
   type ExecutionMode,
   type TargetEvidence,
 } from './types.js'
+import { validatePostcondition } from '../control/postconditions.js'
 
 export interface ActionRequest {
   sessionId: string
@@ -50,6 +52,7 @@ export interface ActionRequest {
   leaseId?: string
   approvalGrantId?: string
   provenance?: ActionProvenance
+  postcondition?: ActionPostcondition
 }
 
 export interface ActionPreview {
@@ -57,7 +60,7 @@ export interface ActionPreview {
   capability: ExecutionCapability
   policy: PolicyDecision
   executable: boolean
-  blocker?: 'shadow_mutation' | 'foreground_required' | 'input_attribution_unavailable' | 'target_evidence_required' | 'approval_required' | 'policy_denied'
+  blocker?: 'shadow_mutation' | 'foreground_required' | 'input_attribution_unavailable' | 'target_evidence_required' | 'postcondition_unavailable' | 'approval_required' | 'policy_denied'
 }
 
 export interface ExecutionOutcome {
@@ -229,6 +232,10 @@ export class RuntimeCoordinator {
 
   async preview(request: ActionRequest): Promise<ActionPreview> {
     await this.#assertSession(request.sessionId, request.principalId)
+    if (request.postcondition) {
+      validatePostcondition(request.postcondition)
+      this.#validatePostconditionBinding(request)
+    }
     if (request.tool === 'openai_computer') {
       throw new RuntimeError(
         'policy_denied',
@@ -236,6 +243,9 @@ export class RuntimeCoordinator {
       )
     }
     const meta = this.#meta(request.tool)
+    if (request.postcondition && !meta.mutates) {
+      throw new RuntimeError('policy_denied', 'postconditions are only valid for mutating actions')
+    }
     const classification = classifyToolAction(request.tool, request.args, meta)
     const now = this.#now()
     const actionId = request.actionId ?? randomUUID()
@@ -251,6 +261,7 @@ export class RuntimeCoordinator {
       resource,
       dataLabels,
       provenance: request.provenance,
+      postcondition: request.postcondition,
     })
     const envelope: ActionEnvelope = {
       actionId,
@@ -266,6 +277,7 @@ export class RuntimeCoordinator {
       ...(Object.keys(resource).length ? { resource } : {}),
       ...(request.provenance ? { provenance: structuredClone(request.provenance) } : {}),
       dataLabels,
+      ...(request.postcondition ? { postcondition: structuredClone(request.postcondition) } : {}),
       reversible: classification.reversible,
       externalSideEffect: classification.externalSideEffect,
       proposedAt: now.toISOString(),
@@ -273,6 +285,7 @@ export class RuntimeCoordinator {
       argsDigest,
     }
     const capability = await this.#selectCapability(request, meta, operation)
+    const hasCertifiedEffectVerifier = await this.#hasCertifiedEffectVerifier(request, capability)
     const policy = await this.#policy(envelope)
 
     let blocker: ActionPreview['blocker']
@@ -285,6 +298,9 @@ export class RuntimeCoordinator {
     ) blocker = 'input_attribution_unavailable'
     else if (policy.decision === 'deny') blocker = 'policy_denied'
     else if (this.#requiresTargetEvidence(request, meta) && !request.target) blocker = 'target_evidence_required'
+    else if (this.#requiresEffectVerification(request) && !this.#transactionHooks && !hasCertifiedEffectVerifier) {
+      blocker = 'postcondition_unavailable'
+    }
     else if (policy.decision === 'confirm') {
       if (!request.approvalGrantId) blocker = 'approval_required'
       else {
@@ -310,6 +326,8 @@ export class RuntimeCoordinator {
         interference: capability.interference,
         policyDecision: policy.decision,
         executable: preview.executable,
+        verificationRequired: this.#requiresEffectVerification(request),
+        ...(request.postcondition ? this.#postconditionSummary(request.postcondition) : {}),
         ...(blocker ? { blocker } : {}),
       },
     })
@@ -329,6 +347,7 @@ export class RuntimeCoordinator {
           targetAppId: envelope.target?.appId ?? null,
           targetWindowId: envelope.target?.windowId ?? null,
           reasons: policy.reasons,
+          ...(request.postcondition ? this.#postconditionSummary(request.postcondition) : {}),
         },
       })
     }
@@ -427,6 +446,7 @@ export class RuntimeCoordinator {
         }
       }
       let executor = this.#execute
+      let certifiedVerifier: ((result: ToolResult) => Promise<import('../control/transaction.js').VerificationResult>) | undefined
       if (preview.capability.certification) {
         const certified = await this.#capabilities?.resolveBinding({
           appId: preview.capability.appId,
@@ -444,6 +464,9 @@ export class RuntimeCoordinator {
         if (certified.binding.execute) {
           executor = (_tool, args, executionSignal) => certified.binding.execute!(args, executionSignal)
         }
+        if (!preview.envelope.postcondition && certified.binding.verifyEffect) {
+          certifiedVerifier = result => certified.binding.verifyEffect!(request.args, result, actionController.signal)
+        }
       }
       crossedSideEffectBoundary = meta.mutates
       const result = await executor(request.tool, request.args, actionController.signal, preview.envelope)
@@ -459,14 +482,23 @@ export class RuntimeCoordinator {
           { tool: request.tool },
         )
       }
-      if (meta.mutates && this.#transactionHooks && preview.capability.backend !== 'browser') {
-        const verification = await this.#transactionHooks.verify(preview.envelope, result)
+      if (meta.mutates && (certifiedVerifier || (this.#transactionHooks && preview.capability.backend !== 'browser'))) {
+        const verification = certifiedVerifier
+          ? await certifiedVerifier(result)
+          : await this.#transactionHooks!.verify(preview.envelope, result, request.args)
         this.events.publish({
           sessionId: request.sessionId,
           actionId: request.actionId,
           principalId: request.principalId,
           type: 'action.verified',
-          payload: { verified: verification.verified, method: verification.method },
+          payload: {
+            verified: verification.verified,
+            method: verification.method,
+            checks: typeof verification.details?.checks === 'number' ? verification.details.checks : 0,
+            ...(preview.envelope.postcondition
+              ? this.#postconditionSummary(preview.envelope.postcondition)
+              : {}),
+          },
         })
         if (!verification.verified) {
           throw new RuntimeError('indeterminate', 'postcondition verification failed', { method: verification.method })
@@ -953,6 +985,79 @@ export class RuntimeCoordinator {
     return meta
   }
 
+  #validatePostconditionBinding(request: ActionRequest): void {
+    const expected = request.postcondition!
+    const denied = () => new RuntimeError(
+      'policy_denied',
+      'postcondition must be bound to the action target or resource',
+    )
+    if (request.tool === 'browser_action') throw denied()
+    if (expected.kind === 'ui_element') {
+      if (typeof request.target?.windowId !== 'number') throw denied()
+      return
+    }
+    if (expected.kind === 'window') {
+      if (request.target?.windowId !== expected.windowId) throw denied()
+      return
+    }
+    if (expected.kind === 'filesystem') {
+      if (request.tool !== 'filesystem' || !['write', 'copy', 'move', 'delete'].includes(String(request.args.mode))) {
+        throw denied()
+      }
+      const paths = [request.args.path, request.args.destination].filter(value => typeof value === 'string')
+      if (!paths.includes(expected.path)) throw denied()
+      return
+    }
+    if (expected.kind === 'registry') {
+      if (request.tool !== 'registry' || !['set', 'delete'].includes(String(request.args.mode))) throw denied()
+      if (request.args.path !== expected.path || request.args.name !== expected.name) throw denied()
+      return
+    }
+    if (request.tool !== 'process_kill' || request.args.mode !== 'kill'
+        || request.args.pid !== expected.pid || expected.running) throw denied()
+  }
+
+  #requiresEffectVerification(request: ActionRequest): boolean {
+    if (request.postcondition) return true
+    if (request.tool === 'set_value' || request.tool === 'fill_form') return true
+    if (request.tool === 'filesystem') return ['write', 'copy', 'move', 'delete'].includes(String(request.args.mode))
+    if (request.tool === 'registry') {
+      return ['set', 'delete'].includes(String(request.args.mode)) && typeof request.args.name === 'string'
+    }
+    return request.tool === 'process_kill' && request.args.mode === 'kill' && typeof request.args.pid === 'number'
+  }
+
+  async #hasCertifiedEffectVerifier(
+    request: ActionRequest,
+    capability: ExecutionCapability,
+  ): Promise<boolean> {
+    if (request.postcondition || !capability.certification || !this.#capabilities) return false
+    const resolved = await this.#capabilities.resolveBinding({
+      appId: capability.appId,
+      operation: capability.operation,
+      certificationId: capability.certification.certificationId,
+      tool: request.tool,
+      args: request.args,
+    })
+    return typeof resolved?.binding.verifyEffect === 'function'
+  }
+
+  #postconditionSummary(postcondition: ActionPostcondition): Record<string, unknown> {
+    const expectedDigest = postcondition.kind === 'filesystem'
+      ? postcondition.contentDigest
+      : postcondition.kind === 'ui_element' || postcondition.kind === 'registry'
+        ? postcondition.valueDigest
+        : undefined
+    const expectedState = postcondition.kind === 'process'
+      ? (postcondition.running ? 'running' : 'not_running')
+      : ('exists' in postcondition ? (postcondition.exists ? 'exists' : 'absent') : undefined)
+    return {
+      postconditionKind: postcondition.kind,
+      ...(expectedState ? { postconditionExpectedState: expectedState } : {}),
+      ...(expectedDigest ? { postconditionExpectedDigest: expectedDigest } : {}),
+    }
+  }
+
   async #assertSession(sessionId: string, principalId: string): Promise<void> {
     if (!this.#requireManagedSession) return
     const session = await this.getSession(sessionId, principalId)
@@ -1074,6 +1179,10 @@ export class RuntimeCoordinator {
         { inputMonitor: this.#activityMonitor?.capability ?? { supported: false } },
       )
       case 'target_evidence_required': return new RuntimeError('stale_target', 'fresh target evidence is required for this mutation')
+      case 'postcondition_unavailable': return new RuntimeError(
+        'postcondition_unavailable',
+        'independent effect verification is required but no transaction verifier is configured',
+      )
       case 'approval_required': return new RuntimeError('approval_required', 'policy requires an action-bound approval', { policy: preview.policy })
       default: return new RuntimeError('policy_denied', 'policy denied the action', { policy: preview.policy })
     }

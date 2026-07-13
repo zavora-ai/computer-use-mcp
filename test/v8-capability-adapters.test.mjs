@@ -20,6 +20,7 @@ import {
   SemanticValueAdapter,
 } from '../dist/runtime/reference-adapters.js'
 import { RuntimeCoordinator } from '../dist/runtime/coordinator.js'
+import { RuntimeError } from '../dist/runtime/types.js'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 
@@ -153,6 +154,7 @@ for (const platform of ['darwin', 'win32']) {
       maxValueBytes: 1024,
     }
     let value = 'original'
+    let suppressReadback = false
     const host = {
       ...fixedDesktop(platform),
       async getAppVersion() { return '1.2.3' },
@@ -160,7 +162,7 @@ for (const platform of ['darwin', 'win32']) {
       async getWindowAppId(windowId) { return windowId === 42 ? target.appId : undefined },
       async findElements(windowId, role, label) {
         return windowId === 42 && role === target.role && label === target.label
-          ? [{ role, label, value, bounds: { x: 0, y: 0, width: 10, height: 10 }, actions: [] }]
+          ? [{ role, label, value: suppressReadback ? 'stale readback' : value, bounds: { x: 0, y: 0, width: 10, height: 10 }, actions: [] }]
           : []
       },
       async setElementValue(windowId, role, label, next) {
@@ -207,6 +209,29 @@ for (const platform of ['darwin', 'win32']) {
       assert.equal(result.receipt.status, 'committed')
       assert.equal(value, 'certified value')
       assert.equal(legacyCalls, 0, 'certified semantic execution must bypass the focus-enforcing handler')
+
+      runtime.leases.release(lease.leaseId)
+      suppressReadback = true
+      const failedLease = await runtime.leases.acquire({
+        sessionId: 'semantic-session', principalId: 'owner', kind: 'cooperative',
+        executionMode: 'background', ttlMs: 10_000, actionBudget: 1,
+        boundary: { appIds: [target.appId], windowIds: [target.windowId] },
+      })
+      await assert.rejects(runtime.execute({
+        sessionId: 'semantic-session', actionId: `semantic-false-success-${platform}`, principalId: 'owner',
+        tool: 'set_value', operation: target.operation,
+        certificationId: capability.certification.certificationId,
+        args: buildSemanticValueAction(target, 'unverified value'), mode: 'background',
+        leaseId: failedLease.leaseId,
+        target: {
+          platform, appId: target.appId, windowId: target.windowId,
+          observationId: 'semantic-observation-2', confidence: 1,
+          capturedAt: new Date().toISOString(),
+        },
+      }), error => error instanceof RuntimeError && error.code === 'indeterminate')
+      assert.equal((await runtime.receipts.get(
+        'semantic-session', `semantic-false-success-${platform}`,
+      )).status, 'indeterminate')
     } finally { runtime.dispose() }
 
     assert.throws(() => new SemanticValueAdapter(host, { ...target, label: 'Password' }), /sensitive/)

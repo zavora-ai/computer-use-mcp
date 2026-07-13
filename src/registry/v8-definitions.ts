@@ -2,7 +2,12 @@ import { z } from 'zod'
 import { AUDIT_EXPORT_SCHEMA_DIGEST, AUDIT_EXPORT_SCHEMA_URI } from '../session/event-schema.js'
 import { errJson, type ToolResult } from '../result.js'
 import type { RuntimeCoordinator } from '../runtime/coordinator.js'
-import { RuntimeError, type ExecutionMode, type TargetEvidence } from '../runtime/types.js'
+import {
+  RuntimeError,
+  type ActionPostcondition,
+  type ExecutionMode,
+  type TargetEvidence,
+} from '../runtime/types.js'
 import { TOOL_CATALOG, type ToolMeta } from '../tool-catalog.js'
 import type { ToolRegistry } from './registry.js'
 import { configurationForOnboardingProfile, type OnboardingManager } from '../onboarding/manager.js'
@@ -65,6 +70,30 @@ function fromWireTarget(value: unknown): TargetEvidence | undefined {
   }
 }
 
+function fromWirePostcondition(value: unknown): ActionPostcondition | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const item = value as Record<string, unknown>
+  const kind = String(item.kind)
+  if (kind === 'ui_element') return {
+    kind,
+    ...(typeof item.role === 'string' ? { role: item.role } : {}),
+    ...(typeof item.label === 'string' ? { label: item.label } : {}),
+    exists: item.exists === true,
+    ...(typeof item.value_digest === 'string' ? { valueDigest: item.value_digest } : {}),
+  }
+  if (kind === 'filesystem') return {
+    kind, path: String(item.path), exists: item.exists === true,
+    ...(typeof item.content_digest === 'string' ? { contentDigest: item.content_digest } : {}),
+  }
+  if (kind === 'registry') return {
+    kind, path: String(item.path), name: String(item.name), exists: item.exists === true,
+    ...(typeof item.value_digest === 'string' ? { valueDigest: item.value_digest } : {}),
+  }
+  if (kind === 'process') return { kind, pid: Number(item.pid), running: false }
+  if (kind === 'window') return { kind, windowId: Number(item.window_id), exists: item.exists === true }
+  return undefined
+}
+
 function publicError(error: unknown): ToolResult {
   if (error instanceof RuntimeError) {
     return errJson({ error: error.code, message: error.message, details: error.details })
@@ -86,6 +115,7 @@ function requestFromArgs(args: Record<string, unknown>, principalId: string) {
     args: (args.arguments && typeof args.arguments === 'object' ? args.arguments : {}) as Record<string, unknown>,
     mode: args.mode as ExecutionMode,
     ...(args.target ? { target: fromWireTarget(args.target) } : {}),
+    ...(args.postcondition ? { postcondition: fromWirePostcondition(args.postcondition) } : {}),
     ...(Array.isArray(args.data_labels) ? { dataLabels: args.data_labels as never[] } : {}),
     ...(args.provenance && typeof args.provenance === 'object' ? {
       provenance: {
@@ -117,6 +147,22 @@ const actionSchema = {
   arguments: z.record(z.string(), z.unknown()),
   mode: modeSchema,
   target: targetSchema,
+  postcondition: z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('ui_element'), role: z.string().optional(), label: z.string().optional(),
+      exists: z.boolean(), value_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+    }).refine(value => Boolean(value.role || value.label), { message: 'role or label is required' }),
+    z.object({
+      kind: z.literal('filesystem'), path: z.string(), exists: z.boolean(),
+      content_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+    }),
+    z.object({
+      kind: z.literal('registry'), path: z.string(), name: z.string(), exists: z.boolean(),
+      value_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+    }),
+    z.object({ kind: z.literal('process'), pid: z.number().int().positive(), running: z.literal(false) }),
+    z.object({ kind: z.literal('window'), window_id: z.number().int().nonnegative(), exists: z.boolean() }),
+  ]).optional().describe('Digest-only expected state, bound into the action/approval digest and independently read back after execution'),
   data_labels: z.array(z.enum(['public', 'private', 'credential', 'payment', 'health', 'unknown'])).optional(),
   provenance: z.object({
     untrusted_instruction: z.boolean(),

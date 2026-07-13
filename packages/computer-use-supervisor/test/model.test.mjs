@@ -16,13 +16,19 @@ test('view model allowlists approval metadata and never copies secret payload fi
       sequence: 2, actionId: 'a', type: 'action.approval_required',
       payload: {
         tool: 'set_value', actionClass: 'secret_access', mode: 'foreground',
-        targetAppId: 'app.safe', password: 'must-not-render', value: 'must-not-render',
+        targetAppId: 'app.safe', postconditionKind: 'ui_element',
+        postconditionExpectedState: 'exists', postconditionExpectedDigest: `sha256:${'a'.repeat(64)}`,
+        postconditionLabel: 'private account name', postconditionPath: '/private/path',
+        password: 'must-not-render', value: 'must-not-render',
       },
     },
   })
   assert.equal(model.pendingApproval.actionId, 'a')
   assert.equal(model.pendingApproval.password, undefined)
-  assert.doesNotMatch(JSON.stringify(model), /must-not-render/)
+  assert.equal(model.pendingApproval.postconditionKind, 'ui_element')
+  assert.equal(model.pendingApproval.postconditionExpectedState, 'exists')
+  assert.match(model.pendingApproval.postconditionExpectedDigest, /^sha256:/)
+  assert.doesNotMatch(JSON.stringify(model), /must-not-render|private account|private\/path/)
 })
 
 test('main-to-renderer sanitizer strips grants, secrets, and unrecognized event payloads', () => {

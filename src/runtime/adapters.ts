@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, readdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { ToolResult } from '../result.js'
+import type { VerificationResult } from '../control/transaction.js'
 import { CapabilityRegistry } from './capabilities.js'
 import type { ExecutionBackend, ExecutionCapability, InterferenceLevel } from './types.js'
 
@@ -63,6 +64,14 @@ export interface AppCapabilityAdapter {
     args: Readonly<Record<string, unknown>>,
     signal?: AbortSignal,
   ): Promise<ToolResult>
+  /** Fresh, value-free readback of the effect produced by `execute`. */
+  verifyEffect?(
+    appId: string,
+    operation: string,
+    args: Readonly<Record<string, unknown>>,
+    result: ToolResult,
+    signal?: AbortSignal,
+  ): Promise<VerificationResult>
   probe(appId: string, appVersion: string, operation: string): Promise<CapabilityProbeResult>
 }
 
@@ -380,6 +389,11 @@ export class CapabilityCertificationService {
       ...(adapter.execute ? {
         execute: (args, signal) => adapter.execute!(request.appId, request.operation, args, signal),
       } : {}),
+      ...(adapter.verifyEffect ? {
+        verifyEffect: (args, result, signal) => adapter.verifyEffect!(
+          request.appId, request.operation, args, result, signal,
+        ),
+      } : {}),
     })
     return structuredClone(capability)
   }
@@ -428,6 +442,11 @@ export class CapabilityCertificationService {
         getAppVersion: () => adapter.getAppVersion(trace.app.id),
         ...(adapter.execute ? {
           execute: (args, signal) => adapter.execute!(trace.app.id, trace.operation, args, signal),
+        } : {}),
+        ...(adapter.verifyEffect ? {
+          verifyEffect: (args, result, signal) => adapter.verifyEffect!(
+            trace.app.id, trace.operation, args, result, signal,
+          ),
         } : {}),
       })
       restored.push(trace.certificationId)

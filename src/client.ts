@@ -6,7 +6,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { ActionProvenance, DataLabel, ExecutionMode, TargetEvidence } from './runtime/types.js'
+import type {
+  ActionPostcondition,
+  ActionProvenance,
+  DataLabel,
+  ExecutionMode,
+  TargetEvidence,
+} from './runtime/types.js'
 
 export interface ToolResult {
   content: Array<
@@ -72,6 +78,7 @@ export interface V8ActionRequest {
   arguments: Record<string, unknown>
   mode: ExecutionMode
   target?: TargetEvidence
+  postcondition?: ActionPostcondition
   dataLabels?: DataLabel[]
   provenance?: ActionProvenance
   expiresInMs?: number
@@ -252,6 +259,32 @@ function v8ActionArgs(request: V8ActionRequest): Record<string, unknown> {
       confidence: target.confidence,
       captured_at: target.capturedAt,
     } } : {}),
+    ...(request.postcondition ? { postcondition: request.postcondition.kind === 'ui_element'
+      ? {
+          kind: request.postcondition.kind,
+          ...(request.postcondition.role ? { role: request.postcondition.role } : {}),
+          ...(request.postcondition.label ? { label: request.postcondition.label } : {}),
+          exists: request.postcondition.exists,
+          ...(request.postcondition.valueDigest ? { value_digest: request.postcondition.valueDigest } : {}),
+        }
+      : request.postcondition.kind === 'filesystem'
+        ? {
+            kind: request.postcondition.kind, path: request.postcondition.path,
+            exists: request.postcondition.exists,
+            ...(request.postcondition.contentDigest ? { content_digest: request.postcondition.contentDigest } : {}),
+          }
+        : request.postcondition.kind === 'registry'
+          ? {
+              kind: request.postcondition.kind, path: request.postcondition.path,
+              name: request.postcondition.name, exists: request.postcondition.exists,
+              ...(request.postcondition.valueDigest ? { value_digest: request.postcondition.valueDigest } : {}),
+            }
+          : request.postcondition.kind === 'process'
+            ? { kind: request.postcondition.kind, pid: request.postcondition.pid, running: request.postcondition.running }
+            : {
+                kind: request.postcondition.kind, window_id: request.postcondition.windowId,
+                exists: request.postcondition.exists,
+              } } : {}),
     ...(request.dataLabels ? { data_labels: request.dataLabels } : {}),
     ...(request.provenance ? { provenance: {
       untrusted_instruction: request.provenance.untrustedInstruction,

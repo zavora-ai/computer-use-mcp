@@ -174,6 +174,37 @@ test('preview reports foreground requirement instead of silently escalating', as
   }
 })
 
+test('typed client maps digest-only postconditions into the action envelope and approval digest', async () => {
+  const session = { async dispatch() { throw new Error('preview must not dispatch') } }
+  const client = await connectInProcess(createComputerUseServer({
+    session, enableV8: true, principalId: 'host-principal',
+  }))
+  try {
+    const sessionId = (await client.startSession()).structuredContent.session.sessionId
+    const target = {
+      platform: process.platform, appId: 'app.safe', windowId: 7,
+      observationId: 'wire-postcondition', confidence: 1, capturedAt: new Date().toISOString(),
+    }
+    const first = await client.previewAction({
+      sessionId, actionId: 'postcondition-wire', tool: 'left_click',
+      arguments: { coordinate: [10, 20] }, mode: 'foreground', target,
+      postcondition: { kind: 'ui_element', role: 'AXStaticText', label: 'Saved', exists: true },
+    })
+    assert.deepEqual(first.structuredContent.envelope.postcondition, {
+      kind: 'ui_element', role: 'AXStaticText', label: 'Saved', exists: true,
+    })
+    const changed = await client.previewAction({
+      sessionId, actionId: 'postcondition-wire-2', tool: 'left_click',
+      arguments: { coordinate: [10, 20] }, mode: 'foreground', target,
+      postcondition: { kind: 'ui_element', role: 'AXStaticText', label: 'Failed', exists: true },
+    })
+    assert.notEqual(
+      first.structuredContent.envelope.argsDigest,
+      changed.structuredContent.envelope.argsDigest,
+    )
+  } finally { await client.close() }
+})
+
 test('approve_action grants only the exact pending v8 action through the MCP boundary', async () => {
   const session = { async dispatch() { return { content: [{ type: 'text', text: 'ok' }] } } }
   const runtime = new RuntimeCoordinator({

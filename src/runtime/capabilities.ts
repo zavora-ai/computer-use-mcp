@@ -1,5 +1,6 @@
 import type { ToolMeta } from '../tool-catalog.js'
 import type { ToolResult } from '../result.js'
+import type { VerificationResult } from '../control/transaction.js'
 import type {
   ExecutionBackend,
   ExecutionCapability,
@@ -69,6 +70,12 @@ export interface CapabilityCertificationBinding {
   getAppVersion(): Promise<string | undefined>
   /** Optional direct semantic executor that bypasses focus-enforcing legacy handlers. */
   execute?(args: Readonly<Record<string, unknown>>, signal?: AbortSignal): Promise<ToolResult>
+  /** Independent per-action readback supplied by the trusted certified adapter. */
+  verifyEffect?(
+    args: Readonly<Record<string, unknown>>,
+    result: ToolResult,
+    signal?: AbortSignal,
+  ): Promise<VerificationResult>
 }
 
 export interface CertifiedCapabilityResolution {

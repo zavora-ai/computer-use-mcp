@@ -971,6 +971,47 @@ does not enter the legacy `set_value` handler that acquires foreground focus.
 The probe writes a random marker, reads it back, restores the original value,
 reads the rollback back, and rejects password/credential-like targets.
 
+### Effect-level postconditions
+
+The v8 facade does not treat a low-level handler's success message as proof that
+the requested state changed. `set_value`, `fill_form`, filesystem write/copy/
+move/delete, named registry set/delete, and PID-based process kill receive
+automatic independent readback. An unsatisfied or unavailable required check
+produces an indeterminate receipt, revokes the lease, and cannot be retried as a
+new mutation under the same action ID.
+
+For clicks and other targeted mutations, callers can provide an explicit typed
+`postcondition`. Expected values and file contents are represented by SHA-256
+digests, never copied into approval or audit events. The postcondition is bound
+to the action, resource, approval, and receipt digest:
+
+```json
+{
+  "session_id": "session-123",
+  "action_id": "save-action-1",
+  "tool": "click_element",
+  "arguments": {
+    "window_id": 42,
+    "role": "AXButton",
+    "label": "Save"
+  },
+  "mode": "foreground",
+  "postcondition": {
+    "kind": "ui_element",
+    "role": "AXStaticText",
+    "label": "Saved",
+    "exists": true
+  }
+}
+```
+
+The public contract also supports filesystem, registry, non-running process,
+and window existence checks. Explicit postconditions must refer to the same
+target or resource as the action; unrelated checks are rejected before policy
+approval. Copy currently proves destination presence, while move additionally
+proves source disappearance; use a `content_digest` when byte equality is a
+required completion condition.
+
 Run `npm run conformance:v8` to execute the public policy, multi-agent, and
 supervisor suites and combine their source/output digests with live capability
 traces. The report carries an integrity digest and explicit evidence levels.

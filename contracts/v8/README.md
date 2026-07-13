@@ -7,6 +7,7 @@ Rules:
 - Wire payloads use camelCase; MCP tool arguments use the snake_case schemas advertised by the server.
 - IDs are opaque strings. A retry reuses `sessionId`, `actionId`, and `actionDigest`.
 - `indeterminate` is terminal for automatic execution and routes to fresh observation plus review.
+- `action-postcondition.schema.json` defines optional digest-only expected state. It is included in `actionDigest`, must bind to the action target/resource, and is independently read back after mutation. Supported UI value/form, filesystem, registry, and PID-kill operations derive strict postconditions automatically even when the caller omits one.
 - Image blocks remain image blocks. Adapters must not replace bytes with text placeholders.
 - `principalId` comes from authenticated host context, never model-produced arguments.
 - Session deletion is terminal-state-only and principal-bound. Retention rewrites are represented by an opaque marker, never by retained private payload bytes.
