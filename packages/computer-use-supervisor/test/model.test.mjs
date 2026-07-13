@@ -18,7 +18,10 @@ test('view model allowlists approval metadata and never copies secret payload fi
         tool: 'set_value', actionClass: 'secret_access', mode: 'foreground',
         targetAppId: 'app.safe', postconditionKind: 'ui_element',
         postconditionExpectedState: 'exists', postconditionExpectedDigest: `sha256:${'a'.repeat(64)}`,
+        sensitivityAssessment: 'sensitive', sensitivitySource: 'accessibility',
+        sensitivitySignals: ['uia_is_password', 'private password signal'], sensitivityFieldsChecked: 1,
         postconditionLabel: 'private account name', postconditionPath: '/private/path',
+        sensitivityLabel: 'private password label', sensitivityValue: 'private password value',
         password: 'must-not-render', value: 'must-not-render',
       },
     },
@@ -28,7 +31,10 @@ test('view model allowlists approval metadata and never copies secret payload fi
   assert.equal(model.pendingApproval.postconditionKind, 'ui_element')
   assert.equal(model.pendingApproval.postconditionExpectedState, 'exists')
   assert.match(model.pendingApproval.postconditionExpectedDigest, /^sha256:/)
-  assert.doesNotMatch(JSON.stringify(model), /must-not-render|private account|private\/path/)
+  assert.equal(model.pendingApproval.sensitivityAssessment, 'sensitive')
+  assert.deepEqual(model.pendingApproval.sensitivitySignals, ['uia_is_password'])
+  assert.equal(model.pendingApproval.sensitivityFieldsChecked, 1)
+  assert.doesNotMatch(JSON.stringify(model), /must-not-render|private account|private\/path|private password/)
 })
 
 test('main-to-renderer sanitizer strips grants, secrets, and unrecognized event payloads', () => {

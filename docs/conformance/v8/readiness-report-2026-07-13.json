@@ -2,16 +2,15 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-release-readiness",
   "runtimeVersion": "7.0.0",
-  "evaluatedAt": "2026-07-13T15:17:18.625Z",
+  "evaluatedAt": "2026-07-13T15:49:45.465Z",
   "requestedStage": "stable",
   "decision": "no_go",
   "highestReadyStage": "none",
   "inputs": {
-    "conformanceDigest": "sha256:3137a875c38453fe9c98b37a87bbbd76940533003e0c4fa1c714178e9e7ec076",
+    "conformanceDigest": "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f",
     "reliabilityDigest": "sha256:e7f5532b6e9e00a42514690e0b37c43be3b705fa01dc285dda1effd509ba0210",
     "signedEvidenceDigests": [],
-    "artifactManifestDigest": "sha256:3e28a4e773f0dd119b0af1493cfb90fef5f6e5fe044d4aecb3a1ad4b448ecd3b",
-    "adkEvaluationDigest": "sha256:0751241e6c55da36df58a7a43e74ce2d2bbf4f318e92501e5a495c2a17a56eac"
+    "adkEvaluationDigest": "sha256:2d3ef7ae0cbca049bb90c22267b32f04063da94af3c71a29a9f89f708ed8a67d"
   },
   "gates": [
     {
@@ -25,7 +24,7 @@
       "evidenceLevel": "deterministic",
       "reasons": [],
       "evidenceDigests": [
-        "sha256:3137a875c38453fe9c98b37a87bbbd76940533003e0c4fa1c714178e9e7ec076"
+        "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
       ]
     },
     {
@@ -43,7 +42,7 @@
         "win32: trusted signature over conformance digest required"
       ],
       "evidenceDigests": [
-        "sha256:3137a875c38453fe9c98b37a87bbbd76940533003e0c4fa1c714178e9e7ec076"
+        "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
       ]
     },
     {
@@ -59,7 +58,7 @@
         "trusted cross-platform CI signature required"
       ],
       "evidenceDigests": [
-        "sha256:3137a875c38453fe9c98b37a87bbbd76940533003e0c4fa1c714178e9e7ec076"
+        "sha256:196e113c5bee402db9bf87d1462348570e88fc5fe4985fbab203cd5096ea5a8f"
       ]
     },
     {
@@ -75,7 +74,7 @@
         "trusted signature over the ADK evaluation receipt is required"
       ],
       "evidenceDigests": [
-        "sha256:0751241e6c55da36df58a7a43e74ce2d2bbf4f318e92501e5a495c2a17a56eac"
+        "sha256:2d3ef7ae0cbca049bb90c22267b32f04063da94af3c71a29a9f89f708ed8a67d"
       ]
     },
     {
@@ -139,17 +138,16 @@
       "requiredFor": [
         "stable"
       ],
-      "status": "fail",
-      "evidenceLevel": "integration",
+      "status": "missing",
+      "evidenceLevel": "none",
       "reasons": [
+        "darwin-arm64: artifact missing",
         "darwin-x64: artifact missing",
         "linux-arm64: artifact missing",
         "linux-x64: artifact missing",
         "win32-x64: artifact missing"
       ],
-      "evidenceDigests": [
-        "sha256:3e28a4e773f0dd119b0af1493cfb90fef5f6e5fe044d4aecb3a1ad4b448ecd3b"
-      ]
+      "evidenceDigests": []
     },
     {
       "id": "release.platform_signing",
@@ -177,5 +175,5 @@
       "evidenceDigests": []
     }
   ],
-  "reportDigest": "sha256:ffba8f46dae4ee32ebb9e2ead6e17d6f2192063ff94a571763d147da79146ca4"
+  "reportDigest": "sha256:2618e2e864821da22409d6d4f1525cd5be392a168482c4cbc009efcd7819fc05"
 }

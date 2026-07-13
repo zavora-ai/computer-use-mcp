@@ -30,6 +30,7 @@ import { FileReceiptStore } from './control/receipts.js'
 import { SessionTransactionHooks } from './control/session-transaction.js'
 import { createDefaultV8PolicyFromEnvironment } from './policy/engine.js'
 import { SessionTargetEvidenceValidator } from './targeting/session-validator.js'
+import { SessionTargetSensitivityResolver } from './targeting/sensitivity.js'
 import { FileSessionStore } from './session/store.js'
 import { FileEventJournal, SupervisorEventBus } from './session/events.js'
 import { SessionLifecycle } from './session/lifecycle.js'
@@ -265,6 +266,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
         : undefined
     )
     const targetValidator = new SessionTargetEvidenceValidator(session)
+    const sensitivityResolver = new SessionTargetSensitivityResolver(session)
     const capabilityRegistry = opts.runtimeOptions?.capabilities ?? new CapabilityRegistry()
     const eventJournalMaxBytes = optionalBoundedInteger(
       'COMPUTER_USE_EVENT_JOURNAL_MAX_BYTES',
@@ -324,6 +326,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
         : {}),
       transactionHooks: opts.runtimeOptions?.transactionHooks ?? new SessionTransactionHooks(session),
       policy: opts.runtimeOptions?.policy ?? createDefaultV8PolicyFromEnvironment(),
+      resolveTargetSensitivity: opts.runtimeOptions?.resolveTargetSensitivity
+        ?? (request => sensitivityResolver.resolve(request)),
       resolveToolMeta: opts.runtimeOptions?.resolveToolMeta ?? (tool => registry.getMeta(tool)),
       validateTarget: opts.runtimeOptions?.validateTarget ?? (target =>
         browserHost?.owns(target)

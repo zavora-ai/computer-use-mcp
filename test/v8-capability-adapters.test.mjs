@@ -186,6 +186,10 @@ for (const platform of ['darwin', 'win32']) {
       capabilities: registry,
       policy: async () => ({ decision: 'allow', policyDigest: 'allow', reasons: [] }),
       validateTarget: async () => true,
+      resolveTargetSensitivity: async () => ({
+        assessment: 'non_sensitive', source: 'accessibility', signals: [], fieldsChecked: 1,
+        observedAt: new Date().toISOString(),
+      }),
       execute: async () => { legacyCalls++; return { content: [] } },
     })
     try {

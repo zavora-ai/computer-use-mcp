@@ -4,6 +4,7 @@
   "fixtures": [
     "action-preview.json",
     "action-postcondition.schema.json",
+    "target-sensitivity.schema.json",
     "execution-receipt.json",
     "session-event.json",
     "session-follow-up.json",
@@ -44,6 +45,7 @@
     "indeterminate",
     "execution_failed",
     "postcondition_unavailable",
+    "sensitivity_unavailable",
     "session_not_terminal"
   ]
 }

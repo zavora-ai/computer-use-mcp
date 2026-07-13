@@ -115,6 +115,10 @@ export interface AXElement {
   role: string
   label: string | null
   value: string | null
+  /** Trusted native classification; protected values are always returned as null. */
+  sensitive: boolean
+  /** Disclosure-safe native reasons such as secure_role or uia_is_password. */
+  sensitivitySignals: string[]
   bounds: AXBounds
   actions: string[]
   /** Present on full tree nodes; omitted by flat find_element results. */

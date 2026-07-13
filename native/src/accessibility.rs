@@ -15,6 +15,8 @@ mod platform {
             "role": "AXWindow",
             "label": null,
             "value": null,
+            "sensitive": false,
+            "sensitivitySignals": [],
             "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
             "actions": [],
             "children": [],
@@ -167,10 +169,39 @@ mod platform {
                 .map(|ct| control_type_to_role(ct))
                 .unwrap_or("AXUnknown");
             let label = elem.CurrentName().ok().map(|s| s.to_string());
-            let value = elem
-                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                .ok()
-                .and_then(|p| p.CurrentValue().ok().map(|s| s.to_string()));
+            let label_sensitive = label
+                .as_deref()
+                .map(|value| {
+                    let lower = value.to_ascii_lowercase();
+                    lower.contains("password")
+                        || lower.contains("passcode")
+                        || lower.contains("one-time")
+                        || lower.contains("one time")
+                        || lower.contains("otp")
+                        || lower.contains("pin")
+                        || lower.contains("cvv")
+                        || lower.contains("cvc")
+                })
+                .unwrap_or(false);
+            let uia_password = elem
+                .CurrentIsPassword()
+                .map(|value| value.as_bool())
+                .unwrap_or(false);
+            let sensitive = uia_password || label_sensitive;
+            let mut sensitivity_signals: Vec<&str> = Vec::new();
+            if uia_password {
+                sensitivity_signals.push("uia_is_password");
+            }
+            if label_sensitive {
+                sensitivity_signals.push("sensitive_label");
+            }
+            let value = if sensitive {
+                None
+            } else {
+                elem.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .ok()
+                    .and_then(|p| p.CurrentValue().ok().map(|s| s.to_string()))
+            };
             let rect = elem.CurrentBoundingRectangle().unwrap_or_default();
             let mut actions = Vec::new();
             if elem
@@ -194,6 +225,7 @@ mod platform {
             }
             serde_json::json!({
                 "role": role, "label": label, "value": value,
+                "sensitive": sensitive, "sensitivitySignals": sensitivity_signals,
                 "bounds": { "x": rect.left, "y": rect.top,
                     "width": rect.right - rect.left, "height": rect.bottom - rect.top },
                 "actions": actions,

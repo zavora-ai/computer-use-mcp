@@ -62,6 +62,27 @@ export interface TargetEvidence {
   capturedAt: string
 }
 
+export type TargetSensitivitySignal =
+  | 'secure_role'
+  | 'secure_subrole'
+  | 'protected_content'
+  | 'uia_is_password'
+  | 'sensitive_label'
+  | 'ambiguous_match'
+  | 'element_not_found'
+  | 'inspection_error'
+  | 'invalid_field'
+  | 'native_signal_unavailable'
+
+/** Trusted, value-free accessibility assessment bound to semantic mutations. */
+export interface TargetSensitivityEvidence {
+  assessment: 'sensitive' | 'non_sensitive' | 'unknown'
+  source: 'accessibility' | 'unavailable'
+  signals: TargetSensitivitySignal[]
+  fieldsChecked: number
+  observedAt: string
+}
+
 export interface ActionResourceContext {
   targetAppId?: string
   targetWindowId?: string | number
@@ -125,6 +146,7 @@ export interface ActionEnvelope {
   actionClass: ActionClass
   requestedMode: ExecutionMode
   target?: TargetEvidence
+  targetSensitivity?: TargetSensitivityEvidence
   resource?: ActionResourceContext
   provenance?: ActionProvenance
   dataLabels: DataLabel[]
@@ -141,6 +163,7 @@ export type RuntimeErrorCode =
   | 'input_attribution_unavailable'
   | 'shadow_mutation'
   | 'stale_target'
+  | 'sensitivity_unavailable'
   | 'lease_conflict'
   | 'lease_expired'
   | 'lease_revoked'

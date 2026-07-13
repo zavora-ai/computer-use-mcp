@@ -119,7 +119,8 @@ export function adkEvaluationReceiptDigest(receipt: AdkEvaluationReceipt): strin
 export function verifyAdkEvaluationReceipt(receipt: AdkEvaluationReceipt): boolean {
   const required = ['graph.parallel_one_executor', 'graph.approval_digest_binding', 'graph.policy_digest_binding',
     'graph.pre_effect_crash', 'graph.post_commit_crash', 'auth.verified_identity',
-    'eval.no_duplicate_mutation', 'mcp.multimodal_image', 'wire.postcondition_roundtrip']
+    'eval.no_duplicate_mutation', 'mcp.multimodal_image', 'wire.postcondition_roundtrip',
+    'wire.sensitivity_roundtrip']
   return receipt.schemaVersion === 1 && receipt.protocol === 'adk-rust-computer-use-v8-evaluation'
     && receipt.subjectVersion.length > 0 && receipt.commands.length >= 2
     && required.every(value => receipt.assertions.includes(value))

@@ -971,6 +971,19 @@ does not enter the legacy `set_value` handler that acquires foreground focus.
 The probe writes a random marker, reads it back, restores the original value,
 reads the rollback back, and rejects password/credential-like targets.
 
+The v8 semantic `set_value` and `fill_form` paths also inspect the exact AX/UIA
+control before preview. macOS secure roles/protected-content attributes and
+Windows UIA `IsPassword`, plus a bounded role/label fallback, produce only
+allowlisted value-free sensitivity signals. Native accessibility results null
+the value of a sensitive control, and the TypeScript boundary recursively
+redacts it again. Missing, ambiguous, or stale sensitivity evidence fails
+closed; a sensitive target is reclassified as `secret_access` and requires the
+corresponding policy decision. The assessment is revalidated immediately
+before the effect and is included in the action digest without retaining the
+field label or value. Generic physical `type` into the currently focused field
+does not yet have equivalent field attribution, so it remains governed by the
+existing foreground/target/approval controls rather than this semantic proof.
+
 ### Effect-level postconditions
 
 The v8 facade does not treat a low-level handler's success message as proof that

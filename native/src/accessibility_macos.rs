@@ -532,6 +532,44 @@ fn node_value_of(elem: AXUIElementRef) -> Option<String> {
     }
 }
 
+/// Reduce protected-field state to disclosure-safe facts before any value is read.
+fn sensitivity_of(
+    elem: AXUIElementRef,
+    role: &str,
+    label: Option<&str>,
+) -> (bool, Vec<&'static str>) {
+    let mut signals = Vec::new();
+    let role_lower = role.to_ascii_lowercase();
+    if role_lower.contains("secure") || role_lower.contains("password") {
+        signals.push("secure_role");
+    }
+    let subrole = ax_copy_string(elem, "AXSubrole").unwrap_or_default();
+    let subrole_lower = subrole.to_ascii_lowercase();
+    if subrole_lower.contains("secure") || subrole_lower.contains("password") {
+        signals.push("secure_subrole");
+    }
+    if ax_copy_bool(elem, "AXProtectedContent") == Some(true) {
+        signals.push("protected_content");
+    }
+    if label
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            lower.contains("password")
+                || lower.contains("passcode")
+                || lower.contains("one-time")
+                || lower.contains("one time")
+                || lower.contains("otp")
+                || lower.contains("pin")
+                || lower.contains("cvv")
+                || lower.contains("cvc")
+        })
+        .unwrap_or(false)
+    {
+        signals.push("sensitive_label");
+    }
+    (!signals.is_empty(), signals)
+}
+
 fn build_node(
     elem: AXUIElementRef,
     depth: i32,
@@ -546,7 +584,8 @@ fn build_node(
 
     let role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
     let label = ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
-    let value = node_value_of(elem);
+    let (sensitive, sensitivity_signals) = sensitivity_of(elem, &role, label.as_deref());
+    let value = if sensitive { None } else { node_value_of(elem) };
 
     let (x, y) = ax_copy_point(elem).unwrap_or((0.0, 0.0));
     let (w, h) = ax_copy_size(elem).unwrap_or((0.0, 0.0));
@@ -593,6 +632,8 @@ fn build_node(
         "role": role,
         "label": label,
         "value": value,
+        "sensitive": sensitive,
+        "sensitivitySignals": sensitivity_signals,
         "bounds": { "x": x, "y": y, "width": w, "height": h },
         "actions": actions,
         "children": children_json,
@@ -645,7 +686,9 @@ fn find_visit(
     let actual_role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
     let actual_label =
         ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
-    let actual_value = node_value_of(elem);
+    let (sensitive, sensitivity_signals) =
+        sensitivity_of(elem, &actual_role, actual_label.as_deref());
+    let actual_value = if sensitive { None } else { node_value_of(elem) };
 
     let role_ok = role
         .map(|r| r.eq_ignore_ascii_case(&actual_role))
@@ -665,6 +708,8 @@ fn find_visit(
             "role": actual_role,
             "label": actual_label,
             "value": actual_value,
+            "sensitive": sensitive,
+            "sensitivitySignals": sensitivity_signals,
             "bounds": { "x": x, "y": y, "width": w, "height": h },
             "actions": actions,
             "path": path.clone(),
@@ -790,7 +835,8 @@ pub fn get_focused_element() -> napi::Result<serde_json::Value> {
     let elem = val as AXUIElementRef;
     let role = ax_copy_string(elem, "AXRole").unwrap_or_else(|| "AXUnknown".into());
     let label = ax_copy_string(elem, "AXTitle").or_else(|| ax_copy_string(elem, "AXDescription"));
-    let value = node_value_of(elem);
+    let (sensitive, sensitivity_signals) = sensitivity_of(elem, &role, label.as_deref());
+    let value = if sensitive { None } else { node_value_of(elem) };
     let (x, y) = ax_copy_point(elem).unwrap_or((0.0, 0.0));
     let (w, h) = ax_copy_size(elem).unwrap_or((0.0, 0.0));
     let actions = ax_copy_actions(elem);
@@ -801,6 +847,8 @@ pub fn get_focused_element() -> napi::Result<serde_json::Value> {
         "role": role,
         "label": label,
         "value": value,
+        "sensitive": sensitive,
+        "sensitivitySignals": sensitivity_signals,
         "bounds": { "x": x, "y": y, "width": w, "height": h },
         "actions": actions,
     }))

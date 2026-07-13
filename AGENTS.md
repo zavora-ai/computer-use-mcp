@@ -277,6 +277,12 @@ await client.runScript('powershell', 'Get-ChildItem C:\\Users\\Me\\Desktop | Sor
 
 ### When `find_element` / `click_element` fails
 
+Accessibility observations mark sensitive controls with value-free
+`sensitive`/`sensitivitySignals` facts and return `value: null`; never infer or
+request the hidden value. In the v8 semantic path, `set_value` and `fill_form`
+require conclusive accessibility sensitivity evidence and fail closed when it
+is missing, ambiguous, or changes before execution.
+
 The error payload includes ranked-by-similarity label suggestions. Use them instead of retrying blindly:
 
 ```typescript

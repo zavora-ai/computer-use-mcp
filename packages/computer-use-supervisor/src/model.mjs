@@ -5,6 +5,13 @@ const SAFE_APPROVAL_FIELDS = [
 const SAFE_POSTCONDITION_FIELDS = [
   'postconditionKind', 'postconditionExpectedState', 'postconditionExpectedDigest',
 ]
+const SENSITIVITY_ASSESSMENTS = new Set(['sensitive', 'non_sensitive', 'unknown'])
+const SENSITIVITY_SOURCES = new Set(['accessibility', 'unavailable'])
+const SENSITIVITY_SIGNALS = new Set([
+  'secure_role', 'secure_subrole', 'protected_content', 'uia_is_password', 'sensitive_label',
+  'ambiguous_match', 'element_not_found', 'inspection_error', 'invalid_field',
+  'native_signal_unavailable',
+])
 
 const SAFE_EVENT_FIELDS = ['sequence', 'type', 'actionId']
 const SAFE_EVENT_PAYLOAD_FIELDS = [
@@ -14,6 +21,23 @@ const SAFE_EVENT_PAYLOAD_FIELDS = [
   'verificationRequired', 'verified', 'method', 'checks', 'postconditionKind',
   'postconditionExpectedState', 'postconditionExpectedDigest',
 ]
+
+function copySafeSensitivity(source, target) {
+  if (SENSITIVITY_ASSESSMENTS.has(source?.sensitivityAssessment)) {
+    target.sensitivityAssessment = source.sensitivityAssessment
+  }
+  if (SENSITIVITY_SOURCES.has(source?.sensitivitySource)) {
+    target.sensitivitySource = source.sensitivitySource
+  }
+  if (Array.isArray(source?.sensitivitySignals)) {
+    target.sensitivitySignals = [...new Set(source.sensitivitySignals
+      .filter(signal => SENSITIVITY_SIGNALS.has(signal)))].slice(0, 10)
+  }
+  if (Number.isSafeInteger(source?.sensitivityFieldsChecked)
+      && source.sensitivityFieldsChecked >= 0 && source.sensitivityFieldsChecked <= 100) {
+    target.sensitivityFieldsChecked = source.sensitivityFieldsChecked
+  }
+}
 
 const FRAME_PHASES = new Set(['before', 'after', 'observation'])
 const FRAME_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
@@ -87,6 +111,7 @@ export function sanitizeSupervisorMessage(message) {
     for (const field of SAFE_EVENT_PAYLOAD_FIELDS) {
       if (message.event.payload?.[field] !== undefined) payload[field] = message.event.payload[field]
     }
+    copySafeSensitivity(message.event.payload, payload)
     event.payload = payload
     return { type: 'event', event }
   }
@@ -167,6 +192,7 @@ export function reduceSupervisorMessage(model, message) {
     for (const field of SAFE_POSTCONDITION_FIELDS) {
       if (event.payload?.[field] !== undefined) safe[field] = event.payload[field]
     }
+    copySafeSensitivity(event.payload, safe)
     next.pendingApproval = safe
     next.state = 'waiting_for_user'
   }

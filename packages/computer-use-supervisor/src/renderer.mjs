@@ -22,6 +22,9 @@ function render() {
     byId('approval-title').textContent = approval.operation ?? approval.tool ?? 'Action'
     byId('approval-class').textContent = `${approval.actionClass ?? 'unknown'} · ${approval.mode ?? 'unknown'}`
     byId('approval-target').textContent = approval.targetAppId ?? 'Local desktop'
+    byId('approval-sensitivity').textContent = approval.sensitivityAssessment
+      ? `${approval.sensitivityAssessment} · ${approval.sensitivityFieldsChecked ?? 0} checked`
+      : 'not applicable'
     const expected = [approval.postconditionKind, approval.postconditionExpectedState]
       .filter(Boolean).join(' · ')
     byId('approval-expected-label').hidden = !expected

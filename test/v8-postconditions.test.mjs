@@ -12,6 +12,10 @@ import {
 } from '../dist/control/postconditions.js'
 
 const allow = async () => ({ decision: 'allow', policyDigest: 'postcondition-test', reasons: ['allow'] })
+const nonSensitive = async () => ({
+  assessment: 'non_sensitive', source: 'accessibility', signals: [], fieldsChecked: 1,
+  observedAt: new Date().toISOString(),
+})
 const target = () => ({
   platform: process.platform, appId: 'app.safe', windowId: 7,
   observationId: 'postcondition-observation', confidence: 1, capturedAt: new Date().toISOString(),
@@ -140,6 +144,7 @@ test('strict auto-verification makes a false-success UI mutation indeterminate a
   } }
   const runtime = new RuntimeCoordinator({
     policy: allow, validateTarget: async () => true,
+    resolveTargetSensitivity: nonSensitive,
     transactionHooks: new SessionTransactionHooks(session),
     execute: async () => {
       executeCalls++
@@ -168,7 +173,10 @@ test('strict auto-verification makes a false-success UI mutation indeterminate a
 })
 
 test('postconditions are action-digest bound, resource bound, and require a configured verifier', async () => {
-  const noVerifier = new RuntimeCoordinator({ policy: allow, validateTarget: async () => true, execute: async () => ({ content: [] }) })
+  const noVerifier = new RuntimeCoordinator({
+    policy: allow, validateTarget: async () => true, resolveTargetSensitivity: nonSensitive,
+    execute: async () => ({ content: [] }),
+  })
   const base = {
     sessionId: 's', principalId: 'p', actionId: 'bound', tool: 'set_value',
     args: { window_id: 7, role: 'AXTextField', label: 'Name', value: 'value' },
@@ -179,6 +187,7 @@ test('postconditions are action-digest bound, resource bound, and require a conf
 
   const runtime = new RuntimeCoordinator({
     policy: allow, validateTarget: async () => true,
+    resolveTargetSensitivity: nonSensitive,
     transactionHooks: {
       capture: async () => ({ capturedAt: new Date().toISOString() }),
       verify: async () => ({ verified: true, method: 'trusted-test' }),
@@ -205,6 +214,7 @@ test('approval events disclose only reviewable postcondition metadata, never tar
       decision: 'confirm', policyDigest: 'postcondition-confirm', reasons: ['operator review'],
     }),
     validateTarget: async () => true,
+    resolveTargetSensitivity: nonSensitive,
     transactionHooks: {
       capture: async () => ({ capturedAt: new Date().toISOString() }),
       verify: async () => ({ verified: true, method: 'trusted-test' }),

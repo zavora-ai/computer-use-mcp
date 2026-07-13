@@ -17,7 +17,7 @@ import {
 import { SessionLifecycle } from '../session/lifecycle.js'
 import { MemorySessionStore, type RuntimeSession, type SessionCompletionEvidence } from '../session/store.js'
 import { getToolMeta, type ToolMeta } from '../tool-catalog.js'
-import { classifyToolAction } from './action.js'
+import { classifyToolAction, type ActionClassification } from './action.js'
 import { BROWSER_BRIDGE_OPERATIONS, validateBrowserActionArguments } from './browser-bridge.js'
 import { capabilityForTool, supportsMode, type CapabilityRegistry } from './capabilities.js'
 import {
@@ -30,8 +30,10 @@ import {
   type ExecutionCapability,
   type ExecutionMode,
   type TargetEvidence,
+  type TargetSensitivityEvidence,
 } from './types.js'
 import { validatePostcondition } from '../control/postconditions.js'
+import type { TargetSensitivityResolver } from '../targeting/sensitivity.js'
 
 export interface ActionRequest {
   sessionId: string
@@ -60,7 +62,7 @@ export interface ActionPreview {
   capability: ExecutionCapability
   policy: PolicyDecision
   executable: boolean
-  blocker?: 'shadow_mutation' | 'foreground_required' | 'input_attribution_unavailable' | 'target_evidence_required' | 'postcondition_unavailable' | 'approval_required' | 'policy_denied'
+  blocker?: 'shadow_mutation' | 'foreground_required' | 'input_attribution_unavailable' | 'target_evidence_required' | 'sensitivity_unavailable' | 'postcondition_unavailable' | 'approval_required' | 'policy_denied'
 }
 
 export interface ExecutionOutcome {
@@ -106,6 +108,8 @@ export interface RuntimeCoordinatorOptions {
   policy?: PolicyEvaluator
   capabilities?: CapabilityRegistry
   validateTarget?: TargetValidator
+  /** Trusted AX/UIA sensitivity resolver; semantic mutation fails closed without a conclusive result. */
+  resolveTargetSensitivity?: TargetSensitivityResolver
   now?: () => Date
   maxTargetAgeMs?: number
   activityMonitor?: InputActivityMonitor
@@ -157,6 +161,7 @@ export class RuntimeCoordinator {
   readonly #policy: PolicyEvaluator
   readonly #capabilities?: CapabilityRegistry
   readonly #validateTarget?: TargetValidator
+  readonly #resolveTargetSensitivity?: TargetSensitivityResolver
   readonly #now: () => Date
   readonly #maxTargetAgeMs: number
   readonly #activityMonitor?: InputActivityMonitor
@@ -190,6 +195,7 @@ export class RuntimeCoordinator {
     this.#policy = options.policy ?? defaultPolicyEvaluator
     this.#capabilities = options.capabilities
     this.#validateTarget = options.validateTarget
+    this.#resolveTargetSensitivity = options.resolveTargetSensitivity
     this.#now = options.now ?? (() => new Date())
     this.#maxTargetAgeMs = options.maxTargetAgeMs ?? 30_000
     this.#activityMonitor = options.activityMonitor
@@ -246,12 +252,19 @@ export class RuntimeCoordinator {
     if (request.postcondition && !meta.mutates) {
       throw new RuntimeError('policy_denied', 'postconditions are only valid for mutating actions')
     }
-    const classification = classifyToolAction(request.tool, request.args, meta)
+    const targetSensitivity = await this.#assessTargetSensitivity(request)
+    let classification = classifyToolAction(request.tool, request.args, meta)
+    if (targetSensitivity && targetSensitivity.assessment !== 'non_sensitive') {
+      classification = this.#sensitiveClassification(classification, targetSensitivity)
+    }
     const now = this.#now()
     const actionId = request.actionId ?? randomUUID()
     const operation = request.operation ?? this.#operation(request)
     const resource = this.#resourceContext(request)
     const dataLabels = [...(request.dataLabels ?? ['unknown'])]
+    if (targetSensitivity?.assessment === 'sensitive' && !dataLabels.includes('credential')) {
+      dataLabels.push('credential')
+    }
     const argsDigest = digestAction({
       tool: request.tool,
       operation,
@@ -262,6 +275,12 @@ export class RuntimeCoordinator {
       dataLabels,
       provenance: request.provenance,
       postcondition: request.postcondition,
+      targetSensitivity: targetSensitivity ? {
+        assessment: targetSensitivity.assessment,
+        source: targetSensitivity.source,
+        signals: targetSensitivity.signals,
+        fieldsChecked: targetSensitivity.fieldsChecked,
+      } : undefined,
     })
     const envelope: ActionEnvelope = {
       actionId,
@@ -274,6 +293,7 @@ export class RuntimeCoordinator {
       actionClass: classification.actionClass,
       requestedMode: request.mode,
       ...(request.target ? { target: structuredClone(request.target) } : {}),
+      ...(targetSensitivity ? { targetSensitivity: structuredClone(targetSensitivity) } : {}),
       ...(Object.keys(resource).length ? { resource } : {}),
       ...(request.provenance ? { provenance: structuredClone(request.provenance) } : {}),
       dataLabels,
@@ -298,6 +318,7 @@ export class RuntimeCoordinator {
     ) blocker = 'input_attribution_unavailable'
     else if (policy.decision === 'deny') blocker = 'policy_denied'
     else if (this.#requiresTargetEvidence(request, meta) && !request.target) blocker = 'target_evidence_required'
+    else if (targetSensitivity?.assessment === 'unknown') blocker = 'sensitivity_unavailable'
     else if (this.#requiresEffectVerification(request) && !this.#transactionHooks && !hasCertifiedEffectVerifier) {
       blocker = 'postcondition_unavailable'
     }
@@ -327,6 +348,7 @@ export class RuntimeCoordinator {
         policyDecision: policy.decision,
         executable: preview.executable,
         verificationRequired: this.#requiresEffectVerification(request),
+        ...(targetSensitivity ? this.#sensitivitySummary(targetSensitivity) : {}),
         ...(request.postcondition ? this.#postconditionSummary(request.postcondition) : {}),
         ...(blocker ? { blocker } : {}),
       },
@@ -347,6 +369,7 @@ export class RuntimeCoordinator {
           targetAppId: envelope.target?.appId ?? null,
           targetWindowId: envelope.target?.windowId ?? null,
           reasons: policy.reasons,
+          ...(targetSensitivity ? this.#sensitivitySummary(targetSensitivity) : {}),
           ...(request.postcondition ? this.#postconditionSummary(request.postcondition) : {}),
         },
       })
@@ -416,14 +439,14 @@ export class RuntimeCoordinator {
           this.leases.revoke(request.leaseId!, 'lease_expired')
         }, Math.max(0, Date.parse(lease.expiresAt) - Date.now()))
         leaseExpiryTimer.unref()
-        await this.#revalidateTarget(preview.envelope)
+        await this.#revalidateActionContext(preview.envelope, request)
         if (actionController.signal.aborted) throw new RuntimeError('interrupted', 'action cancelled before execution')
         if (preview.capability.backend !== 'browser') {
           snapshot = await this.#transactionHooks?.capture(preview.envelope)
           await this.#captureEvidence(preview.envelope, 'before')
           // Evidence capture is an observation between validation and actuation;
           // close that TOCTOU window before consuming the one-shot lease.
-          await this.#revalidateTarget(preview.envelope)
+          await this.#revalidateActionContext(preview.envelope, request)
         }
         this.leases.consume(request.leaseId)
         if (actionController.signal.aborted) throw new RuntimeError('interrupted', 'control lease revoked before execution')
@@ -1027,6 +1050,95 @@ export class RuntimeCoordinator {
     return request.tool === 'process_kill' && request.args.mode === 'kill' && typeof request.args.pid === 'number'
   }
 
+  #requiresSensitivityInspection(request: Pick<ActionRequest, 'tool'>): boolean {
+    return request.tool === 'set_value' || request.tool === 'fill_form'
+  }
+
+  async #assessTargetSensitivity(
+    request: Pick<ActionRequest, 'tool' | 'args' | 'target'>,
+  ): Promise<TargetSensitivityEvidence | undefined> {
+    if (!this.#requiresSensitivityInspection(request)) return undefined
+    const unavailable = (signal: 'inspection_error' | 'native_signal_unavailable'): TargetSensitivityEvidence => ({
+      assessment: 'unknown', source: 'unavailable', signals: [signal], fieldsChecked: 0,
+      observedAt: this.#now().toISOString(),
+    })
+    if (!this.#resolveTargetSensitivity) return unavailable('native_signal_unavailable')
+    let resolved: Partial<TargetSensitivityEvidence> | undefined
+    try { resolved = await this.#resolveTargetSensitivity(request) }
+    catch { return unavailable('inspection_error') }
+    const allowedSignals = new Set([
+      'secure_role', 'secure_subrole', 'protected_content', 'uia_is_password', 'sensitive_label',
+      'ambiguous_match', 'element_not_found', 'inspection_error', 'invalid_field',
+      'native_signal_unavailable',
+    ])
+    const signals = ([...new Set(
+      (Array.isArray(resolved?.signals) ? resolved.signals : [])
+        .filter(signal => allowedSignals.has(signal)),
+    )].sort()) as TargetSensitivityEvidence['signals']
+    const candidateFields = resolved?.fieldsChecked
+    const fieldsChecked = typeof candidateFields === 'number' && Number.isSafeInteger(candidateFields)
+      && candidateFields >= 0 && candidateFields <= 100 ? candidateFields : 0
+    const expectedFields = request.tool === 'set_value' ? 1
+      : Array.isArray(request.args.fields) && request.args.fields.length > 0
+        && request.args.fields.length <= 100 ? request.args.fields.length : 0
+    const sensitiveSignals = new Set([
+      'secure_role', 'secure_subrole', 'protected_content', 'uia_is_password', 'sensitive_label',
+    ])
+    const hasSensitiveSignal = signals.some(signal => sensitiveSignals.has(signal))
+    const reportedAssessment = hasSensitiveSignal ? 'sensitive' : resolved?.assessment
+    const conclusive = resolved?.source === 'accessibility' && fieldsChecked === expectedFields
+      && expectedFields > 0
+      && (reportedAssessment === 'non_sensitive'
+        || (reportedAssessment === 'sensitive' && hasSensitiveSignal))
+    return {
+      assessment: conclusive ? reportedAssessment : 'unknown',
+      source: conclusive ? 'accessibility' : resolved?.source === 'accessibility' ? 'accessibility' : 'unavailable',
+      signals: signals.length ? signals : conclusive ? [] : ['native_signal_unavailable'],
+      fieldsChecked,
+      observedAt: this.#now().toISOString(),
+    }
+  }
+
+  #sensitiveClassification(
+    prior: ActionClassification,
+    sensitivity: TargetSensitivityEvidence,
+  ): ActionClassification {
+    return {
+      actionClass: 'secret_access', reversible: false, externalSideEffect: true,
+      reasons: [...prior.reasons, `target_sensitivity:${sensitivity.assessment}`],
+    }
+  }
+
+  #sensitivityFingerprint(value: TargetSensitivityEvidence): string {
+    return digestAction({
+      assessment: value.assessment,
+      source: value.source,
+      signals: [...value.signals].sort(),
+      fieldsChecked: value.fieldsChecked,
+    })
+  }
+
+  #sensitivitySummary(value: TargetSensitivityEvidence): Record<string, unknown> {
+    return {
+      sensitivityAssessment: value.assessment,
+      sensitivitySource: value.source,
+      sensitivitySignals: [...value.signals],
+      sensitivityFieldsChecked: value.fieldsChecked,
+    }
+  }
+
+  async #revalidateActionContext(envelope: ActionEnvelope, request: ActionRequest): Promise<void> {
+    await this.#revalidateTarget(envelope)
+    if (!envelope.targetSensitivity) return
+    const current = await this.#assessTargetSensitivity(request)
+    if (!current || current.assessment === 'unknown'
+        || this.#sensitivityFingerprint(current) !== this.#sensitivityFingerprint(envelope.targetSensitivity)) {
+      throw new RuntimeError('stale_target', 'target sensitivity changed or could not be revalidated', {
+        assessment: current?.assessment ?? 'unknown',
+      })
+    }
+  }
+
   async #hasCertifiedEffectVerifier(
     request: ActionRequest,
     capability: ExecutionCapability,
@@ -1179,6 +1291,10 @@ export class RuntimeCoordinator {
         { inputMonitor: this.#activityMonitor?.capability ?? { supported: false } },
       )
       case 'target_evidence_required': return new RuntimeError('stale_target', 'fresh target evidence is required for this mutation')
+      case 'sensitivity_unavailable': return new RuntimeError(
+        'sensitivity_unavailable',
+        'trusted accessibility sensitivity could not be established for this semantic mutation',
+      )
       case 'postcondition_unavailable': return new RuntimeError(
         'postcondition_unavailable',
         'independent effect verification is required but no transaction verifier is configured',

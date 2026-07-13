@@ -32,6 +32,36 @@ function windowId(args: Record<string, unknown>): number {
   return args.window_id
 }
 
+const SENSITIVE_ROLE = /pass(?:word|code)?|secure|credential|one.?time|otp|pin|cvv|cvc/i
+const TRUSTED_SENSITIVITY_SIGNALS = new Set([
+  'secure_role', 'secure_subrole', 'protected_content', 'uia_is_password',
+])
+
+/** Defense-in-depth: protected accessibility values never cross the JS tool boundary. */
+export function sanitizeAccessibilityResult(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeAccessibilityResult)
+  if (!value || typeof value !== 'object') return value
+  const input = value as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(input)) {
+    output[key] = key === 'children' ? sanitizeAccessibilityResult(entry) : entry
+  }
+  const signals = Array.isArray(input.sensitivitySignals)
+    ? input.sensitivitySignals.filter(signal =>
+      typeof signal === 'string' && TRUSTED_SENSITIVITY_SIGNALS.has(signal))
+    : []
+  const sensitive = input.sensitive === true
+    || signals.length > 0
+    || (typeof input.role === 'string' && SENSITIVE_ROLE.test(input.role))
+    || (typeof input.label === 'string' && SENSITIVE_ROLE.test(input.label))
+  if (sensitive) output.sensitive = true
+  else if (input.sensitive === false) output.sensitive = false
+  else delete output.sensitive
+  output.sensitivitySignals = signals
+  if (sensitive) output.value = null
+  return output
+}
+
 function levenshtein(left: string, right: string): number {
   const previous = Array.from({ length: right.length + 1 }, (_, index) => index)
   const current = new Array<number>(right.length + 1)
@@ -58,7 +88,10 @@ function similarLabels(
 ): ToolResult {
   const target = label.toLowerCase()
   const similar = native.findElement(targetWindowId, role, undefined, undefined, 200)
-    .map(element => ({ element, distance: levenshtein((element.label ?? '').toLowerCase(), target) }))
+    .map(element => ({
+      element: sanitizeAccessibilityResult(element) as typeof element,
+      distance: levenshtein((element.label ?? '').toLowerCase(), target),
+    }))
     .sort((left, right) => left.distance - right.distance)
     .slice(0, 5)
     .map(({ element }) => ({ role: element.role, label: element.label, value: element.value }))
@@ -78,20 +111,22 @@ export async function handleAccessibilityTool(
   const isWindows = (context.platform ?? process.platform) === 'win32'
 
   if (tool === 'get_ui_tree') {
-    return ok(JSON.stringify(native.getUiTree(
+    return ok(JSON.stringify(sanitizeAccessibilityResult(native.getUiTree(
       windowId(args), typeof args.max_depth === 'number' ? args.max_depth : undefined,
-    )))
+    ))))
   }
-  if (tool === 'get_focused_element') return ok(JSON.stringify(native.getFocusedElement()))
+  if (tool === 'get_focused_element') {
+    return ok(JSON.stringify(sanitizeAccessibilityResult(native.getFocusedElement())))
+  }
   if (tool === 'find_element') {
     const role = typeof args.role === 'string' ? args.role : undefined
     const label = typeof args.label === 'string' ? args.label : undefined
     const value = typeof args.value === 'string' ? args.value : undefined
     if (!role && !label && !value) throw new Error('find_element requires at least one of: role, label, value')
-    return ok(JSON.stringify(native.findElement(
+    return ok(JSON.stringify(sanitizeAccessibilityResult(native.findElement(
       windowId(args), role, label, value,
       typeof args.max_results === 'number' ? args.max_results : undefined,
-    )))
+    ))))
   }
 
   if (['click_element', 'set_value', 'press_button', 'fill_form'].includes(tool)) {
@@ -129,7 +164,7 @@ export async function handleAccessibilityTool(
       const result = native.setElementValue(target.windowId, role, label, value)
       if (result.set) {
         context.targets.update(target, 'keyboard')
-        return ok(`Set ${role} "${label}" = ${JSON.stringify(value)}`)
+        return ok(`Set ${role} "${label}"`)
       }
       if (result.reason === 'read_only') {
         return { content: [{ type: 'text', text: `Element ${role} "${label}" is read-only` }], isError: true }
