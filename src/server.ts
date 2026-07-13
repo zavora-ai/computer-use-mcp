@@ -51,6 +51,7 @@ import {
   createSessionReferenceAdapterHost,
 } from './runtime/reference-adapters.js'
 import { BrowserBridgeHost, type BrowserBridge } from './runtime/browser-bridge.js'
+import { v8StartupWarnings } from './migration/v8.js'
 
 export type { FocusRequired, ToolMeta }
 
@@ -423,6 +424,11 @@ if (isStdioEntrypoint(process.argv[1])) {
   const transport = new StdioServerTransport()
   let supervisor: SupervisorIpcServer | undefined
   const start = async () => {
+    if (process.env.COMPUTER_USE_V8 === 'true') {
+      for (const warning of v8StartupWarnings()) {
+        console.error(`[computer-use-mcp] WARNING: ${warning}`)
+      }
+    }
     const socketPath = process.env.COMPUTER_USE_SUPERVISOR_SOCKET
     if (socketPath) {
       if (!runtime) throw new Error('COMPUTER_USE_SUPERVISOR_SOCKET requires COMPUTER_USE_V8=true')

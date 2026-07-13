@@ -861,6 +861,7 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_NATIVE_PATH` | Explicit path to the native `.node` addon, overriding automatic resolution (optional platform package → legacy root binary). Useful for custom builds or non-standard install layouts. |
 | `COMPUTER_USE_LEGACY_FOCUS_TAG` | Append the legacy `[focusRequired: X]` suffix to tool descriptions. **Off by default in v7** (`focusRequired` is still available via `_meta` and `get_tool_metadata`). Set `true` to restore the suffix. |
 | `COMPUTER_USE_V8` | Enable the additive v8 action/session/lease facade. The 64-tool v7 surface remains the default. |
+| `COMPUTER_USE_V7_COMPAT` | Restore the legacy unrooted-filesystem and open-world `scrape` defaults for one migration cycle. Emits disclosure-safe startup warnings. It never bypasses emergency stop, redaction, target validation, leases, or exact-action approval. |
 | `COMPUTER_USE_EMERGENCY_STOP_CHORD` | Global physical emergency-stop chord for v8 on macOS/Windows. Defaults to `ctrl+alt+shift+escape`; requires at least two modifiers and an `escape` or `f12` trigger. It latches native input off until the authenticated host/supervisor resets it. |
 | `COMPUTER_USE_EXPERIMENTAL_TASKS` | Opt in to the experimental MCP Tasks adapter for principal-bound v8 sessions. Requires `COMPUTER_USE_V8=true`; cancellation stops the authoritative v8 session and revokes its lease. |
 | `COMPUTER_USE_ACTIVE_PROFILE` | Runtime-visible surface inside the immutable `COMPUTER_USE_PROFILE` maximum. Use `v8-safe` to expose only governed v8 facade tools and hide every raw actuator/observer. |
@@ -888,6 +889,25 @@ Mutating tools pass through a policy gate before dispatch. By default, the serve
 | `COMPUTER_USE_REMOTE_TLS_KEY` / `COMPUTER_USE_REMOTE_TLS_CERT` | TLS material required together for LAN operation. |
 | `COMPUTER_USE_REMOTE_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the remote sidecar. Browser origins are denied by default. |
 | `COMPUTER_USE_REMOTE_AUTH_VAULT_KEY` | Non-secret record key used by an injected or first-party synchronous durable credential vault. Defaults to `computer-use-remote/device-authorizations`. |
+
+### Migrating unsafe v7 defaults
+
+The governed v8 policy denies filesystem mutation until
+`COMPUTER_USE_FS_ROOTS` is configured and disables open-world `scrape` unless
+explicitly enabled. `COMPUTER_USE_V7_COMPAT=true` temporarily restores both
+legacy defaults and prints value-free warnings at stdio startup. Generate an
+exact safer replacement without exposing supervisor tokens, persistence paths,
+or other control-plane values:
+
+```bash
+npx computer-use-migrate-v8 --json
+npx computer-use-migrate-v8 --shell              # POSIX exports
+npx computer-use-migrate-v8 --shell=powershell   # PowerShell assignments
+```
+
+The generated configuration preserves only non-secret policy boundaries such
+as filesystem roots, app/domain rules, and the emergency chord. It explicitly
+turns compatibility and scrape back off and selects the `v8-safe` surface.
 
 Run `npx computer-use-onboard` for the reference terminal setup. It performs
 diagnostics, capture, virtual-pointer confirmation, a read-only accessibility

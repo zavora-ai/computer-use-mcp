@@ -117,6 +117,7 @@ export function createDefaultV8PolicyFromEnvironment(env: NodeJS.ProcessEnv = pr
   const list = (name: string, fallback: string[] = []) =>
     env[name]?.split(',').map(value => value.trim()).filter(Boolean) ?? fallback
   const filesystemRoots = list('COMPUTER_USE_FS_ROOTS')
+  const v7Compatibility = env.COMPUTER_USE_V7_COMPAT === 'true'
   const defaultSensitiveApps = process.platform === 'win32'
     ? ['1Password.exe', 'CredentialUIBroker.exe', 'KeePassXC.exe']
     : ['com.apple.keychainaccess', 'com.apple.Passwords', 'com.1password.1password', 'com.agilebits.onepassword7']
@@ -128,7 +129,7 @@ export function createDefaultV8PolicyFromEnvironment(env: NodeJS.ProcessEnv = pr
     allowedDomains: list('COMPUTER_USE_V8_ALLOWED_DOMAINS'),
     registryHives: list('COMPUTER_USE_V8_REGISTRY_HIVES'),
     blockedProcesses: list('COMPUTER_USE_V8_BLOCKED_PROCESSES'),
-    requireFilesystemRootsForMutation: env.COMPUTER_USE_V7_COMPAT !== 'true',
-    disabledTools: env.COMPUTER_USE_V8_ALLOW_SCRAPE === 'true' ? [] : ['scrape'],
+    requireFilesystemRootsForMutation: !v7Compatibility,
+    disabledTools: v7Compatibility || env.COMPUTER_USE_V8_ALLOW_SCRAPE === 'true' ? [] : ['scrape'],
   })
 }

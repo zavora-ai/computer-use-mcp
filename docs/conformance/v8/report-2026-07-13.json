@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "protocol": "computer-use-v8-preview",
   "runtimeVersion": "7.0.0",
-  "generatedAt": "2026-07-13T14:02:04.980Z",
+  "generatedAt": "2026-07-13T14:14:28.199Z",
   "evidence": [
     {
       "schemaVersion": 1,
       "evidenceId": "evidence_multi_agent_4965fc8bf835c7d3",
       "kind": "deterministic_suite",
       "scope": "multi_agent",
-      "observedAt": "2026-07-13T14:02:04.051Z",
+      "observedAt": "2026-07-13T14:14:27.283Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -20,7 +20,7 @@
       "command": "node --test test/v8-reliability-corpus.test.mjs test/v8-mcp-facade.test.mjs",
       "passed": true,
       "tests": 17,
-      "durationMs": 387,
+      "durationMs": 377,
       "assertions": [
         "lease.one_writer",
         "lease.terminal_revocation",
@@ -39,14 +39,14 @@
         }
       ],
       "sourceDigest": "sha256:bb2b8d3548e23ecedb8f36f5c7d7d814423f2160d12e44684965fc8bf835c7d3",
-      "outputDigest": "sha256:8404eccf3a957d5aa18959dbd8b42d3ee0b241b084aa1e079bf952f73d56cb45"
+      "outputDigest": "sha256:3fde2882c482b89f90519ef501701f2c102b0d808fe9ad8ac41466e525923614"
     },
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_policy_74b735e529cb00cc",
+      "evidenceId": "evidence_policy_73f43849bcfda153",
       "kind": "deterministic_suite",
       "scope": "policy",
-      "observedAt": "2026-07-13T14:02:03.662Z",
+      "observedAt": "2026-07-13T14:14:26.905Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -54,10 +54,10 @@
         "interactive": false,
         "source": "local"
       },
-      "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs && npm test --prefix packages/computer-use-remote",
+      "command": "node --test test/v8-runtime-kernel.test.mjs test/v8-browser-bridge.test.mjs test/v8-provider-adapters.test.mjs test/v8-provider-examples.test.mjs test/v8-onboarding.test.mjs test/v8-onboarding-ui.test.mjs test/v8-reliability-lab.test.mjs test/v8-release-artifacts.test.mjs test/v8-release-readiness.test.mjs test/v8-registry-action.test.mjs test/v8-migration.test.mjs && npm test --prefix packages/computer-use-remote",
       "passed": true,
-      "tests": 110,
-      "durationMs": 3100,
+      "tests": 115,
+      "durationMs": 3070,
       "assertions": [
         "policy.operation_boundaries",
         "policy.approval_binding",
@@ -121,7 +121,7 @@
         },
         {
           "path": "examples/v8-electron-setup.mjs",
-          "digest": "sha256:b5bfb239d5e00f795067ba86daecb43ed2f93b192583e2d8c7274f24bfb38c3e"
+          "digest": "sha256:8f27501e94c8c0d89f32617327451e212438f55780297cce1cd0651d7d649ae5"
         },
         {
           "path": "examples/v8-langgraph.mjs",
@@ -133,7 +133,7 @@
         },
         {
           "path": "examples/v8-tauri-setup.mjs",
-          "digest": "sha256:5150fa8fbca07a0b0fe34ae1bdc6425c61d1ef95004eaec3d6129f5897864ae5"
+          "digest": "sha256:215105eac2ce8bdfc25b00ca2aacd4fcf5b91cff2f82d7203b275d3ed5532944"
         },
         {
           "path": "native/src/keychain.rs",
@@ -180,6 +180,14 @@
           "digest": "sha256:55cce223889ef1463562075028d5dd32a2460f2f47f3332210403c0ebd083772"
         },
         {
+          "path": "src/migration/cli.ts",
+          "digest": "sha256:d1ed83e87b415c1a993a24e7f6e0c3f855a04b4c6e6b8fbcb32d21b848160b72"
+        },
+        {
+          "path": "src/migration/v8.ts",
+          "digest": "sha256:72953f571b1d29f1c81824621eb88742100325b275782023804e5ccbff337e85"
+        },
+        {
           "path": "src/native.ts",
           "digest": "sha256:8267a28faa6a47fa3ac4fe99da2ba5a80c02b67c889660274efc36b604cae733"
         },
@@ -216,6 +224,10 @@
           "digest": "sha256:5ed3652b0caeb768622d15f236c000ae89d8d270109c58a04918e2fb70abbec6"
         },
         {
+          "path": "test/v8-migration.test.mjs",
+          "digest": "sha256:80fdf4d339870815c6dabd911b4bff0197bf01687eb2ab237bcb61e0ddc4cfc9"
+        },
+        {
           "path": "test/v8-onboarding-ui.test.mjs",
           "digest": "sha256:7568676b550ebe27f0471e71bfe4ce05dbe6dc49d6a818709178dbbf2cc258a6"
         },
@@ -233,7 +245,7 @@
         },
         {
           "path": "test/v8-registry-action.test.mjs",
-          "digest": "sha256:e27387d38fc331c2332b5b1197e7396337e164f0cbdfeb34803dc52d796c8565"
+          "digest": "sha256:8c15918af6bfed124a0f1e8b10a56f0ed9f535c89ed0caff372eb93f25a245da"
         },
         {
           "path": "test/v8-release-artifacts.test.mjs",
@@ -252,15 +264,15 @@
           "digest": "sha256:fe764c1166ac1e90d598f61efc05dfd584ed378d376d27ae78b74f6204540c25"
         }
       ],
-      "sourceDigest": "sha256:43847ba01632ed7056716c537eb1f2e7fff3ddc682dbcb2074b735e529cb00cc",
-      "outputDigest": "sha256:1d43ebe8a60d6e79a27f67920e098edf03484e721e3ce0134fe675fb015ee6b8"
+      "sourceDigest": "sha256:c26c30f2cb7676e41b8fbaa1b0a402759683bd626bfe2b5c73f43849bcfda153",
+      "outputDigest": "sha256:b7f5fde0de06b9fb5806de47fb5b2eddbd3dea7cd5e469df19c1637628f996c6"
     },
     {
       "schemaVersion": 1,
-      "evidenceId": "evidence_supervisor_d5327fa6cad0933d",
+      "evidenceId": "evidence_supervisor_4d5e38efd6862ae8",
       "kind": "integration_suite",
       "scope": "supervisor",
-      "observedAt": "2026-07-13T14:02:04.980Z",
+      "observedAt": "2026-07-13T14:14:28.199Z",
       "environment": {
         "platform": "darwin",
         "arch": "arm64",
@@ -271,7 +283,7 @@
       "command": "node --test test/v8-supervisor-ipc.test.mjs test/v8-emergency-stop.test.mjs test/cancellation.test.mjs && npm test --prefix packages/computer-use-supervisor",
       "passed": true,
       "tests": 18,
-      "durationMs": 929,
+      "durationMs": 916,
       "assertions": [
         "supervisor.authentication",
         "supervisor.principal_isolation",
@@ -329,7 +341,7 @@
         },
         {
           "path": "src/server.ts",
-          "digest": "sha256:5bb1fc125508f8cce80545f19e6832ae485584469e414fac3de963ee5668dcfa"
+          "digest": "sha256:7625d6abfd9e7f7d34757aedd50781a14e53cfc3fd2135ca1bebcf669397b9cd"
         },
         {
           "path": "src/session/spawn.ts",
@@ -352,8 +364,8 @@
           "digest": "sha256:ce860d8bc79edcbad969e382b33986ed853f6d078b0be50ca0a9a9e144d3fb7b"
         }
       ],
-      "sourceDigest": "sha256:1e0b7c2c36d67176d1855ef6bb06b93788d761f4fdaa558ed5327fa6cad0933d",
-      "outputDigest": "sha256:501d11f3ff9a673bb0bce7c712b14935db9fa702823e7af7b5a7d6e3e0cbba0c"
+      "sourceDigest": "sha256:82459139f944d700a0e777937d4b63081f9807e1b0897fbe4d5e38efd6862ae8",
+      "outputDigest": "sha256:f99cf5e2f3ecf9c7cc577ce6f08bd0865276a65deb69351fa04e5157a7c80d0f"
     }
   ],
   "certifications": [
@@ -434,5 +446,5 @@
       ]
     }
   ],
-  "reportDigest": "sha256:bb9e83ec49c52f6f6bc554de43f8b94b146df7f0ed39f6f408fe7a406185c6cb"
+  "reportDigest": "sha256:c06b0af47751cb5b1069d86ea63d5eb35f7da4f2aa71b8ac09ab6c619e50b609"
 }

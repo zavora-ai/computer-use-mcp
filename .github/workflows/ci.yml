@@ -315,7 +315,7 @@ jobs:
           cd install-probe
           npm init -y >/dev/null
           npm install "../$tarball" --ignore-scripts --omit=optional
-          node --input-type=module -e "await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/runtime'); await import('@zavora-ai/computer-use-mcp/reliability'); await import('@zavora-ai/computer-use-mcp/release'); console.log(process.version, 'packed entry points loaded')"
+          node --input-type=module -e "await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/runtime'); await import('@zavora-ai/computer-use-mcp/reliability'); await import('@zavora-ai/computer-use-mcp/release'); await import('@zavora-ai/computer-use-mcp/migration'); console.log(process.version, 'packed entry points loaded')"
 
   publish:
     name: Publish to npm

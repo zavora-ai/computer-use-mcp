@@ -15,7 +15,8 @@
   ],
   "bin": {
     "computer-use-mcp": "dist/server.js",
-    "computer-use-onboard": "dist/onboarding/cli.js"
+    "computer-use-onboard": "dist/onboarding/cli.js",
+    "computer-use-migrate-v8": "dist/migration/cli.js"
   },
   "exports": {
     ".": {
@@ -57,6 +58,10 @@
     "./release": {
       "import": "./dist/release/index.js",
       "types": "./dist/release/index.d.ts"
+    },
+    "./migration": {
+      "import": "./dist/migration/index.js",
+      "types": "./dist/migration/index.d.ts"
     }
   },
   "files": [
@@ -93,6 +98,7 @@
     "dist/control/",
     "dist/onboarding/",
     "dist/release/",
+    "dist/migration/",
     "dist/policy/",
     "dist/server.d.ts",
     "dist/server.js",

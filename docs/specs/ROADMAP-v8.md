@@ -685,6 +685,15 @@ The launch message should avoid “more tools.” Demonstrate one task in four v
 - Keep stdio and in-process clients first-class. The remote sidecar is optional and separately packaged.
 - Provide `COMPUTER_USE_V7_COMPAT=true` for one major release cycle only, covering unsafe defaults—not bypassing emergency stop, audit redaction, or target revalidation.
 - Emit startup warnings for v7-compatible unrestricted filesystem/network combinations and provide an exact generated v8 config.
+- **Implemented migration boundary (2026-07-13):** compatibility restores only
+  unrooted filesystem mutation and open-world scrape policy for the migration
+  cycle. The stdio host emits value-free warnings, while the packaged
+  `computer-use-migrate-v8` CLI and public migration API generate exact JSON,
+  POSIX, or PowerShell configuration from an allowlist of non-secret policy
+  fields. Supervisor credentials, persistence paths, and other control-plane
+  values are excluded. Tests prove safer defaults, compatibility behavior,
+  secret exclusion, shell escaping, and that sensitive actions still require
+  confirmation.
 - Publish a machine-readable capability manifest so hosts can adapt to platform limitations instead of inferring from errors.
 
 ## Testing and release strategy
