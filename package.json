@@ -46,6 +46,7 @@
     "computer-use-napi.linux-x64.node",
     "computer-use-napi.node",
     "computer-use-napi.win32-x64.node",
+    "computer-use-napi.win32-arm64.node",
     "dist/client.d.ts",
     "dist/client.js",
     "dist/instructions.d.ts",
@@ -72,6 +73,7 @@
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",
     "build:native:win": "cd native && cargo build --release && copy target\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-x64.node",
+    "build:native:win:arm64": "cd native && cargo build --release --target aarch64-pc-windows-msvc && copy target\\aarch64-pc-windows-msvc\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-arm64.node",
     "build:native:linux": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.so ../computer-use-napi.linux-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.so ../computer-use-napi.node",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
@@ -90,6 +92,7 @@
     "@zavora-ai/computer-use-mcp-darwin-arm64": "7.0.0",
     "@zavora-ai/computer-use-mcp-darwin-x64": "7.0.0",
     "@zavora-ai/computer-use-mcp-win32-x64": "7.0.0",
+    "@zavora-ai/computer-use-mcp-win32-arm64": "7.0.0",
     "@zavora-ai/computer-use-mcp-linux-x64": "7.0.0",
     "@zavora-ai/computer-use-mcp-linux-arm64": "7.0.0"
   },

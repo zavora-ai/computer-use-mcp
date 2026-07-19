@@ -16,6 +16,7 @@ const SUPPORTED_TARGETS: ReadonlyArray<{ platform: string; arch: string }> = [
   { platform: 'darwin', arch: 'arm64' },
   { platform: 'darwin', arch: 'x64' },
   { platform: 'win32', arch: 'x64' },
+  { platform: 'win32', arch: 'arm64' },
   { platform: 'linux', arch: 'x64' },
   { platform: 'linux', arch: 'arm64' },
 ]

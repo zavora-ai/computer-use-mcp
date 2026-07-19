@@ -36,6 +36,11 @@ jobs:
             rust-target: x86_64-pc-windows-msvc
             artifact: computer-use-napi.win32-x64.node
             copy-from: target/x86_64-pc-windows-msvc/release/computer_use_napi.dll
+          - name: Windows arm64
+            runner: windows-11-arm
+            rust-target: aarch64-pc-windows-msvc
+            artifact: computer-use-napi.win32-arm64.node
+            copy-from: target/aarch64-pc-windows-msvc/release/computer_use_napi.dll
           - name: Linux x64
             runner: ubuntu-latest
             rust-target: x86_64-unknown-linux-gnu
@@ -87,6 +92,9 @@ jobs:
           - name: Windows x64
             runner: windows-latest
             binary: computer-use-napi.win32-x64.node
+          - name: Windows arm64
+            runner: windows-11-arm
+            binary: computer-use-napi.win32-arm64.node
           - name: Linux x64
             runner: ubuntu-latest
             binary: computer-use-napi.linux-x64.node
@@ -208,6 +216,7 @@ jobs:
           test -f computer-use-napi.darwin-arm64.node
           test -f computer-use-napi.darwin-x64.node
           test -f computer-use-napi.win32-x64.node
+          test -f computer-use-napi.win32-arm64.node
           test -f computer-use-napi.linux-x64.node
 
       - name: Build TypeScript
