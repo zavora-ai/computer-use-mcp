@@ -244,7 +244,7 @@ jobs:
           node --input-type=module -e "await import('@zavora-ai/computer-use-mcp'); await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/server'); await import('@zavora-ai/computer-use-mcp/http'); await import('@zavora-ai/computer-use-mcp/tool-catalog'); await import('@zavora-ai/computer-use-mcp/registry'); await import('@zavora-ai/computer-use-mcp/host-native'); console.log(process.version, 'packed entry points loaded')"
 
   publish:
-    name: Publish to npm
+    name: Stage npm release for approval
     needs: [build-native, test, package, install-matrix]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -258,7 +258,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
 
@@ -284,17 +284,34 @@ jobs:
       - name: Build TypeScript
         run: npx tsc
 
-      - name: Prepare platform packages (stamp version + copy binaries)
-        run: node scripts/prepare-platform-packages.mjs
-
-      - name: Pack exact release tarballs
+      - name: Pack exact universal release tarball
         shell: bash
         run: |
-          mkdir -p release/platform release/root
-          for d in packages/computer-use-mcp-*; do
-            ( cd "$d" && npm pack --pack-destination "$GITHUB_WORKSPACE/release/platform" )
-          done
+          mkdir -p release/root
           npm pack --ignore-scripts --pack-destination release/root
+
+      - name: Verify universal tarball contains every native target
+        shell: bash
+        run: |
+          archive=$(find release/root -type f -name '*.tgz' -print -quit)
+          if [ -z "$archive" ]; then
+            echo "universal release tarball missing" >&2
+            exit 1
+          fi
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            tar -tzf "$archive" | grep -qx "package/computer-use-napi.${target}.node"
+          done
+          tar -xOzf "$archive" package/package.json | node -e '
+            let source = "";
+            process.stdin.on("data", chunk => source += chunk);
+            process.stdin.on("end", () => {
+              const manifest = JSON.parse(source);
+              if (manifest.optionalDependencies) {
+                throw new Error("staged universal package must not reference unbootstrapped optional packages");
+              }
+              console.log("universal tarball contains all six native targets");
+            });
+          '
 
       - name: Generate CycloneDX software bill of materials
         run: npm sbom --sbom-format cyclonedx > release-sbom.cdx.json
@@ -304,7 +321,7 @@ jobs:
         with:
           subject-path: |
             computer-use-napi.*.node
-            release/**/*.tgz
+            release/root/*.tgz
 
       - name: Attach SBOM attestation to the exact main tarball
         uses: actions/attest-sbom@v2
@@ -321,36 +338,7 @@ jobs:
             release-sbom.cdx.json
           if-no-files-found: error
 
-      - name: Publish platform packages (fail closed before main package)
-        run: |
-          for d in packages/computer-use-mcp-*; do
-            target="${d#packages/computer-use-mcp-}"
-            pkg=$(node -p "require('./$d/package.json').name")
-            ver=$(node -p "require('./$d/package.json').version")
-            if [ ! -f "$d/computer-use-napi.${target}.node" ]; then
-              echo "skip $pkg — binary computer-use-napi.${target}.node not built on this matrix"
-              continue
-            fi
-            if npm view "$pkg@$ver" version >/dev/null 2>&1; then
-              echo "skip $pkg@$ver — already published"
-              continue
-            fi
-            archive=$(find release/platform -type f -name "*-${target}-${ver}.tgz" -print -quit)
-            if [ -z "$archive" ]; then
-              echo "packed tarball missing for $pkg@$ver" >&2
-              exit 1
-            fi
-            npm publish "$archive" --access public --provenance
-          done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish (dry run)
-        run: npm publish release/root/*.tgz --dry-run --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish main package to npm (idempotent)
+      - name: Stage main package for maintainer approval
         run: |
           ver=$(node -p "require('./package.json').version")
           archive=$(find release/root -type f -name '*.tgz' -print -quit)
@@ -367,7 +355,5 @@ jobs:
             fi
             echo "@zavora-ai/computer-use-mcp@$ver already published with identical integrity — skipping"
           else
-            npm publish "$archive" --ignore-scripts --access public --provenance
+            npm stage publish "$archive" --access public --provenance
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

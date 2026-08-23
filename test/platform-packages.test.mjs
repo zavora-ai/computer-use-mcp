@@ -1,5 +1,5 @@
-// PR-15: platform packages — manifest consistency, lockstep versions, and the
-// resolver preferring an installed optional package over the legacy root binary.
+// Native packaging — universal v7.1 tarball, future split-package manifests,
+// and resolver support for a separately installed platform package.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -34,11 +34,13 @@ test('each platform package manifest is well-formed and version-locked to the ro
   }
 })
 
-test('root declares all six platform packages as lockstep optionalDependencies', () => {
-  const opt = rootPkg.optionalDependencies ?? {}
+test('staged v7.1 release is universal and does not depend on unbootstrapped package names', () => {
+  assert.deepEqual(rootPkg.optionalDependencies ?? {}, {})
   for (const target of Object.keys(TARGETS)) {
-    const name = `@zavora-ai/computer-use-mcp-${target}`
-    assert.equal(opt[name], rootPkg.version, `${name} optionalDependency must be lockstep ${rootPkg.version}`)
+    assert.ok(
+      rootPkg.files.includes(`computer-use-napi.${target}.node`),
+      `universal package must ship the ${target} binary`,
+    )
   }
 })
 
