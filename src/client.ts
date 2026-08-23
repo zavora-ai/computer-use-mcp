@@ -2,15 +2,15 @@
  * Computer Use MCP Client — typed API over MCP protocol.
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import type { McpServer } from '@modelcontextprotocol/server'
 
 export interface ToolResult {
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'image'; data: string; mimeType: string }
+    | { type: 'resource_link'; uri: string; name: string; title?: string; description?: string; mimeType?: string }
   >
   structuredContent?: Record<string, unknown>
   isError?: boolean
@@ -69,6 +69,7 @@ export interface ComputerUseClient {
   listTools(): Promise<ListedTool[]>
   callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>
   listResources?(): Promise<Array<{ uri: string; name: string; description?: string; mimeType?: string }>>
+  listResourceTemplates?(): Promise<Array<{ uriTemplate: string; name: string; description?: string; mimeType?: string }>>
   readResource?(uri: string): Promise<unknown>
   listPrompts?(): Promise<Array<{ name: string; description?: string; arguments?: unknown }>>
   getPrompt?(name: string, args?: Record<string, string>): Promise<unknown>
@@ -207,6 +208,15 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
         name: res.name,
         description: res.description,
         mimeType: res.mimeType,
+      }))
+    },
+    async listResourceTemplates() {
+      const result = await client.listResourceTemplates()
+      return result.resourceTemplates.map(template => ({
+        uriTemplate: template.uriTemplate,
+        name: template.name,
+        description: template.description,
+        mimeType: template.mimeType,
       }))
     },
     async readResource(uri: string) {

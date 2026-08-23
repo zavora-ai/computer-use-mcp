@@ -41,7 +41,9 @@ extern "C" {
 const RTLD_LAZY: i32 = 0x1;
 
 fn load_lib(path: &str) -> *mut c_void {
-    let Ok(c) = CString::new(path) else { return std::ptr::null_mut() };
+    let Ok(c) = CString::new(path) else {
+        return std::ptr::null_mut();
+    };
     unsafe { dlopen(c.as_ptr(), RTLD_LAZY) }
 }
 
@@ -49,7 +51,9 @@ fn sym(handle: *mut c_void, name: &str) -> *mut c_void {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
-    let Ok(c) = CString::new(name) else { return std::ptr::null_mut() };
+    let Ok(c) = CString::new(name) else {
+        return std::ptr::null_mut();
+    };
     unsafe { dlsym(handle, c.as_ptr()) }
 }
 
@@ -65,10 +69,16 @@ type FnGetActiveSpace = unsafe extern "C" fn(CGSConnection) -> CGSSpaceId;
 type FnCopyManagedDisplaySpaces = unsafe extern "C" fn(CGSConnection) -> CFArrayRef;
 type FnSpaceCreate = unsafe extern "C" fn(CGSConnection, i32, CFDictionaryRef) -> CGSSpaceId;
 type FnSpaceDestroy = unsafe extern "C" fn(CGSConnection, CGSSpaceId);
-type FnAddWindowsToSpaces =
-    unsafe extern "C" fn(CGSConnection, CFArrayRef /* spaces */, CFArrayRef /* windows */);
-type FnRemoveWindowsFromSpaces =
-    unsafe extern "C" fn(CGSConnection, CFArrayRef /* spaces */, CFArrayRef /* windows */);
+type FnAddWindowsToSpaces = unsafe extern "C" fn(
+    CGSConnection,
+    CFArrayRef, /* spaces */
+    CFArrayRef, /* windows */
+);
+type FnRemoveWindowsFromSpaces = unsafe extern "C" fn(
+    CGSConnection,
+    CFArrayRef, /* spaces */
+    CFArrayRef, /* windows */
+);
 
 struct Cgs {
     main_conn: Option<FnMainConnectionId>,
@@ -117,34 +127,46 @@ fn load_cgs() -> &'static Cgs {
                 main_conn: if main_conn_p.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnMainConnectionId>(main_conn_p))
+                    Some(std::mem::transmute::<*mut c_void, FnMainConnectionId>(
+                        main_conn_p,
+                    ))
                 },
                 get_active: if get_active_p.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnGetActiveSpace>(get_active_p))
+                    Some(std::mem::transmute::<*mut c_void, FnGetActiveSpace>(
+                        get_active_p,
+                    ))
                 },
                 copy_display_spaces: if copy_display_spaces_p.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnCopyManagedDisplaySpaces>(
-                        copy_display_spaces_p,
-                    ))
+                    Some(
+                        std::mem::transmute::<*mut c_void, FnCopyManagedDisplaySpaces>(
+                            copy_display_spaces_p,
+                        ),
+                    )
                 },
                 space_create: if space_create_p.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnSpaceCreate>(space_create_p))
+                    Some(std::mem::transmute::<*mut c_void, FnSpaceCreate>(
+                        space_create_p,
+                    ))
                 },
                 space_destroy: if space_destroy_p.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnSpaceDestroy>(space_destroy_p))
+                    Some(std::mem::transmute::<*mut c_void, FnSpaceDestroy>(
+                        space_destroy_p,
+                    ))
                 },
                 add_wins: if add_wins_p.is_null() {
                     None
                 } else {
-                    Some(std::mem::transmute::<*mut c_void, FnAddWindowsToSpaces>(add_wins_p))
+                    Some(std::mem::transmute::<*mut c_void, FnAddWindowsToSpaces>(
+                        add_wins_p,
+                    ))
                 },
                 rem_wins: if rem_wins_p.is_null() {
                     None
@@ -210,10 +232,7 @@ fn dict_get_string(dict: CFDictionaryRef, key: &str) -> Option<String> {
 
 fn window_is_on_screen(window_id: u32) -> Option<bool> {
     unsafe {
-        let arr = CGWindowListCopyWindowInfo(
-            K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
-            0,
-        );
+        let arr = CGWindowListCopyWindowInfo(K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY, 0);
         if arr.is_null() {
             return None;
         }
@@ -366,7 +385,11 @@ pub fn create_agent_space() -> napi::Result<serde_json::Value> {
         );
         let type_key = CFString::new("type");
         let uuid_key = CFString::new("uuid");
-        CFDictionarySetValue(dict, type_key.as_concrete_TypeRef() as RawCFTypeRef, zero_num);
+        CFDictionarySetValue(
+            dict,
+            type_key.as_concrete_TypeRef() as RawCFTypeRef,
+            zero_num,
+        );
         CFDictionarySetValue(
             dict,
             uuid_key.as_concrete_TypeRef() as RawCFTypeRef,
@@ -433,10 +456,7 @@ pub fn create_agent_space() -> napi::Result<serde_json::Value> {
 /// the move ΓÇö the typical outcome on SIP-enabled Macs where the call
 /// silently no-ops for windows we don't own.
 #[napi]
-pub fn move_window_to_space(
-    window_id: u32,
-    space_id: i64,
-) -> napi::Result<serde_json::Value> {
+pub fn move_window_to_space(window_id: u32, space_id: i64) -> napi::Result<serde_json::Value> {
     let cgs = load_cgs();
     if !cgs.mutates_ok {
         return Ok(serde_json::json!({
@@ -505,10 +525,7 @@ pub fn move_window_to_space(
 
 /// Remove a window from a Space (companion to `move_window_to_space`).
 #[napi]
-pub fn remove_window_from_space(
-    window_id: u32,
-    space_id: i64,
-) -> napi::Result<serde_json::Value> {
+pub fn remove_window_from_space(window_id: u32, space_id: i64) -> napi::Result<serde_json::Value> {
     let cgs = load_cgs();
     if !cgs.mutates_ok {
         return Ok(serde_json::json!({

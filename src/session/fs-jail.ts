@@ -65,19 +65,31 @@ function isWithin(child: string, root: string): boolean {
  * or `null` when the target is allowed. Returns `null` when no roots are
  * configured (jail disabled — legacy behavior).
  */
-export function fsRootsViolation(target: string): FsRootViolation | null {
-  const roots = fsRoots()
-  if (roots.length === 0) return null
+export function fsRootsViolation(target: string, clientRoots?: readonly string[]): FsRootViolation | null {
+  const configuredRoots = fsRoots()
   const resolved = resolveForJail(target)
-  if (roots.some(root => isWithin(resolved, root))) return null
+  const normalizedClientRoots = clientRoots?.map(root => {
+    const absolute = path.resolve(root)
+    try { return fs.realpathSync(absolute) } catch { return absolute }
+  })
+  const insideConfigured = configuredRoots.length === 0
+    || configuredRoots.some(root => isWithin(resolved, root))
+  const insideClient = normalizedClientRoots === undefined
+    || normalizedClientRoots.some(root => isWithin(resolved, root))
+  if (insideConfigured && insideClient) return null
+  const roots = normalizedClientRoots === undefined
+    ? configuredRoots
+    : configuredRoots.length === 0
+      ? normalizedClientRoots
+      : [...new Set([...configuredRoots, ...normalizedClientRoots])]
   return {
     error: 'fs_root_denied',
     path: target,
     resolved,
     roots,
     remediation: [
-      `Path escapes COMPUTER_USE_FS_ROOTS. Allowed roots: ${roots.join(', ')}.`,
-      'Use a path inside an allowed root, or adjust/unset COMPUTER_USE_FS_ROOTS.',
+      `Path is outside the negotiated filesystem boundaries. Configured roots: ${configuredRoots.join(', ') || '(unrestricted)'}. Client roots: ${normalizedClientRoots?.join(', ') || (normalizedClientRoots ? '(none)' : '(unsupported)')}.`,
+      'Use a path allowed by both the MCP client roots and COMPUTER_USE_FS_ROOTS.',
     ],
   }
 }

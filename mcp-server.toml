@@ -1,0 +1,461 @@
+server_id = "computer_use_mcp"
+display_name = "Computer Use"
+version = "7.1.0"
+domain = "desktop-automation"
+sdk_version = "2.0.0"
+risk_level = "high"
+writes_allowed = "gated"
+transports = ["stdio", "streamable-http"]
+protocol_versions = ["2025-11-25", "2026-07-28"]
+extensions = ["io.modelcontextprotocol/tasks"]
+credentials = []
+governance_gates = ["desktop_approval", "filesystem_roots"]
+environments = ["development", "staging", "production"]
+
+[[tools]]
+name = "doctor"
+description = "Doctor"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "policy_status"
+description = "Policy Status"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "agent_pointer"
+description = "Agent Pointer"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "openai_computer"
+description = "Openai Computer"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "screenshot"
+description = "Screenshot"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "zoom"
+description = "Zoom"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "left_click"
+description = "Left Click"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "right_click"
+description = "Right Click"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "middle_click"
+description = "Middle Click"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "double_click"
+description = "Double Click"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "triple_click"
+description = "Triple Click"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "mouse_move"
+description = "Mouse Move"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "left_click_drag"
+description = "Left Click Drag"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "cursor_position"
+description = "Cursor Position"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "left_mouse_down"
+description = "Left Mouse Down"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "left_mouse_up"
+description = "Left Mouse Up"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "scroll"
+description = "Scroll"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "type"
+description = "Type"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "key"
+description = "Key"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "hold_key"
+description = "Hold Key"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "read_clipboard"
+description = "Read Clipboard"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "write_clipboard"
+description = "Write Clipboard"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "open_application"
+description = "Open Application"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_frontmost_app"
+description = "Get Frontmost App"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "list_windows"
+description = "List Windows"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "list_running_apps"
+description = "List Running Apps"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "hide_app"
+description = "Hide App"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "unhide_app"
+description = "Unhide App"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_display_size"
+description = "Get Display Size"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "list_displays"
+description = "List Displays"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_window"
+description = "Get Window"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_cursor_window"
+description = "Get Cursor Window"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "activate_app"
+description = "Activate App"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "activate_window"
+description = "Activate Window"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "resize_window"
+description = "Resize Window"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "wait"
+description = "Wait"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "snapshot"
+description = "Snapshot"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_ui_tree"
+description = "Get Ui Tree"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_focused_element"
+description = "Get Focused Element"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "find_element"
+description = "Find Element"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "click_element"
+description = "Click Element"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "set_value"
+description = "Set Value"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "press_button"
+description = "Press Button"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "select_menu_item"
+description = "Select Menu Item"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "fill_form"
+description = "Fill Form"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "run_script"
+description = "Run Script"
+risk_class = "destructive"
+requires_approval = true
+credential_bindings = []
+
+[[tools]]
+name = "get_app_dictionary"
+description = "Get App Dictionary"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "list_menu_bar"
+description = "List Menu Bar"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_tool_guide"
+description = "Get Tool Guide"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_app_capabilities"
+description = "Get App Capabilities"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "list_spaces"
+description = "List Spaces"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_active_space"
+description = "Get Active Space"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "create_agent_space"
+description = "Create Agent Space"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "move_window_to_space"
+description = "Move Window To Space"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "remove_window_from_space"
+description = "Remove Window From Space"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "destroy_space"
+description = "Destroy Space"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_tool_metadata"
+description = "Get Tool Metadata"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "filesystem"
+description = "Filesystem"
+risk_class = "destructive"
+requires_approval = true
+credential_bindings = []
+
+[[tools]]
+name = "process_kill"
+description = "Process Kill"
+risk_class = "destructive"
+requires_approval = true
+credential_bindings = []
+
+[[tools]]
+name = "registry"
+description = "Registry"
+risk_class = "destructive"
+requires_approval = true
+credential_bindings = []
+
+[[tools]]
+name = "notification"
+description = "Notification"
+risk_class = "external_write"
+requires_approval = true
+credential_bindings = []
+
+[[tools]]
+name = "multi_select"
+description = "Multi Select"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "multi_edit"
+description = "Multi Edit"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "scrape"
+description = "Scrape"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []

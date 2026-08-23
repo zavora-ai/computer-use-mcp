@@ -1,5 +1,49 @@
 # Changelog
 
+## v7.1.0 (2026-08-23)
+
+Additive MCP capability release. All 64 v7 tool names and input schemas remain stable.
+
+### Added
+
+- Negotiated MCP client roots, enforced together with `COMPUTER_USE_FS_ROOTS`.
+- Resource subscribe/unsubscribe and state-derived update notifications.
+- Readable filesystem `resource_link` results and a root-confined filesystem resource template.
+- Disclosure-safe MCP logging with SDK log-level handling.
+- Exact-scope form elicitation for one-shot policy approvals.
+- Human-readable tool titles and prompt/resource completion.
+- Runtime v7 profile list-change notifications.
+- `mcp-server.toml` registry manifest and expanded architecture documentation.
+- MCP 2026-07-28 stateless serving over stdio and Streamable HTTP, with legacy 2025 fallback.
+- Per-request protocol/client/capability envelopes, `server/discover`, server identity, private cache hints, and `subscriptions/listen`.
+- In-band multi-round-trip Roots and exact-scope form elicitation protected by signed, expiring request state.
+- `io.modelcontextprotocol/tasks` for selected long-running read-only tools, including get/update/cancel, TTL, cancellation, routing-header validation, and authenticated caller isolation.
+- Standard behavior annotations on all 64 tools and audience/priority annotations on resources.
+- Loopback-only HTTP runner plus a fetch-shaped handler for authenticated embedding.
+
+### Changed
+
+- Migrated from the monolithic SDK 1.30.0 package to exact `@modelcontextprotocol/{server,client,core,node}` 2.0.0 packages.
+- Minimum Node.js version is now 20.
+- Legacy logging, roots, and reverse elicitation remain available but are deprecated by MCP 2026-07-28.
+
+### Removed
+
+- The unreleased v8 preview facade, contracts, migration commands, remote sidecar, supervisor package, examples, conformance artifacts, and release gates. Its incompatible Tasks adapter was replaced by the standard extension on v7.1.
+
+### Security
+
+- Roots-capable clients fail closed while roots refresh or when `roots/list` fails.
+- Filesystem resources repeat containment checks and bound file and directory reads.
+- MCP logs exclude arguments, results, secrets, scripts, clipboard values, and image data.
+
+### Verification
+
+- All 208 automated tests pass locally, including legacy MCP, stateless MCP 2026-07-28, Tasks, MRTR, subscriptions, annotations, targeting, cancellation, filesystem containment, and package installation.
+- The packed npm artifact installs without optional packages and all seven public entry points import successfully.
+- A live macOS arm64 test loaded the native module, enumerated the desktop, observed Accessibility state, captured a screenshot, injected a no-op pointer event, opened TextEdit, clicked, typed, round-tripped and restored the clipboard, and saved/read files.
+- Direct native typing preserves Unicode punctuation, accented text, and emoji. TextEdit AppleScript callers remain responsible for choosing a Unicode-safe file encoding when saving plain text.
+
 ## v7.0.0 (2026-07-10)
 
 Architecture-finish release. Builds on the v6.2.1 modernization with cancellation, progress, filesystem containment, a native binary resolver, and a session-layer split. See `docs/specs/MODERNIZATION-v6.2-v7.md`.

@@ -1,12 +1,20 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
+  "homepage": "https://github.com/zavora-ai/computer-use-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zavora-ai/computer-use-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zavora-ai/computer-use-mcp/issues"
+  },
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "os": [
     "darwin",
@@ -14,7 +22,8 @@
     "linux"
   ],
   "bin": {
-    "computer-use-mcp": "dist/server.js"
+    "computer-use-mcp": "dist/server.js",
+    "computer-use-mcp-http": "dist/http.js"
   },
   "exports": {
     ".": {
@@ -29,15 +38,31 @@
       "import": "./dist/server.js",
       "types": "./dist/server.d.ts"
     },
+    "./http": {
+      "import": "./dist/http.js",
+      "types": "./dist/http.d.ts"
+    },
     "./tool-catalog": {
       "import": "./dist/tool-catalog.js",
       "types": "./dist/tool-catalog.d.ts"
+    },
+    "./registry": {
+      "import": "./dist/registry/registry.js",
+      "types": "./dist/registry/registry.d.ts"
+    },
+    "./host-native": {
+      "import": "./dist/native.js",
+      "types": "./dist/native.d.ts"
     }
   },
   "files": [
     "AGENTS.md",
     "LICENSE",
+    "mcp-server.toml",
     "README.md",
+    "SECURITY.md",
+    "docs/ARCHITECTURE.md",
+    "docs/releases/v7.1.0.md",
     "dist/entrypoint.d.ts",
     "dist/entrypoint.js",
     "computer-use-napi.darwin-arm64.node",
@@ -51,6 +76,12 @@
     "dist/client.js",
     "dist/instructions.d.ts",
     "dist/instructions.js",
+    "dist/http.d.ts",
+    "dist/http.js",
+    "dist/mcp-tasks.d.ts",
+    "dist/mcp-tasks.js",
+    "dist/mcp-v7.1.d.ts",
+    "dist/mcp-v7.1.js",
     "dist/native.d.ts",
     "dist/native.js",
     "dist/output-schemas.d.ts",
@@ -61,11 +92,15 @@
     "dist/resources.js",
     "dist/result.d.ts",
     "dist/result.js",
+    "dist/resource-links.d.ts",
+    "dist/resource-links.js",
+    "dist/registry/",
     "dist/server.d.ts",
     "dist/server.js",
     "dist/session.d.ts",
     "dist/session.js",
     "dist/session/",
+    "scripts/verify-input-attribution.mjs",
     "dist/tool-catalog.d.ts",
     "dist/tool-catalog.js",
     "skills"
@@ -75,26 +110,30 @@
     "build:native:win": "cd native && cargo build --release && copy target\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-x64.node",
     "build:native:win:arm64": "cd native && cargo build --release --target aarch64-pc-windows-msvc && copy target\\aarch64-pc-windows-msvc\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-arm64.node",
     "build:native:linux": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.so ../computer-use-napi.linux-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.so ../computer-use-napi.node",
-    "build:ts": "tsc",
+    "build:ts": "node scripts/clean-dist.mjs && tsc",
     "build": "npm run build:native && npm run build:ts",
     "prepare:packages": "node scripts/prepare-platform-packages.mjs",
     "test": "npm run build:ts && node --test test/*.test.mjs",
+    "test:input-attribution": "node scripts/verify-input-attribution.mjs",
     "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",
     "demo": "tsx examples/demo.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "zod": "^4.0.0"
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "^4.2.0"
   },
   "optionalDependencies": {
-    "@zavora-ai/computer-use-mcp-darwin-arm64": "7.0.0",
-    "@zavora-ai/computer-use-mcp-darwin-x64": "7.0.0",
-    "@zavora-ai/computer-use-mcp-win32-x64": "7.0.0",
-    "@zavora-ai/computer-use-mcp-win32-arm64": "7.0.0",
-    "@zavora-ai/computer-use-mcp-linux-x64": "7.0.0",
-    "@zavora-ai/computer-use-mcp-linux-arm64": "7.0.0"
+    "@zavora-ai/computer-use-mcp-darwin-arm64": "7.1.0",
+    "@zavora-ai/computer-use-mcp-darwin-x64": "7.1.0",
+    "@zavora-ai/computer-use-mcp-linux-arm64": "7.1.0",
+    "@zavora-ai/computer-use-mcp-linux-x64": "7.1.0",
+    "@zavora-ai/computer-use-mcp-win32-arm64": "7.1.0",
+    "@zavora-ai/computer-use-mcp-win32-x64": "7.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

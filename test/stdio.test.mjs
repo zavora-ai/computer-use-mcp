@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 // ── Helper: connect a fresh stdio client ──────────────────────────────────────
 
@@ -80,13 +80,13 @@ test('activate_window schema includes window_id and timeout_ms parameters', asyn
   })
 })
 
-// ── Server version is 7.0.0 ─────────────────────────────────────────────────
+// ── Server version is 7.1.0 ─────────────────────────────────────────────────
 
-test('server reports version 7.0.0', async () => {
+test('server reports version 7.1.0', async () => {
   await withClient(async (client) => {
     const info = client.getServerVersion()
     assert.ok(info, 'server version info should be available after connect')
-    assert.equal(info.version, '7.0.0', 'server version should be 7.0.0')
+    assert.equal(info.version, '7.1.0', 'server version should be 7.1.0')
     assert.equal(info.name, 'computer-use', 'server name should be computer-use')
   })
 })

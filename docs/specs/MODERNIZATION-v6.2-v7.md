@@ -5,21 +5,23 @@
 | **Title** | `@zavora-ai/computer-use-mcp` Protocol & Architecture Modernization |
 | **Author** | TBD (Zavora / maintainers) |
 | **Date** | 2026-07-10 |
-| **Status** | **Revision 3 — implementation in progress; completion plan below is authoritative** |
-| **Current version** | 6.2.1 (`package.json`) |
-| **Target versions** | v6.2 → v6.3 → v6.4 → v7.0 |
-| **Primary distribution** | npm + stdio MCP (`npx @zavora-ai/computer-use-mcp`) |
+| **Status** | **Historical v6.2→v7.0 plan; completed and superseded by the v7.1 architecture** |
+| **Current version** | 7.1.0 (`package.json`) |
+| **Target versions** | v6.2 → v6.3 → v6.4 → v7.0 → v7.1 |
+| **Primary distribution** | npm + stdio MCP; optional stateless Streamable HTTP |
 | **Tool count** | **64** MCP tools, registered through `registerTool` |
 
 ---
 
 ## Overview
 
-`@zavora-ai/computer-use-mcp` is a production MCP server + TypeScript client for cross-platform desktop control (macOS + Windows). `src/server.ts` registers **64 tools** on `@modelcontextprotocol/sdk`’s `McpServer`; `src/session.ts` (currently ~3458 LOC) owns policy, lock/pump, focus, and a giant `dispatch` switch; `src/native.ts` loads platform-specific Rust NAPI binaries; `src/client.ts` wraps the MCP client with typed helpers.
+> **v7.1 addendum (2026-08-23):** this document records the completed modernization path and retains historical SDK facts for auditability. The live design is [../ARCHITECTURE.md](../ARCHITECTURE.md). v7.1 uses exact `@modelcontextprotocol/{server,client,core,node}` 2.0.0 packages, supports MCP 2026-07-28 plus legacy 2025, and implements stateless HTTP, MRTR Roots/elicitation, cache hints, `subscriptions/listen`, and the Tasks extension without changing the 64-tool v7 API.
+
+`@zavora-ai/computer-use-mcp` is a production MCP server + TypeScript client for cross-platform desktop control (macOS + Windows). `src/server.ts` registers **64 tools** on the Model Context Protocol TypeScript SDK's `McpServer`; `src/session.ts` owns policy, lock/pump, focus, and dispatch; `src/native.ts` loads platform-specific Rust NAPI binaries; `src/client.ts` wraps the MCP client with typed helpers.
 
 The product is feature-rich (AX/UIA, scripting, spaces, filesystem, snapshot, OpenAI computer adapter, policy/audit) and now exposes modern MCP surfaces: annotations, priority `structuredContent`/`outputSchema`, instructions, prompts, resources, profiles, and elicitation. The remaining protocol work is compatibility verification and cancellation/progress. The remaining architecture work is to replace the parallel catalog, inline schemas, and dispatcher with a true registry.
 
-**SDK note:** the package pins `@modelcontextprotocol/sdk` to exact `1.29.0` (no caret) and uses `registerTool`. Resolved in v6.2.1 per K11 — release builds use an exact tested SDK version rather than a caret range.
+**Historical SDK note:** v6.2.1 pinned `@modelcontextprotocol/sdk` to exact `1.29.0`. v7.1 now pins the split SDK v2 packages to exact `2.0.0`; the exact-version reproducibility rule remains unchanged.
 
 This design is an **incremental, PR-ordered modernization**: ship protocol correctness first, then reduce the session/registry maintenance burden and harden packaging/security. The TypeScript/N-API server remains the product; rmcp is a bounded evaluation, not a rewrite commitment.
 
@@ -784,7 +786,7 @@ Rollback = pin previous npm version. Public tool names/args stable.
 | ID | Question | Status |
 |----|----------|--------|
 | ~~Q1~~ | v7 default profile `core` vs `full`? | **Closed → K22** keep **`full`** through v7; opt-in via env |
-| ~~Q6~~ | Expand SUPPORTED_TARGETS (win32-arm64, etc.)? | **Closed → K23** stay **darwin-arm64, darwin-x64, win32-x64 only** in 7.0 |
+| ~~Q6~~ | Expand SUPPORTED_TARGETS (win32-arm64, etc.)? | **Superseded 2026-08-22:** release packaging now covers darwin, Windows, and Linux on arm64/x64, including win32-arm64. |
 | ~~Q8~~ | Schedule additive `mouse_click` consolidation? | **Closed → K24** **skip** for v6.2–7.0 minimum; PR-17 deferred |
 | ~~Q2~~ | Token vs elicitation | **Closed → K13** token wins |
 | ~~Q3~~ | scrape readOnly + openWorld | **Closed → Appendix A** |
@@ -822,7 +824,7 @@ No open product questions remain for the v6.2–7.0 train.
 | **K20** | `get_tool_metadata` is **server-local** registry handler, not `dispatch` | Preserves current architecture |
 | **K21** | **Wire-compat dual-write:** (1) object tools → preserve current JSON keys (additive only); (2) top-level array/scalar tools → wrap for schema + change text JSON, **documented in PR-3 CHANGELOG** | Agents parse text today; only break non-object wire shapes (Appendix C) |
 | **K22** | Default tool profile remains **`full` through v7** (and v6.x); users opt into `core`/`ax`/`scripting`/`windows-admin` via env | No surprise tool loss for existing Claude/Codex configs |
-| **K23** | Native **SUPPORTED_TARGETS** for packaging stay **darwin-arm64, darwin-x64, win32-x64 only** in 7.0 — no win32-arm64 | Matches current NAPI matrix and CI; avoid unvalidated optionalDeps |
+| **K23** | **Superseded:** native packaging now includes darwin-arm64/x64, win32-arm64/x64, and linux-arm64/x64. | Windows ARM64 has a dedicated optional package and native CI runner; each target remains release-attested. |
 | **K24** | **No** additive `mouse_click` consolidation in the v6.2–7.0 minimum PR train; PR-17 deferred indefinitely | Avoid optional scope; existing click tools remain |
 
 ---

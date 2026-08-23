@@ -15,8 +15,12 @@ mod platform {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
                     let id = parts[0].parse::<i64>().unwrap_or(0);
-                    if parts.get(1) == Some(&"*") { active_id = Some(id); }
-                    spaces.push(serde_json::json!({ "id": id, "type": 0, "uuid": format!("desktop-{id}") }));
+                    if parts.get(1) == Some(&"*") {
+                        active_id = Some(id);
+                    }
+                    spaces.push(
+                        serde_json::json!({ "id": id, "type": 0, "uuid": format!("desktop-{id}") }),
+                    );
                 }
             }
             return Ok(serde_json::json!({
@@ -46,26 +50,41 @@ mod platform {
 
     #[napi]
     pub fn create_agent_space() -> napi::Result<serde_json::Value> {
-        Ok(serde_json::json!({ "supported": false, "reason": "workspace creation not supported on Linux via this interface" }))
+        Ok(
+            serde_json::json!({ "supported": false, "reason": "workspace creation not supported on Linux via this interface" }),
+        )
     }
 
     #[napi]
     pub fn move_window_to_space(window_id: u32, space_id: u32) -> napi::Result<serde_json::Value> {
         let status = std::process::Command::new("wmctrl")
-            .args(["-i", "-r", &format!("0x{:x}", window_id), "-t", &space_id.to_string()])
+            .args([
+                "-i",
+                "-r",
+                &format!("0x{:x}", window_id),
+                "-t",
+                &space_id.to_string(),
+            ])
             .status();
         let moved = status.map(|s| s.success()).unwrap_or(false);
-        Ok(serde_json::json!({ "moved": moved, "reason": if moved { serde_json::Value::Null } else { serde_json::json!("wmctrl failed") } }))
+        Ok(
+            serde_json::json!({ "moved": moved, "reason": if moved { serde_json::Value::Null } else { serde_json::json!("wmctrl failed") } }),
+        )
     }
 
     #[napi]
-    pub fn remove_window_from_space(_window_id: u32, _space_id: u32) -> napi::Result<serde_json::Value> {
+    pub fn remove_window_from_space(
+        _window_id: u32,
+        _space_id: u32,
+    ) -> napi::Result<serde_json::Value> {
         Ok(serde_json::json!({ "removed": false, "reason": "not supported on Linux" }))
     }
 
     #[napi]
     pub fn destroy_space(_space_id: Option<u32>) -> napi::Result<serde_json::Value> {
-        Ok(serde_json::json!({ "destroyed": false, "reason": "workspace destruction not supported on Linux via this interface" }))
+        Ok(
+            serde_json::json!({ "destroyed": false, "reason": "workspace destruction not supported on Linux via this interface" }),
+        )
     }
 }
 
@@ -94,8 +113,7 @@ mod platform {
         GUID::from_u128(0xaa509086_5ca9_4c25_8f95_589d3c07b48a);
 
     // ImmersiveShell for accessing internal manager
-    const CLSID_IMMERSIVE_SHELL: GUID =
-        GUID::from_u128(0xC2F03A33_21F5_47FA_B4BB_156362A2F239);
+    const CLSID_IMMERSIVE_SHELL: GUID = GUID::from_u128(0xC2F03A33_21F5_47FA_B4BB_156362A2F239);
 
     // Build-dependent GUIDs for IVirtualDesktopManagerInternal
     fn get_internal_iid() -> GUID {
@@ -105,7 +123,9 @@ mod platform {
             // Use RtlGetVersion which works without manifest
             #[link(name = "ntdll")]
             extern "system" {
-                fn RtlGetVersion(info: *mut windows::Win32::System::SystemInformation::OSVERSIONINFOW) -> i32;
+                fn RtlGetVersion(
+                    info: *mut windows::Win32::System::SystemInformation::OSVERSIONINFOW,
+                ) -> i32;
             }
             RtlGetVersion(&mut info);
             info.dwBuildNumber
@@ -165,7 +185,11 @@ mod platform {
             }
             let len = (size as usize / 2).saturating_sub(1); // exclude null
             let s = String::from_utf16_lossy(&buf[..len]);
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         }
     }
 
@@ -180,7 +204,10 @@ mod platform {
         // concatenated 16-byte GUIDs in the VirtualDesktopIDs binary value.
         let path = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VirtualDesktops";
         let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-        let wide_ids: Vec<u16> = "VirtualDesktopIDs".encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_ids: Vec<u16> = "VirtualDesktopIDs"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         let mut desktops = Vec::new();
         unsafe {
@@ -236,7 +263,10 @@ mod platform {
             // Fallback: try Desktops subkey (some Win11 builds use this)
             if desktops.is_empty() {
                 let desktops_path = format!("{}\\Desktops", path);
-                let wide_dp: Vec<u16> = desktops_path.encode_utf16().chain(std::iter::once(0)).collect();
+                let wide_dp: Vec<u16> = desktops_path
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
                 let mut dk = HKEY::default();
                 let status = RegOpenKeyExW(
                     HKEY_CURRENT_USER,
@@ -260,7 +290,9 @@ mod platform {
                             None,
                             None,
                         );
-                        if status.is_err() { break; }
+                        if status.is_err() {
+                            break;
+                        }
                         let guid_str = String::from_utf16_lossy(&name_buf[..name_len as usize]);
                         let display_name = get_desktop_name_from_registry(&guid_str)
                             .unwrap_or_else(|| format!("Desktop {}", index + 1));
@@ -285,7 +317,10 @@ mod platform {
         use windows::Win32::System::Registry::*;
         let path = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VirtualDesktops";
         let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-        let wide_name: Vec<u16> = "CurrentVirtualDesktop".encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_name: Vec<u16> = "CurrentVirtualDesktop"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         unsafe {
             let mut key = HKEY::default();
@@ -350,14 +385,18 @@ mod platform {
             }));
         }
 
-        let spaces: Vec<serde_json::Value> = desktops.iter().enumerate().map(|(i, d)| {
-            serde_json::json!({
-                "id": i,
-                "type": 0,
-                "uuid": d.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "name": d.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        let spaces: Vec<serde_json::Value> = desktops
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                serde_json::json!({
+                    "id": i,
+                    "type": 0,
+                    "uuid": d.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                    "name": d.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                })
             })
-        }).collect();
+            .collect();
 
         Ok(serde_json::json!({
             "supported": true,
@@ -386,7 +425,10 @@ mod platform {
     }
 
     #[napi]
-    pub fn move_window_to_space(_window_id: u32, _space_id: i64) -> napi::Result<serde_json::Value> {
+    pub fn move_window_to_space(
+        _window_id: u32,
+        _space_id: i64,
+    ) -> napi::Result<serde_json::Value> {
         Ok(serde_json::json!({
             "moved": false,
             "reason": "virtual_desktop_window_move_requires_internal_com_interface",
@@ -394,7 +436,10 @@ mod platform {
     }
 
     #[napi]
-    pub fn remove_window_from_space(_window_id: u32, _space_id: i64) -> napi::Result<serde_json::Value> {
+    pub fn remove_window_from_space(
+        _window_id: u32,
+        _space_id: i64,
+    ) -> napi::Result<serde_json::Value> {
         Ok(serde_json::json!({ "removed": false, "reason": "not_supported_on_windows" }))
     }
 

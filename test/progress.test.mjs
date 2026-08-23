@@ -6,8 +6,8 @@ import test from 'node:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 function makeTree() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cu-prog-')))
@@ -29,7 +29,6 @@ test('filesystem search emits progress notifications when a progressToken is pre
       const progress = []
       const r = await c.callTool(
         { name: 'filesystem', arguments: { mode: 'search', path: root, pattern: '*', recursive: true } },
-        undefined,
         { onprogress: (p) => progress.push(p) },
       )
       assert.ok(!r.isError, 'search should succeed')

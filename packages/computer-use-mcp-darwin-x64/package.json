@@ -1,6 +1,6 @@
 {
   "name": "@zavora-ai/computer-use-mcp-darwin-x64",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "Native binary for @zavora-ai/computer-use-mcp (darwin-x64). Installed automatically as an optionalDependency.",
   "license": "MIT",
   "os": ["darwin"],
