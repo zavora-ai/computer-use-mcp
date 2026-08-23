@@ -6,74 +6,85 @@ mod linux {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     use std::process::Command;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::OnceLock;
 
-    static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
     static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
 
     fn is_wayland() -> bool {
         *IS_WAYLAND.get_or_init(|| {
-            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+            std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false)
         })
     }
 
     fn capture_wayland(tmp_path: &str, _window_id: Option<u32>) -> bool {
         // Try gnome-screenshot first (works on some GNOME Wayland versions)
-        if Command::new("gnome-screenshot").args(["-f", tmp_path]).status()
-            .map(|s| s.success()).unwrap_or(false) {
-            if std::path::Path::new(tmp_path).exists() { return true; }
+        if Command::new("gnome-screenshot")
+            .args(["-f", tmp_path])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            if std::path::Path::new(tmp_path).exists() {
+                return true;
+            }
         }
         // Try grim (works on wlroots compositors)
-        if Command::new("grim").arg(tmp_path).status()
-            .map(|s| s.success()).unwrap_or(false) {
-            if std::path::Path::new(tmp_path).exists() { return true; }
-        }
-        // Use XDG Desktop Portal (works on GNOME 50+ Wayland)
-        let portal_result = Command::new("gdbus").args([
-            "call", "--session",
-            "--dest", "org.freedesktop.portal.Desktop",
-            "--object-path", "/org/freedesktop/portal/desktop",
-            "--method", "org.freedesktop.portal.Screenshot.Screenshot",
-            "", "{'interactive': <false>}",
-        ]).output();
-        if portal_result.is_ok() {
-            // Portal saves to ~/Pictures/Screenshot*.png — wait and find it
-            std::thread::sleep(std::time::Duration::from_millis(1500));
-            let pictures_dir = std::env::var("HOME").unwrap_or_default() + "/Pictures";
-            if let Ok(entries) = std::fs::read_dir(&pictures_dir) {
-                let mut screenshots: Vec<_> = entries.filter_map(|e| e.ok())
-                    .filter(|e| e.file_name().to_string_lossy().starts_with("Screenshot"))
-                    .collect();
-                screenshots.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
-                if let Some(latest) = screenshots.first() {
-                    if let Ok(_) = std::fs::copy(latest.path(), tmp_path) {
-                        let _ = std::fs::remove_file(latest.path());
-                        return true;
-                    }
-                }
+        if Command::new("grim")
+            .arg(tmp_path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            if std::path::Path::new(tmp_path).exists() {
+                return true;
             }
         }
         // Fall back to scrot via XWayland
-        Command::new("scrot").arg(tmp_path).status()
-            .map(|s| s.success()).unwrap_or(false)
+        Command::new("scrot")
+            .arg(tmp_path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     fn capture_x11(tmp_path: &str, window_id: Option<u32>, target_app: &Option<String>) -> bool {
         if let Some(wid) = window_id {
-            if Command::new("import").args(["-window", &wid.to_string(), tmp_path]).status()
-                .map(|s| s.success()).unwrap_or(false) { return true; }
+            if Command::new("import")
+                .args(["-window", &wid.to_string(), tmp_path])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
         }
         if target_app.is_some() {
-            if Command::new("scrot").args(["-u", tmp_path]).status()
-                .map(|s| s.success()).unwrap_or(false) { return true; }
+            if Command::new("scrot")
+                .args(["-u", tmp_path])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
         }
-        Command::new("scrot").arg(tmp_path).status()
-            .map(|s| s.success()).unwrap_or(false)
-            || Command::new("gnome-screenshot").args(["-f", tmp_path]).status()
-                .map(|s| s.success()).unwrap_or(false)
-            || Command::new("import").args(["-window", "root", tmp_path]).status()
-                .map(|s| s.success()).unwrap_or(false)
+        Command::new("scrot")
+            .arg(tmp_path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+            || Command::new("gnome-screenshot")
+                .args(["-f", tmp_path])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            || Command::new("import")
+                .args(["-window", "root", tmp_path])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
     }
 
     #[napi]
@@ -84,8 +95,12 @@ mod linux {
         previous_hash: Option<String>,
         window_id: Option<u32>,
     ) -> napi::Result<serde_json::Value> {
-        let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
-        let tmp_path = format!("/tmp/cu-mcp-shot-{}-{}.png", std::process::id(), seq);
+        let temporary = tempfile::Builder::new()
+            .prefix("cu-mcp-shot-")
+            .suffix(".png")
+            .tempfile()
+            .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
+        let tmp_path = temporary.path().to_string_lossy().into_owned();
 
         let captured = if is_wayland() {
             capture_wayland(&tmp_path, window_id)
@@ -95,18 +110,23 @@ mod linux {
 
         if !captured || !std::path::Path::new(&tmp_path).exists() {
             return Err(napi::Error::from_reason(
-                "Screenshot failed: install scrot, gnome-screenshot, or grim"));
+                "Screenshot failed: install scrot, gnome-screenshot, or grim",
+            ));
         }
 
-        let raw = std::fs::read(&tmp_path).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
-        let _ = std::fs::remove_file(&tmp_path);
+        let raw =
+            std::fs::read(&tmp_path).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
 
         let img = image::load_from_memory(&raw)
             .map_err(|e| napi::Error::from_reason(format!("decode: {e}")))?;
 
         let target_width = width.unwrap_or(1024);
         let resized = if img.width() > target_width {
-            img.resize(target_width, u32::MAX, image::imageops::FilterType::Lanczos3)
+            img.resize(
+                target_width,
+                u32::MAX,
+                image::imageops::FilterType::Lanczos3,
+            )
         } else {
             img
         };
@@ -114,12 +134,17 @@ mod linux {
         let q = quality.unwrap_or(80);
         let (encoded, mime) = if q == 0 {
             let mut buf = Vec::new();
-            resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            resized
+                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
                 .map_err(|e| napi::Error::from_reason(format!("png encode: {e}")))?;
             (buf, "image/png")
         } else {
             let mut buf = Vec::new();
-            resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            resized
+                .write_to(
+                    &mut std::io::Cursor::new(&mut buf),
+                    image::ImageFormat::Jpeg,
+                )
                 .map_err(|e| napi::Error::from_reason(format!("jpeg encode: {e}")))?;
             (buf, "image/jpeg")
         };
@@ -166,12 +191,8 @@ mod macos {
     use objc::{msg_send, sel, sel_impl};
     use std::collections::hash_map::DefaultHasher;
     use std::ffi::CStr;
-    use std::fs::OpenOptions;
     use std::hash::{Hash, Hasher};
     use std::process::Command;
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    static SHOT_SEQ: AtomicU32 = AtomicU32::new(0);
 
     type CGWindowID = u32;
     type RawCFTypeRef = *const std::ffi::c_void;
@@ -184,10 +205,14 @@ mod macos {
     }
 
     fn nsstring_to_string(nsstr: *mut Object) -> Option<String> {
-        if nsstr.is_null() { return None; }
+        if nsstr.is_null() {
+            return None;
+        }
         unsafe {
             let cstr: *const i8 = msg_send![nsstr, UTF8String];
-            if cstr.is_null() { return None; }
+            if cstr.is_null() {
+                return None;
+            }
             Some(CStr::from_ptr(cstr).to_string_lossy().into_owned())
         }
     }
@@ -219,7 +244,9 @@ mod macos {
     unsafe fn dict_get_i64(dict: CFDictionaryRef, key: &str) -> Option<i64> {
         let cf_key = CFString::new(key);
         let val = CFDictionaryGetValue(dict, cf_key.as_concrete_TypeRef() as RawCFTypeRef);
-        if val.is_null() { return None; }
+        if val.is_null() {
+            return None;
+        }
         let cf_num: CFNumber = TCFType::wrap_under_get_rule(val as *const _);
         cf_num.to_i64()
     }
@@ -228,12 +255,18 @@ mod macos {
         let pid = pid_for_bundle(bundle_id)? as i64;
         unsafe {
             let array_ref = CGWindowListCopyWindowInfo(1 << 0, 0);
-            if array_ref.is_null() { return None; }
+            if array_ref.is_null() {
+                return None;
+            }
             let count = CFArrayGetCount(array_ref) as usize;
             for i in 0..count {
                 let dict = CFArrayGetValueAtIndex(array_ref, i as isize) as CFDictionaryRef;
-                if dict_get_i64(dict, "kCGWindowLayer") != Some(0) { continue; }
-                if dict_get_i64(dict, "kCGWindowOwnerPID") != Some(pid) { continue; }
+                if dict_get_i64(dict, "kCGWindowLayer") != Some(0) {
+                    continue;
+                }
+                if dict_get_i64(dict, "kCGWindowOwnerPID") != Some(pid) {
+                    continue;
+                }
                 if let Some(wid) = dict_get_i64(dict, "kCGWindowNumber") {
                     CFRelease(array_ref as *const _);
                     return Some(wid as u32);
@@ -252,44 +285,54 @@ mod macos {
         previous_hash: Option<String>,
         window_id: Option<u32>,
     ) -> napi::Result<serde_json::Value> {
-        let seq = SHOT_SEQ.fetch_add(1, Ordering::Relaxed);
-        let tmp = format!("/tmp/cu-{}-{}.jpg", std::process::id(), seq);
-        OpenOptions::new().write(true).create_new(true).open(&tmp)
+        let temporary = tempfile::Builder::new()
+            .prefix("cu-mcp-shot-")
+            .suffix(".jpg")
+            .tempfile()
             .map_err(|e| napi::Error::from_reason(format!("temp file: {e}")))?;
+        let tmp = temporary.path().to_string_lossy().into_owned();
 
         let mut args: Vec<String> = vec!["-x".into(), "-t".into(), "jpg".into()];
         if let Some(wid) = window_id {
-            args.push("-l".into()); args.push(wid.to_string());
+            args.push("-l".into());
+            args.push(wid.to_string());
         } else if let Some(bundle_id) = target_app {
             let wid = window_id_for_bundle(&bundle_id).ok_or_else(|| {
-                let _ = std::fs::remove_file(&tmp);
-                napi::Error::from_reason(format!("No on-screen window found for target_app: {bundle_id}"))
+                napi::Error::from_reason(format!(
+                    "No on-screen window found for target_app: {bundle_id}"
+                ))
             })?;
-            args.push("-l".into()); args.push(wid.to_string());
+            args.push("-l".into());
+            args.push(wid.to_string());
         }
         args.push(tmp.clone());
 
-        let status = Command::new("screencapture").args(&args).status()
-            .map_err(|e| { let _ = std::fs::remove_file(&tmp); napi::Error::from_reason(format!("screencapture: {e}")) })?;
+        let status = Command::new("screencapture")
+            .args(&args)
+            .status()
+            .map_err(|e| napi::Error::from_reason(format!("screencapture: {e}")))?;
         if !status.success() {
-            let _ = std::fs::remove_file(&tmp);
             return Err(napi::Error::from_reason("screencapture failed"));
         }
 
         if let Some(w) = width {
-            let _ = Command::new("sips").args(["--resampleWidth", &w.to_string(), &tmp]).output();
+            let _ = Command::new("sips")
+                .args(["--resampleWidth", &w.to_string(), &tmp])
+                .output();
         }
         let wants_png = quality == Some(0);
         let q = quality.unwrap_or(80).clamp(1, 100);
         if !wants_png && q != 85 {
-            let _ = Command::new("sips").args(["--setProperty", "formatOptions", &q.to_string(), &tmp]).output();
+            let _ = Command::new("sips")
+                .args(["--setProperty", "formatOptions", &q.to_string(), &tmp])
+                .output();
         }
 
-        let captured = std::fs::read(&tmp).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
-        let _ = std::fs::remove_file(&tmp);
+        let captured =
+            std::fs::read(&tmp).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
 
         let (data, mime_type, w, h) = if wants_png {
-            use image::io::Reader as ImageReader;
+            use image::ImageReader;
             use std::io::Cursor;
             let img = ImageReader::new(Cursor::new(&captured))
                 .with_guessed_format()
@@ -310,17 +353,24 @@ mod macos {
         let hash = format!("{:016x}", hasher.finish());
 
         if previous_hash.as_deref() == Some(hash.as_str()) {
-            return Ok(serde_json::json!({ "width": w, "height": h, "mimeType": mime_type, "hash": hash, "unchanged": true }));
+            return Ok(
+                serde_json::json!({ "width": w, "height": h, "mimeType": mime_type, "hash": hash, "unchanged": true }),
+            );
         }
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-        Ok(serde_json::json!({ "base64": b64, "width": w, "height": h, "mimeType": mime_type, "hash": hash, "unchanged": false }))
+        Ok(
+            serde_json::json!({ "base64": b64, "width": w, "height": h, "mimeType": mime_type, "hash": hash, "unchanged": false }),
+        )
     }
 
     fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
         let mut i = 0;
         while i + 1 < data.len() {
-            if data[i] != 0xFF { i += 1; continue; }
+            if data[i] != 0xFF {
+                i += 1;
+                continue;
+            }
             let marker = data[i + 1];
             if marker == 0xC0 || marker == 0xC2 {
                 if i + 9 < data.len() {
@@ -329,11 +379,14 @@ mod macos {
                     return Some((w, h));
                 }
             }
-            if marker == 0xD8 || marker == 0xD9 || marker == 0x00 { i += 2; }
-            else if i + 3 < data.len() {
+            if marker == 0xD8 || marker == 0xD9 || marker == 0x00 {
+                i += 2;
+            } else if i + 3 < data.len() {
                 let len = ((data[i + 2] as usize) << 8) | data[i + 3] as usize;
                 i += 2 + len;
-            } else { break; }
+            } else {
+                break;
+            }
         }
         None
     }
@@ -374,7 +427,7 @@ mod macos {
             .decode(&base64_jpeg)
             .map_err(|e| napi::Error::from_reason(format!("base64 decode: {e}")))?;
 
-        use image::io::Reader as ImageReader;
+        use image::ImageReader;
         use std::io::Cursor;
         let img = ImageReader::new(Cursor::new(&jpeg_bytes))
             .with_guessed_format()
@@ -386,8 +439,14 @@ mod macos {
         let h = rgb_img.height();
 
         let colors: [(u8, u8, u8); 8] = [
-            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
-            (255, 0, 255), (0, 255, 255), (255, 128, 0), (128, 0, 255),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
+            (255, 255, 0),
+            (255, 0, 255),
+            (0, 255, 255),
+            (255, 128, 0),
+            (128, 0, 255),
         ];
 
         if let Some(ref ann_json) = annotations {
@@ -403,14 +462,22 @@ mod macos {
                         for x in ax.max(0)..(ax + aw).min(w as i32) {
                             for dy in [ay + t, ay + ah - 1 - t] {
                                 if dy >= 0 && dy < h as i32 && x >= 0 && x < w as i32 {
-                                    rgb_img.put_pixel(x as u32, dy as u32, image::Rgb([cr, cg, cb]));
+                                    rgb_img.put_pixel(
+                                        x as u32,
+                                        dy as u32,
+                                        image::Rgb([cr, cg, cb]),
+                                    );
                                 }
                             }
                         }
                         for y in ay.max(0)..(ay + ah).min(h as i32) {
                             for dx in [ax + t, ax + aw - 1 - t] {
                                 if dx >= 0 && dx < w as i32 && y >= 0 && y < h as i32 {
-                                    rgb_img.put_pixel(dx as u32, y as u32, image::Rgb([cr, cg, cb]));
+                                    rgb_img.put_pixel(
+                                        dx as u32,
+                                        y as u32,
+                                        image::Rgb([cr, cg, cb]),
+                                    );
                                 }
                             }
                         }
@@ -424,13 +491,21 @@ mod macos {
             if cols > 0 {
                 for i in 1..cols {
                     let x = (w as u64 * i as u64 / cols as u64) as u32;
-                    if x < w { for y in 0..h { rgb_img.put_pixel(x, y, gray); } }
+                    if x < w {
+                        for y in 0..h {
+                            rgb_img.put_pixel(x, y, gray);
+                        }
+                    }
                 }
             }
             if rows > 0 {
                 for i in 1..rows {
                     let y = (h as u64 * i as u64 / rows as u64) as u32;
-                    if y < h { for x in 0..w { rgb_img.put_pixel(x, y, gray); } }
+                    if y < h {
+                        for x in 0..w {
+                            rgb_img.put_pixel(x, y, gray);
+                        }
+                    }
                 }
             }
         }
@@ -451,14 +526,17 @@ mod macos {
     #[napi]
     pub fn crop_image(
         base64_image: String,
-        x1: u32, y1: u32, x2: u32, y2: u32,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
         quality: Option<u32>,
     ) -> napi::Result<serde_json::Value> {
         let img_bytes = base64::engine::general_purpose::STANDARD
             .decode(&base64_image)
             .map_err(|e| napi::Error::from_reason(format!("base64 decode: {e}")))?;
 
-        use image::io::Reader as ImageReader;
+        use image::ImageReader;
         use std::io::Cursor;
         let img = ImageReader::new(Cursor::new(&img_bytes))
             .with_guessed_format()
@@ -483,7 +561,10 @@ mod macos {
         let (encoded, mime) = if q == 0 {
             (encode_png_mac(&raw, cw, ch)?, "image/png")
         } else {
-            (encode_jpeg_mac(&raw, cw, ch, q.clamp(1, 100) as u8)?, "image/jpeg")
+            (
+                encode_jpeg_mac(&raw, cw, ch, q.clamp(1, 100) as u8)?,
+                "image/jpeg",
+            )
         };
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&encoded);
@@ -494,7 +575,6 @@ mod macos {
         }))
     }
 }
-
 
 // ── Windows implementation ───────────────────────────────────────────────────
 #[cfg(target_os = "windows")]
@@ -535,24 +615,31 @@ mod win {
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
             D3D11CreateDevice(
-                None, D3D_DRIVER_TYPE_HARDWARE, None,
+                None,
+                D3D_DRIVER_TYPE_HARDWARE,
+                None,
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 Some(&[D3D_FEATURE_LEVEL_11_0]),
                 D3D11_SDK_VERSION,
-                Some(&mut device), None, Some(&mut context),
-            ).map_err(|e| format!("D3D11CreateDevice: {e}"))?;
+                Some(&mut device),
+                None,
+                Some(&mut context),
+            )
+            .map_err(|e| format!("D3D11CreateDevice: {e}"))?;
             let device = device.ok_or("No D3D11 device")?;
             let context = context.ok_or("No D3D11 context")?;
 
-            let dxgi_device: IDXGIDevice = device.cast()
-                .map_err(|e| format!("IDXGIDevice: {e}"))?;
-            let adapter: IDXGIAdapter = dxgi_device.GetParent()
+            let dxgi_device: IDXGIDevice =
+                device.cast().map_err(|e| format!("IDXGIDevice: {e}"))?;
+            let adapter: IDXGIAdapter = dxgi_device
+                .GetParent()
                 .map_err(|e| format!("adapter: {e}"))?;
-            let output: IDXGIOutput = adapter.EnumOutputs(0)
+            let output: IDXGIOutput = adapter
+                .EnumOutputs(0)
                 .map_err(|e| format!("EnumOutputs: {e}"))?;
-            let output1: IDXGIOutput1 = output.cast()
-                .map_err(|e| format!("IDXGIOutput1: {e}"))?;
-            let duplication = output1.DuplicateOutput(&device)
+            let output1: IDXGIOutput1 = output.cast().map_err(|e| format!("IDXGIOutput1: {e}"))?;
+            let duplication = output1
+                .DuplicateOutput(&device)
                 .map_err(|e| format!("DuplicateOutput: {e}"))?;
 
             let desc = duplication.GetDesc();
@@ -561,18 +648,27 @@ mod win {
 
             // Pre-create staging texture
             let tex_desc = D3D11_TEXTURE2D_DESC {
-                Width: w, Height: h, MipLevels: 1, ArraySize: 1,
+                Width: w,
+                Height: h,
+                MipLevels: 1,
+                ArraySize: 1,
                 Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_STAGING, BindFlags: 0,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
                 CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
                 MiscFlags: 0,
             };
             let mut staging: Option<ID3D11Texture2D> = None;
-            device.CreateTexture2D(&tex_desc, None, Some(&mut staging))
+            device
+                .CreateTexture2D(&tex_desc, None, Some(&mut staging))
                 .map_err(|e| format!("staging texture: {e}"))?;
             let staging = staging.ok_or("staging None")?;
-            let staging_res: ID3D11Resource = staging.cast()
+            let staging_res: ID3D11Resource = staging
+                .cast()
                 .map_err(|e| format!("staging resource: {e}"))?;
 
             // Warm up: acquire+release one frame so subsequent calls are fast
@@ -580,13 +676,23 @@ mod win {
             let mut res: Option<IDXGIResource> = None;
             for _ in 0..5 {
                 match duplication.AcquireNextFrame(200, &mut fi, &mut res) {
-                    Ok(()) => { let _ = duplication.ReleaseFrame(); break; }
+                    Ok(()) => {
+                        let _ = duplication.ReleaseFrame();
+                        break;
+                    }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => continue,
                     Err(_) => break,
                 }
             }
 
-            Ok(DxgiCapture { context, duplication, staging, staging_res, width: w, height: h })
+            Ok(DxgiCapture {
+                context,
+                duplication,
+                staging,
+                staging_res,
+                width: w,
+                height: h,
+            })
         }
     }
 
@@ -608,8 +714,14 @@ mod win {
             // (~16ms at 60Hz), so 100ms is plenty.
             let mut got_new_frame = false;
             for _ in 0..3 {
-                match cap.duplication.AcquireNextFrame(100, &mut fi, &mut resource) {
-                    Ok(()) => { got_new_frame = true; break; }
+                match cap
+                    .duplication
+                    .AcquireNextFrame(100, &mut fi, &mut resource)
+                {
+                    Ok(()) => {
+                        got_new_frame = true;
+                        break;
+                    }
                     Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => continue,
                     Err(e) => {
                         *cache = None;
@@ -620,10 +732,10 @@ mod win {
 
             if got_new_frame {
                 if let Some(ref res) = resource {
-                    let texture: ID3D11Texture2D = res.cast()
-                        .map_err(|e| format!("Texture2D: {e}"))?;
-                    let tex_res: ID3D11Resource = texture.cast()
-                        .map_err(|e| format!("tex resource: {e}"))?;
+                    let texture: ID3D11Texture2D =
+                        res.cast().map_err(|e| format!("Texture2D: {e}"))?;
+                    let tex_res: ID3D11Resource =
+                        texture.cast().map_err(|e| format!("tex resource: {e}"))?;
                     cap.context.CopyResource(&cap.staging_res, &tex_res);
                 }
                 let _ = cap.duplication.ReleaseFrame();
@@ -631,7 +743,8 @@ mod win {
 
             // Map the staging texture (always has the latest frame)
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            cap.context.Map(&cap.staging_res, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+            cap.context
+                .Map(&cap.staging_res, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
                 .map_err(|e| format!("Map: {e}"))?;
 
             let row_pitch = mapped.RowPitch as usize;
@@ -680,7 +793,15 @@ mod win {
                 ..Default::default()
             };
             let mut pixels = vec![0u8; (w * h * 4) as usize];
-            GetDIBits(hdc_mem, hbm, 0, h, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
+            GetDIBits(
+                hdc_mem,
+                hbm,
+                0,
+                h,
+                Some(pixels.as_mut_ptr() as *mut _),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
 
             SelectObject(hdc_mem, old);
             let _ = DeleteObject(hbm);
@@ -731,7 +852,15 @@ mod win {
                 ..Default::default()
             };
             let mut pixels = vec![0u8; (w * h * 4) as usize];
-            GetDIBits(hdc_mem, hbm, 0, h, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
+            GetDIBits(
+                hdc_mem,
+                hbm,
+                0,
+                h,
+                Some(pixels.as_mut_ptr() as *mut _),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            );
 
             SelectObject(hdc_mem, old);
             let _ = DeleteObject(hbm);
@@ -794,9 +923,9 @@ mod win {
         let chunks = bgra.chunks_exact(16); // 4 pixels × 4 bytes
         let remainder = chunks.remainder();
         for chunk in chunks {
-            rgb.extend_from_slice(&[chunk[2], chunk[1], chunk[0]]);   // pixel 0
-            rgb.extend_from_slice(&[chunk[6], chunk[5], chunk[4]]);   // pixel 1
-            rgb.extend_from_slice(&[chunk[10], chunk[9], chunk[8]]);  // pixel 2
+            rgb.extend_from_slice(&[chunk[2], chunk[1], chunk[0]]); // pixel 0
+            rgb.extend_from_slice(&[chunk[6], chunk[5], chunk[4]]); // pixel 1
+            rgb.extend_from_slice(&[chunk[10], chunk[9], chunk[8]]); // pixel 2
             rgb.extend_from_slice(&[chunk[14], chunk[13], chunk[12]]); // pixel 3
         }
         for pixel in remainder.chunks_exact(4) {
@@ -867,7 +996,10 @@ mod win {
         let (encoded, mime_type) = if q == 0 {
             (encode_png(&rgb, w, h)?, "image/png")
         } else {
-            (encode_jpeg(&rgb, w, h, q.clamp(1, 100) as u8)?, "image/jpeg")
+            (
+                encode_jpeg(&rgb, w, h, q.clamp(1, 100) as u8)?,
+                "image/jpeg",
+            )
         };
 
         let mut hasher = DefaultHasher::new();
@@ -923,14 +1055,14 @@ mod win {
 
         // Color palette for annotations (matching Windows-MCP style)
         let colors: [(u8, u8, u8); 8] = [
-            (255, 0, 0),     // red
-            (0, 255, 0),     // green
-            (0, 0, 255),     // blue
-            (255, 255, 0),   // yellow
-            (255, 0, 255),   // magenta
-            (0, 255, 255),   // cyan
-            (255, 128, 0),   // orange
-            (128, 0, 255),   // purple
+            (255, 0, 0),   // red
+            (0, 255, 0),   // green
+            (0, 0, 255),   // blue
+            (255, 255, 0), // yellow
+            (255, 0, 255), // magenta
+            (0, 255, 255), // cyan
+            (255, 128, 0), // orange
+            (128, 0, 255), // purple
         ];
 
         // Draw annotation rectangles
@@ -950,7 +1082,11 @@ mod win {
                         for x in ax.max(0)..(ax + aw).min(w as i32) {
                             for dy in [ay + t, ay + ah - 1 - t] {
                                 if dy >= 0 && dy < h as i32 && x >= 0 && x < w as i32 {
-                                    rgb_img.put_pixel(x as u32, dy as u32, image::Rgb([cr, cg, cb]));
+                                    rgb_img.put_pixel(
+                                        x as u32,
+                                        dy as u32,
+                                        image::Rgb([cr, cg, cb]),
+                                    );
                                 }
                             }
                         }
@@ -958,7 +1094,11 @@ mod win {
                         for y in ay.max(0)..(ay + ah).min(h as i32) {
                             for dx in [ax + t, ax + aw - 1 - t] {
                                 if dx >= 0 && dx < w as i32 && y >= 0 && y < h as i32 {
-                                    rgb_img.put_pixel(dx as u32, y as u32, image::Rgb([cr, cg, cb]));
+                                    rgb_img.put_pixel(
+                                        dx as u32,
+                                        y as u32,
+                                        image::Rgb([cr, cg, cb]),
+                                    );
                                 }
                             }
                         }
@@ -974,7 +1114,9 @@ mod win {
                 for i in 1..cols {
                     let x = (w as u64 * i as u64 / cols as u64) as u32;
                     if x < w {
-                        for y in 0..h { rgb_img.put_pixel(x, y, gray); }
+                        for y in 0..h {
+                            rgb_img.put_pixel(x, y, gray);
+                        }
                     }
                 }
             }
@@ -982,7 +1124,9 @@ mod win {
                 for i in 1..rows {
                     let y = (h as u64 * i as u64 / rows as u64) as u32;
                     if y < h {
-                        for x in 0..w { rgb_img.put_pixel(x, y, gray); }
+                        for x in 0..w {
+                            rgb_img.put_pixel(x, y, gray);
+                        }
                     }
                 }
             }
@@ -1006,7 +1150,10 @@ mod win {
     #[napi]
     pub fn crop_image(
         base64_image: String,
-        x1: u32, y1: u32, x2: u32, y2: u32,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
         quality: Option<u32>,
     ) -> napi::Result<serde_json::Value> {
         let img_bytes = base64::engine::general_purpose::STANDARD
@@ -1038,7 +1185,10 @@ mod win {
         let (encoded, mime) = if q == 0 {
             (encode_png(&raw, cw, ch)?, "image/png")
         } else {
-            (encode_jpeg(&raw, cw, ch, q.clamp(1, 100) as u8)?, "image/jpeg")
+            (
+                encode_jpeg(&raw, cw, ch, q.clamp(1, 100) as u8)?,
+                "image/jpeg",
+            )
         };
 
         let b64 = base64::engine::general_purpose::STANDARD.encode(&encoded);

@@ -2,10 +2,15 @@
  * MCP prompts — host-discoverable workflow templates (P1 §4 / PR-6).
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { completable, type McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
+import type { Session } from './session.js'
 
-export function registerPrompts(server: McpServer): void {
+export function registerPrompts(server: McpServer, session?: Session): void {
+  const appArgument = completable(
+    z.string().describe('Bundle ID (macOS) or process name (Windows) of the target app'),
+    async value => completeApps(session, value),
+  )
   server.registerPrompt(
     'diagnose-desktop',
     {
@@ -33,7 +38,7 @@ export function registerPrompts(server: McpServer): void {
       title: 'Fill a form via accessibility',
       description: 'Discover a window UI tree and fill form fields without coordinate clicking.',
       argsSchema: {
-        app: z.string().describe('Bundle ID (macOS) or process name (Windows) of the target app'),
+        app: appArgument,
         fields_description: z.string().describe('Natural language description of fields and values to fill'),
       },
     },
@@ -63,7 +68,7 @@ export function registerPrompts(server: McpServer): void {
       description: 'Prefer AppleScript/JXA or PowerShell before GUI automation.',
       argsSchema: {
         task: z.string().describe('Task to automate'),
-        app: z.string().optional().describe('Optional target app id'),
+        app: appArgument.optional().describe('Optional target app id'),
       },
     },
     async (args) => ({
@@ -113,4 +118,27 @@ export function registerPrompts(server: McpServer): void {
       }],
     }),
   )
+}
+
+async function completeApps(session: Session | undefined, value: string): Promise<string[]> {
+  if (!session) return []
+  try {
+    const result = await session.dispatch('list_running_apps', {})
+    const text = result.content.find(item => item.type === 'text')
+    if (!text || text.type !== 'text') return []
+    const parsed = JSON.parse(text.text) as unknown
+    const apps = Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as { apps?: unknown }).apps)
+        ? (parsed as { apps: unknown[] }).apps
+        : []
+    return apps.flatMap(app => {
+      if (typeof app !== 'object' || app === null) return []
+      const record = app as Record<string, unknown>
+      const candidate = String(record.bundleId ?? record.bundle_id ?? record.name ?? '')
+      return candidate.toLowerCase().startsWith(value.toLowerCase()) ? [candidate] : []
+    }).filter(Boolean).slice(0, 100)
+  } catch {
+    return []
+  }
 }

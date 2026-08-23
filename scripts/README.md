@@ -1,26 +1,11 @@
-# Development Scripts
+# Development scripts
 
-Ad-hoc scripts used during development for debugging, probing macOS internals, and validating features. These are **not** part of the published package or the automated test suite.
+These scripts support local platform debugging and release preparation. Only `verify-input-attribution.mjs` is included in the published package.
 
-## Categories
+- `prepare-platform-packages.mjs` stamps the root version into platform packages and copies native binaries.
+- `clean-dist.mjs` removes only the generated `dist` directory before TypeScript compilation.
+- `verify-input-attribution.mjs` validates the native physical-input observation latency when explicitly run on a supported desktop.
+- `test-v5-smoke.mjs` runs the established read-only desktop smoke sequence.
+- `test-v5-e2e.mjs` and the platform-specific scripts are manual development probes and are not release gates.
 
-### Smoke / E2E tests (manual)
-- `test-v5-smoke.mjs` — quick post-build smoke test (read-only, <1s)
-- `test-v5-e2e.mjs` — full v5 feature walkthrough against real TextEdit
-- `test-v5-spaces.mjs` — Spaces surface verification
-
-### Mission Control / Spaces experiments
-- `test-space-create.mjs` — gesture-based Space creation via MC
-- `test-space-gesture.mjs` — refined gesture approach with coordinate probing
-- `test-space-diag.mjs` / `test-space-diag2.mjs` — diagnostic screenshots during MC interaction
-- `test-space-open.mjs` — verify which Space a new window lands in
-- `test-mc-ax.mjs` — inspect MC's accessibility tree via Dock
-- `test-mc-reveal.mjs` — probe "+" button reveal by hovering
-- `test-mc-screenshot.mjs` — screenshot MC at various hover positions
-- `test-mc-strip.mjs` — scan the Space strip at the top of MC
-- `test-ax-approach.mjs` — accessibility-first Space creation strategies
-- `test-plus-from-below.mjs` — approach "+" button from below to avoid NC hot zone
-- `capture-plus-coords.mjs` / `capture-plus-v2.mjs` — interactive cursor capture for "+" button
-
-### Misc
-- `test-return.mjs` — tiny JS async behavior test (not project-specific)
+All scripts that operate a live desktop require an attended session and the same OS permissions as the MCP server.

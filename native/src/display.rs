@@ -2,16 +2,22 @@
 #[cfg(target_os = "linux")]
 mod linux {
     use napi_derive::napi;
-    use x11::xlib::*;
     use std::ptr;
+    use x11::xlib::*;
 
     #[napi]
     pub fn get_display_size(display_id: Option<u32>) -> napi::Result<serde_json::Value> {
         unsafe {
             let dpy = XOpenDisplay(ptr::null());
-            if dpy.is_null() { return Err(napi::Error::from_reason("Cannot open X display")); }
+            if dpy.is_null() {
+                return Err(napi::Error::from_reason("Cannot open X display"));
+            }
             let screen = display_id.unwrap_or(0) as i32;
-            let screen = if screen < XScreenCount(dpy) { screen } else { XDefaultScreen(dpy) };
+            let screen = if screen < XScreenCount(dpy) {
+                screen
+            } else {
+                XDefaultScreen(dpy)
+            };
             let w = XDisplayWidth(dpy, screen) as u64;
             let h = XDisplayHeight(dpy, screen) as u64;
             XCloseDisplay(dpy);
@@ -28,7 +34,9 @@ mod linux {
     pub fn list_displays() -> napi::Result<serde_json::Value> {
         unsafe {
             let dpy = XOpenDisplay(ptr::null());
-            if dpy.is_null() { return Err(napi::Error::from_reason("Cannot open X display")); }
+            if dpy.is_null() {
+                return Err(napi::Error::from_reason("Cannot open X display"));
+            }
             let count = XScreenCount(dpy);
             let mut result = Vec::new();
             for i in 0..count {
@@ -114,7 +122,6 @@ mod macos {
         Ok(serde_json::json!(result))
     }
 }
-
 
 // ── Windows implementation ───────────────────────────────────────────────────
 #[cfg(target_os = "windows")]

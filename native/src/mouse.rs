@@ -9,7 +9,9 @@ mod linux {
 
     fn is_wayland() -> bool {
         *IS_WAYLAND.get_or_init(|| {
-            std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+            std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false)
         })
     }
 
@@ -18,9 +20,9 @@ mod linux {
     }
 
     mod x11_impl {
+        use std::ptr;
         use x11::xlib::*;
         use x11::xtest::*;
-        use std::ptr;
 
         pub unsafe fn open_display() -> *mut Display {
             XOpenDisplay(ptr::null())
@@ -29,7 +31,9 @@ mod linux {
         pub fn mouse_move(x: i32, y: i32) {
             unsafe {
                 let dpy = open_display();
-                if dpy.is_null() { return; }
+                if dpy.is_null() {
+                    return;
+                }
                 XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
                 XFlush(dpy);
                 XCloseDisplay(dpy);
@@ -39,7 +43,9 @@ mod linux {
         pub fn mouse_click(x: i32, y: i32, btn: u32, count: i32) {
             unsafe {
                 let dpy = open_display();
-                if dpy.is_null() { return; }
+                if dpy.is_null() {
+                    return;
+                }
                 XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
                 XFlush(dpy);
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -59,7 +65,9 @@ mod linux {
         pub fn mouse_button(press: bool, x: i32, y: i32) {
             unsafe {
                 let dpy = open_display();
-                if dpy.is_null() { return; }
+                if dpy.is_null() {
+                    return;
+                }
                 XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
                 XTestFakeButtonEvent(dpy, 1, if press { 1 } else { 0 }, 0);
                 XFlush(dpy);
@@ -70,7 +78,9 @@ mod linux {
         pub fn mouse_scroll(dy: i32, dx: i32) {
             unsafe {
                 let dpy = open_display();
-                if dpy.is_null() { return; }
+                if dpy.is_null() {
+                    return;
+                }
                 if dy != 0 {
                     let btn = if dy > 0 { 5u32 } else { 4 };
                     for _ in 0..dy.unsigned_abs() {
@@ -93,7 +103,9 @@ mod linux {
         pub fn cursor_position() -> (i32, i32) {
             unsafe {
                 let dpy = open_display();
-                if dpy.is_null() { return (0, 0); }
+                if dpy.is_null() {
+                    return (0, 0);
+                }
                 let root = XDefaultRootWindow(dpy);
                 let mut root_ret = 0u64;
                 let mut child_ret = 0u64;
@@ -102,7 +114,17 @@ mod linux {
                 let mut wx = 0i32;
                 let mut wy = 0i32;
                 let mut mask = 0u32;
-                XQueryPointer(dpy, root, &mut root_ret, &mut child_ret, &mut rx, &mut ry, &mut wx, &mut wy, &mut mask);
+                XQueryPointer(
+                    dpy,
+                    root,
+                    &mut root_ret,
+                    &mut child_ret,
+                    &mut rx,
+                    &mut ry,
+                    &mut wx,
+                    &mut wy,
+                    &mut mask,
+                );
                 XCloseDisplay(dpy);
                 (rx, ry)
             }
@@ -113,7 +135,16 @@ mod linux {
         use std::process::Command;
 
         pub fn mouse_move(x: i32, y: i32) {
-            let _ = Command::new("ydotool").args(["mousemove", "--absolute", "-x", &x.to_string(), "-y", &y.to_string()]).status();
+            let _ = Command::new("ydotool")
+                .args([
+                    "mousemove",
+                    "--absolute",
+                    "-x",
+                    &x.to_string(),
+                    "-y",
+                    &y.to_string(),
+                ])
+                .status();
         }
 
         pub fn mouse_click(x: i32, y: i32, btn: u32, count: i32) {
@@ -128,7 +159,9 @@ mod linux {
                 _ => "0x00",
             };
             for i in 0..count {
-                let _ = Command::new("ydotool").args(["click", ydotool_btn]).status();
+                let _ = Command::new("ydotool")
+                    .args(["click", ydotool_btn])
+                    .status();
                 if i < count - 1 {
                     std::thread::sleep(std::time::Duration::from_millis(30));
                 }
@@ -139,19 +172,43 @@ mod linux {
             mouse_move(x, y);
             // ydotool click with --down or --up
             if press {
-                let _ = Command::new("ydotool").args(["click", "--down", "0x00"]).status();
+                let _ = Command::new("ydotool")
+                    .args(["click", "--down", "0x00"])
+                    .status();
             } else {
-                let _ = Command::new("ydotool").args(["click", "--up", "0x00"]).status();
+                let _ = Command::new("ydotool")
+                    .args(["click", "--up", "0x00"])
+                    .status();
             }
         }
 
         pub fn mouse_scroll(dy: i32, dx: i32) {
             if dy != 0 {
                 // Negative = scroll up in ydotool
-                let _ = Command::new("ydotool").args(["mousemove", "--wheel", "--", "-x", "0", "-y", &(-dy * 15).to_string()]).status();
+                let _ = Command::new("ydotool")
+                    .args([
+                        "mousemove",
+                        "--wheel",
+                        "--",
+                        "-x",
+                        "0",
+                        "-y",
+                        &(-dy * 15).to_string(),
+                    ])
+                    .status();
             }
             if dx != 0 {
-                let _ = Command::new("ydotool").args(["mousemove", "--wheel", "--", "-x", &(dx * 15).to_string(), "-y", "0"]).status();
+                let _ = Command::new("ydotool")
+                    .args([
+                        "mousemove",
+                        "--wheel",
+                        "--",
+                        "-x",
+                        &(dx * 15).to_string(),
+                        "-y",
+                        "0",
+                    ])
+                    .status();
             }
         }
 
@@ -163,6 +220,9 @@ mod linux {
 
     #[napi]
     pub fn mouse_move(x: f64, y: f64) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         if is_wayland() && ydotool_available() {
             wayland_impl::mouse_move(x as i32, y as i32);
         } else {
@@ -172,11 +232,16 @@ mod linux {
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
         let btn = match button.as_str() {
             "left" => 1u32,
             "middle" => 2,
             "right" => 3,
-            _ => return Err(napi::Error::from_reason(format!("Invalid button: {button}"))),
+            _ => {
+                return Err(napi::Error::from_reason(format!(
+                    "Invalid button: {button}"
+                )))
+            }
         };
         if is_wayland() && ydotool_available() {
             wayland_impl::mouse_click(x as i32, y as i32, btn, count);
@@ -188,10 +253,15 @@ mod linux {
 
     #[napi]
     pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
         let press = match action.as_str() {
             "press" => true,
             "release" => false,
-            _ => return Err(napi::Error::from_reason(format!("Invalid action: {action}"))),
+            _ => {
+                return Err(napi::Error::from_reason(format!(
+                    "Invalid action: {action}"
+                )))
+            }
         };
         if is_wayland() && ydotool_available() {
             wayland_impl::mouse_button(press, x as i32, y as i32);
@@ -203,6 +273,9 @@ mod linux {
 
     #[napi]
     pub fn mouse_scroll(dy: i32, dx: i32) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         if is_wayland() && ydotool_available() {
             wayland_impl::mouse_scroll(dy, dx);
         } else {
@@ -212,6 +285,9 @@ mod linux {
 
     #[napi]
     pub fn mouse_drag(x: f64, y: f64) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         if is_wayland() && ydotool_available() {
             wayland_impl::mouse_move(x as i32, y as i32);
         } else {
@@ -234,14 +310,19 @@ mod linux {
 #[cfg(target_os = "macos")]
 mod macos {
     use core_graphics::event::{
-        CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
+        CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
     };
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use core_graphics::geometry::CGPoint;
     use napi_derive::napi;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static AGENT_LEFT_HELD: AtomicBool = AtomicBool::new(false);
 
     fn source() -> CGEventSource {
-        CGEventSource::new(CGEventSourceStateID::HIDSystemState).unwrap()
+        // Keep synthetic state out of the HID-only physical-user activity
+        // clock used by host-side input attribution.
+        CGEventSource::new(CGEventSourceStateID::Private).unwrap()
     }
 
     fn post(event: CGEvent) {
@@ -250,6 +331,9 @@ mod macos {
 
     #[napi]
     pub fn mouse_move(x: f64, y: f64) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         let point = CGPoint::new(x, y);
         let event = CGEvent::new_mouse_event(
             source(),
@@ -263,6 +347,7 @@ mod macos {
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
         let point = CGPoint::new(x, y);
         let (btn, down_type, up_type) = match button.as_str() {
             "left" => (
@@ -298,6 +383,7 @@ mod macos {
         std::thread::sleep(std::time::Duration::from_millis(15));
 
         for i in 1..=count {
+            crate::activity::ensure_not_emergency_stopped()?;
             let down = CGEvent::new_mouse_event(source(), down_type, point, btn).unwrap();
             down.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
             post(down);
@@ -313,6 +399,7 @@ mod macos {
 
     #[napi]
     pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
         let point = CGPoint::new(x, y);
         let evt_type = match action.as_str() {
             "press" => CGEventType::LeftMouseDown,
@@ -326,34 +413,43 @@ mod macos {
         let event =
             CGEvent::new_mouse_event(source(), evt_type, point, CGMouseButton::Left).unwrap();
         post(event);
+        AGENT_LEFT_HELD.store(action == "press", Ordering::Release);
         Ok(())
+    }
+
+    pub(crate) fn release_agent_held_buttons() {
+        if !AGENT_LEFT_HELD.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        let location = CGEvent::new(source())
+            .map(|event| event.location())
+            .unwrap_or_default();
+        if let Ok(event) = CGEvent::new_mouse_event(
+            source(),
+            CGEventType::LeftMouseUp,
+            location,
+            CGMouseButton::Left,
+        ) {
+            post(event);
+        }
     }
 
     #[napi]
     pub fn mouse_scroll(dy: i32, dx: i32) {
-        extern "C" {
-            fn CGEventCreateScrollWheelEvent2(
-                source: *const std::ffi::c_void,
-                units: u32,
-                wheel_count: u32,
-                wheel1: i32,
-                wheel2: i32,
-                wheel3: i32,
-            ) -> *mut std::ffi::c_void;
-            fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
+        if crate::activity::emergency_stop_active() {
+            return;
         }
-        unsafe {
-            let event =
-                CGEventCreateScrollWheelEvent2(std::ptr::null(), 0, 2, dy, dx, 0);
-            if !event.is_null() {
-                CGEventPost(0, event);
-                core_foundation::base::CFRelease(event as *const _);
-            }
+        if let Ok(event) = CGEvent::new_scroll_event(source(), ScrollEventUnit::LINE, 2, dy, dx, 0)
+        {
+            post(event);
         }
     }
 
     #[napi]
     pub fn mouse_drag(x: f64, y: f64) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         let point = CGPoint::new(x, y);
         let event = CGEvent::new_mouse_event(
             source(),
@@ -373,22 +469,19 @@ mod macos {
     }
 }
 
-
 // ── Windows implementation ───────────────────────────────────────────────────
 #[cfg(target_os = "windows")]
 mod win {
     use napi_derive::napi;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
     use windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+    static AGENT_LEFT_HELD: AtomicBool = AtomicBool::new(false);
     use windows::Win32::UI::WindowsAndMessaging::*;
 
     fn screen_size() -> (i32, i32) {
-        unsafe {
-            (
-                GetSystemMetrics(SM_CXSCREEN),
-                GetSystemMetrics(SM_CYSCREEN),
-            )
-        }
+        unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
     }
 
     fn to_absolute(x: f64, y: f64) -> (i32, i32) {
@@ -419,12 +512,16 @@ mod win {
 
     #[napi]
     pub fn mouse_move(x: f64, y: f64) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         let (ax, ay) = to_absolute(x, y);
         send_mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0);
     }
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
         let (ax, ay) = to_absolute(x, y);
         // Move first, settle
         send_mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0);
@@ -442,6 +539,7 @@ mod win {
         };
 
         for i in 0..count {
+            crate::activity::ensure_not_emergency_stopped()?;
             send_mouse(ax, ay, down | MOUSEEVENTF_ABSOLUTE, 0);
             send_mouse(ax, ay, up | MOUSEEVENTF_ABSOLUTE, 0);
             if i < count - 1 {
@@ -453,6 +551,7 @@ mod win {
 
     #[napi]
     pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
         let (ax, ay) = to_absolute(x, y);
         let flag = match action.as_str() {
             "press" => MOUSEEVENTF_LEFTDOWN,
@@ -464,11 +563,21 @@ mod win {
             }
         };
         send_mouse(ax, ay, flag | MOUSEEVENTF_ABSOLUTE, 0);
+        AGENT_LEFT_HELD.store(action == "press", Ordering::Release);
         Ok(())
+    }
+
+    pub(crate) fn release_agent_held_buttons() {
+        if AGENT_LEFT_HELD.swap(false, Ordering::AcqRel) {
+            send_mouse(0, 0, MOUSEEVENTF_LEFTUP, 0);
+        }
     }
 
     #[napi]
     pub fn mouse_scroll(dy: i32, dx: i32) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         // Vertical scroll
         if dy != 0 {
             send_mouse(0, 0, MOUSEEVENTF_WHEEL, -dy * 120);
@@ -481,13 +590,11 @@ mod win {
 
     #[napi]
     pub fn mouse_drag(x: f64, y: f64) {
+        if crate::activity::emergency_stop_active() {
+            return;
+        }
         let (ax, ay) = to_absolute(x, y);
-        send_mouse(
-            ax,
-            ay,
-            MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
-            0,
-        );
+        send_mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0);
     }
 
     #[napi]
@@ -500,3 +607,16 @@ mod win {
         Ok(serde_json::json!({ "x": pt.x, "y": pt.y }))
     }
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) fn release_agent_held_buttons() {
+    macos::release_agent_held_buttons();
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn release_agent_held_buttons() {
+    win::release_agent_held_buttons();
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn release_agent_held_buttons() {}

@@ -17,8 +17,15 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `COMPUTER_USE_NATIVE_PATH` — override native `.node` resolution (else: optional platform package → bundled binary).
 - `COMPUTER_USE_LEGACY_FOCUS_TAG=true` — restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`).
 - `COMPUTER_USE_STRUCTURED_CONTENT=false` — legacy text-only results (omits `structuredContent` + `outputSchema`).
-- **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` kills its child).
+- **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` terminates its subprocess tree through a POSIX process group or recursive Windows `taskkill`).
 - **Progress:** long `filesystem` searches emit `notifications/progress` when a progress token is present.
+
+**v7.1 MCP behavior:**
+- Legacy MCP clients continue through `initialize`; no tool names or v7 input schemas changed.
+- MCP 2026-07-28 clients use stateless requests, `server/discover`, per-request identity/capabilities, cache hints, MRTR, and `subscriptions/listen`.
+- The `io.modelcontextprotocol/tasks` extension is opt-in and server-directed for selected long-running read-only calls. Extension-aware hosts poll `tasks/get`; stock clients should omit the extension capability and receive synchronous results.
+- `computer-use-mcp-http` serves the bundled loopback-only HTTP endpoint. Remote hosts must embed `createComputerUseHttpHandler`, validate OAuth themselves, and pass only verified `authInfo`.
+- Tool annotations are descriptive hints, never an authorization boundary.
 
 ## Tool priority guidance
 
@@ -33,7 +40,7 @@ Desktop control works for anything on screen, but structured tools are faster, m
 
 ## Quick setup for any agent
 
-The server speaks standard MCP over stdio. Start it with:
+The server speaks both legacy and MCP 2026-07-28 over stdio. Start it with:
 
 ```bash
 npx @zavora-ai/computer-use-mcp
@@ -111,7 +118,7 @@ async function runAgent(task: string) {
       tools: tools.map(t => ({
         name: t.name,
         description: t.description,
-        input_schema: { type: 'object', properties: {} }
+        input_schema: t.inputSchema
       })),
       messages,
     })
@@ -160,7 +167,7 @@ const tools = (await mcpClient.listTools()).map(t => ({
   function: {
     name: t.name,
     description: t.description ?? '',
-    parameters: { type: 'object', properties: {}, additionalProperties: true },
+    parameters: t.inputSchema,
   },
 }))
 
@@ -276,6 +283,11 @@ await client.runScript('powershell', 'Get-ChildItem C:\\Users\\Me\\Desktop | Sor
 4. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works.
 
 ### When `find_element` / `click_element` fails
+
+Accessibility observations mark sensitive controls with value-free
+`sensitive`/`sensitivitySignals` facts and return `value: null`; never infer or
+request the hidden value. Treat ambiguous sensitive fields as unavailable and
+ask the user to complete them directly.
 
 The error payload includes ranked-by-similarity label suggestions. Use them instead of retrying blindly:
 

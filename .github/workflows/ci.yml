@@ -46,6 +46,11 @@ jobs:
             rust-target: x86_64-unknown-linux-gnu
             artifact: computer-use-napi.linux-x64.node
             copy-from: target/x86_64-unknown-linux-gnu/release/libcomputer_use_napi.so
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-gnu
+            artifact: computer-use-napi.linux-arm64.node
+            copy-from: target/aarch64-unknown-linux-gnu/release/libcomputer_use_napi.so
     steps:
       - uses: actions/checkout@v4
 
@@ -56,7 +61,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev libxi-dev
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -98,6 +103,9 @@ jobs:
           - name: Linux x64
             runner: ubuntu-latest
             binary: computer-use-napi.linux-x64.node
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+            binary: computer-use-napi.linux-arm64.node
     steps:
       - uses: actions/checkout@v4
 
@@ -132,7 +140,7 @@ jobs:
 
       - name: Run smoke test (Linux)
         if: runner.os == 'Linux'
-        run: node -e "const { loadNative } = await import('./dist/native.js'); const n = loadNative(); console.log('Native module loaded:', Object.keys(n).length, 'functions')"
+        run: node -e "const { loadNative } = await import('./dist/native.js'); const n = loadNative(); const c = n.getInputMonitorCapability(); if (typeof c.supported !== 'boolean' || c.distinguishesInjected !== false) throw new Error('invalid honest Linux input-monitor capability'); console.log('Native module loaded:', Object.keys(n).length, 'functions; input monitor:', c)"
 
       - name: Run new tools smoke test
         run: node test/smoke-new-tools.mjs
@@ -165,16 +173,35 @@ jobs:
             const entries = JSON.parse(fs.readFileSync("pack.json", "utf8"));
             const files = (entries[0]?.files ?? []).map(f => f.path);
             const required = [
-              "AGENTS.md", "README.md", "LICENSE",
+              "AGENTS.md", "README.md", "SECURITY.md", "LICENSE",
+              "mcp-server.toml", "docs/ARCHITECTURE.md", "docs/releases/v7.1.0.md",
               "dist/server.js", "dist/client.js",
               "dist/result.js", "dist/tool-catalog.js",
               "dist/output-schemas.js", "dist/prompts.js", "dist/resources.js",
+              "dist/http.js", "dist/mcp-v7.1.js", "dist/mcp-tasks.js", "dist/resource-links.js",
               "dist/session/tool-guide.js",
               "dist/session/fs-jail.js",
               "dist/session/scripting-dictionary.js",
               "dist/session/spawn.js",
               "dist/session/errors.js",
               "dist/session/constants.js",
+              "dist/session/openai-compat.js",
+              "dist/session/lock.js",
+              "dist/session/legacy-policy.js",
+              "dist/session/focus.js",
+              "dist/session/target-state.js",
+              "dist/session/virtual-pointer.js",
+              "dist/session/doctor.js",
+              "dist/session/admin-handlers.js",
+              "dist/session/window-handlers.js",
+              "dist/session/accessibility-handlers.js",
+              "dist/session/spaces-handlers.js",
+              "dist/session/screenshot-handlers.js",
+              "dist/session/input-handlers.js",
+              "dist/session/scripting-service.js",
+              "dist/session/openai-handler.js",
+              "dist/session/core-handlers.js",
+              "dist/registry/registry.js",
             ];
             const missing = required.filter(r => !files.includes(r));
             const skillFiles = files.filter(f => /^skills\/.+\/SKILL\.md$/.test(f));
@@ -186,11 +213,45 @@ jobs:
             for (const s of skillFiles) console.log("  - " + s);
           '
 
+  install-matrix:
+    name: Install packed tarball — Node ${{ matrix.node }}
+    needs: build-native
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24, current]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: computer-use-napi.linux-x64.node
+      - run: npm run build:ts
+      - name: Pack, install without optional packages, and import public entry points
+        shell: bash
+        run: |
+          npm pack --json > pack.json
+          tarball=$(node -p "require('./pack.json')[0].filename")
+          mkdir install-probe
+          cd install-probe
+          npm init -y >/dev/null
+          npm install "../$tarball" --ignore-scripts --omit=optional
+          node --input-type=module -e "await import('@zavora-ai/computer-use-mcp'); await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/server'); await import('@zavora-ai/computer-use-mcp/http'); await import('@zavora-ai/computer-use-mcp/tool-catalog'); await import('@zavora-ai/computer-use-mcp/registry'); await import('@zavora-ai/computer-use-mcp/host-native'); console.log(process.version, 'packed entry points loaded')"
+
   publish:
     name: Publish to npm
-    needs: [build-native, test, package]
+    needs: [build-native, test, package, install-matrix]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -218,6 +279,7 @@ jobs:
           test -f computer-use-napi.win32-x64.node
           test -f computer-use-napi.win32-arm64.node
           test -f computer-use-napi.linux-x64.node
+          test -f computer-use-napi.linux-arm64.node
 
       - name: Build TypeScript
         run: npx tsc
@@ -225,14 +287,41 @@ jobs:
       - name: Prepare platform packages (stamp version + copy binaries)
         run: node scripts/prepare-platform-packages.mjs
 
-      - name: Pack platform packages (dry run)
+      - name: Pack exact release tarballs
+        shell: bash
         run: |
+          mkdir -p release/platform release/root
           for d in packages/computer-use-mcp-*; do
-            echo "--- $d ---"
-            ( cd "$d" && npm pack --dry-run )
+            ( cd "$d" && npm pack --pack-destination "$GITHUB_WORKSPACE/release/platform" )
           done
+          npm pack --ignore-scripts --pack-destination release/root
 
-      - name: Publish platform packages (best-effort — main bundles binaries as fallback)
+      - name: Generate CycloneDX software bill of materials
+        run: npm sbom --sbom-format cyclonedx > release-sbom.cdx.json
+
+      - name: Attest native binaries and exact tarballs
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            computer-use-napi.*.node
+            release/**/*.tgz
+
+      - name: Attach SBOM attestation to the exact main tarball
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: release/root/*.tgz
+          sbom-path: release-sbom.cdx.json
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v7.1-release-evidence-${{ github.sha }}
+          path: |
+            release/
+            release-sbom.cdx.json
+          if-no-files-found: error
+
+      - name: Publish platform packages (fail closed before main package)
         run: |
           for d in packages/computer-use-mcp-*; do
             target="${d#packages/computer-use-mcp-}"
@@ -246,24 +335,39 @@ jobs:
               echo "skip $pkg@$ver — already published"
               continue
             fi
-            ( cd "$d" && npm publish --access public ) \
-              || echo "::warning::could not publish $pkg@$ver — first-time creation may need a broader NPM_TOKEN scope. The main package bundles all platform binaries, so installs still work via the resolver fallback."
+            archive=$(find release/platform -type f -name "*-${target}-${ver}.tgz" -print -quit)
+            if [ -z "$archive" ]; then
+              echo "packed tarball missing for $pkg@$ver" >&2
+              exit 1
+            fi
+            npm publish "$archive" --access public --provenance
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish (dry run)
-        run: npm publish --dry-run --ignore-scripts
+        run: npm publish release/root/*.tgz --dry-run --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package to npm (idempotent)
         run: |
           ver=$(node -p "require('./package.json').version")
+          archive=$(find release/root -type f -name '*.tgz' -print -quit)
+          if [ -z "$archive" ]; then
+            echo "main package tarball missing" >&2
+            exit 1
+          fi
           if npm view "@zavora-ai/computer-use-mcp@$ver" version >/dev/null 2>&1; then
-            echo "@zavora-ai/computer-use-mcp@$ver already published — skipping"
+            expected=$(npm view "@zavora-ai/computer-use-mcp@$ver" dist.integrity)
+            actual=$(node -e "const fs=require('fs'),c=require('crypto'); process.stdout.write('sha512-'+c.createHash('sha512').update(fs.readFileSync(process.argv[1])).digest('base64'))" "$archive")
+            if [ "$actual" != "$expected" ]; then
+              echo "published @zavora-ai/computer-use-mcp@$ver does not match the attested tarball; bump the version" >&2
+              exit 1
+            fi
+            echo "@zavora-ai/computer-use-mcp@$ver already published with identical integrity — skipping"
           else
-            npm publish --ignore-scripts --access public
+            npm publish "$archive" --ignore-scripts --access public --provenance
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

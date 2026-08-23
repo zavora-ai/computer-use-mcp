@@ -2,8 +2,31 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import { createSession } from '../dist/session.js'
+import { defaultSpawnBounded, sanitizedChildEnvironment } from '../dist/session/spawn.js'
+
+test('script subprocess environment strips control-plane and implicit secret variables', () => {
+  const child = sanitizedChildEnvironment({
+    PATH: '/bin', HOME: '/safe', ORDINARY_SETTING: 'visible',
+    COMPUTER_USE_SUPERVISOR_TOKEN: 'stop-reset-secret',
+    COMPUTER_USE_REMOTE_TLS_KEY: '/private/key',
+    COMPUTER_USE_APPROVAL_TOKEN: 'approval-secret',
+    OPENAI_API_KEY: 'provider-secret',
+    NPM_TOKEN: 'registry-secret',
+    SSH_AUTH_SOCK: '/private/agent.sock',
+    EXPLICIT_API_KEY: 'allowed-by-host',
+    COMPUTER_USE_SCRIPT_ENV_ALLOWLIST: 'EXPLICIT_API_KEY,COMPUTER_USE_SUPERVISOR_TOKEN',
+  })
+  assert.deepEqual(child, {
+    PATH: '/bin', HOME: '/safe', ORDINARY_SETTING: 'visible',
+    EXPLICIT_API_KEY: 'allowed-by-host',
+  })
+  assert.doesNotMatch(JSON.stringify(child), /stop-reset|approval|provider|registry|SUPERVISOR_TOKEN/)
+})
 
 test('wait returns early when the signal aborts mid-flight', async () => {
   const session = createSession({ disableSessionLock: true })
@@ -73,4 +96,60 @@ test('run_script real process is killed on abort (darwin)', { skip: process.plat
   const elapsed = Date.now() - start
   assert.ok(elapsed < 6000, `aborted long script should be killed fast, took ${elapsed}ms`)
   assert.ok(r.isError, 'a killed script is reported as an error, not success')
+})
+
+async function waitFor(read, predicate, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  let value
+  while (Date.now() < deadline) {
+    try { value = await read() } catch { value = undefined }
+    if (predicate(value)) return value
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  throw new Error(`condition was not met within ${timeoutMs}ms`)
+}
+
+test('aborting a bounded script terminates its descendant process tree on every platform', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'computer-use-process-tree-'))
+  const pidPath = join(directory, 'descendant.pid')
+  let descendantPid
+  try {
+    const controller = new AbortController()
+    const parentScript = [
+      "const { spawn } = require('node:child_process')",
+      "const { writeFileSync } = require('node:fs')",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+      'writeFileSync(process.argv[1], String(child.pid))',
+      'setInterval(() => {}, 1000)',
+    ].join(';')
+    const running = defaultSpawnBounded(process.execPath, ['-e', parentScript, pidPath], 30_000, controller.signal)
+    descendantPid = Number.parseInt(await waitFor(
+      () => readFile(pidPath, 'utf8'), value => typeof value === 'string' && /^\d+$/.test(value.trim()),
+    ), 10)
+    assert.ok(Number.isInteger(descendantPid) && descendantPid > 0)
+
+    controller.abort('test process-tree cancellation')
+    const result = await running
+    assert.notEqual(result.code, 0)
+    assert.match(result.stderr, /aborted/)
+
+    await waitFor(() => {
+      try { process.kill(descendantPid, 0); return false }
+      catch (error) { return error?.code === 'ESRCH' }
+    }, value => value === true)
+  } finally {
+    if (Number.isInteger(descendantPid) && descendantPid > 0) {
+      try { process.kill(descendantPid, 'SIGKILL') } catch { /* already contained */ }
+    }
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('bounded subprocess output remains capped after switching to process groups', async () => {
+  const result = await defaultSpawnBounded(process.execPath, [
+    '-e', "process.stdout.write(Buffer.alloc(9 * 1024 * 1024, 120)); setInterval(() => {}, 1000)",
+  ], 30_000)
+  assert.equal(result.code, -1)
+  assert.match(result.stderr, /output exceeded 8388608 bytes/)
+  assert.ok(Buffer.byteLength(result.stdout) <= 8 * 1024 * 1024)
 })

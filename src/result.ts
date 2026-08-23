@@ -3,7 +3,18 @@
  */
 
 export interface ToolResult {
-  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; data: string; mimeType: string }
+    | {
+        type: 'resource_link'
+        uri: string
+        name: string
+        title?: string
+        description?: string
+        mimeType?: string
+      }
+  >
   structuredContent?: Record<string, unknown>
   isError?: boolean
 }
@@ -57,15 +68,23 @@ export function toMcpToolResult(
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'image'; data: string; mimeType: string }
+    | {
+        type: 'resource_link'
+        uri: string
+        name: string
+        title?: string
+        description?: string
+        mimeType?: string
+      }
   >
   structuredContent?: Record<string, unknown>
   isError?: boolean
 } {
-  const content = result.content.map(c =>
-    c.type === 'image'
-      ? { type: 'image' as const, data: c.data, mimeType: c.mimeType }
-      : { type: 'text' as const, text: c.text },
-  )
+  const content = result.content.map(c => {
+    if (c.type === 'image') return { type: 'image' as const, data: c.data, mimeType: c.mimeType }
+    if (c.type === 'resource_link') return { ...c, type: 'resource_link' as const }
+    return { type: 'text' as const, text: c.text }
+  })
   const out: {
     content: typeof content
     structuredContent?: Record<string, unknown>

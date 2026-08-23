@@ -44,7 +44,7 @@
 - **Loss of the in-process path.** `connectInProcess` lets JS/TS agents embed the server with zero IPC. A Rust binary cannot offer that to JS callers; they would be forced to stdio subprocess.
 - **Loss of the typed TS client.** The 64-method `ComputerUseClient` and its discovery helpers are a shipped product surface.
 - **Packaging churn.** We already ship prebuilt `.node` binaries per platform; a Rust server binary adds a second native artifact matrix and distribution path.
-- **Velocity.** The TS SDK (`1.29.0`, pinned) is moving fast and we track it directly.
+- **Velocity.** The TypeScript SDK was `1.29.0` when this spike was written; v7.1 now pins the split SDK packages at `2.0.0` and continues to track the official TypeScript implementation directly.
 
 ## 4. Benchmarks (expectation, not measured here)
 

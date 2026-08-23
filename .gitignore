@@ -4,5 +4,11 @@ dist/
 native/target/
 .playwright-mcp/
 .claude/
+.kiro/settings/
 reference-projects/
 zoom-output/
+release/
+install-probe/
+pack.json
+release-sbom.cdx.json
+*.tgz

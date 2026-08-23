@@ -3,6 +3,7 @@ import test from 'node:test'
 import { createSession } from '../dist/session.js'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
+import { mapLegacyOpenAiAction } from '../dist/session/openai-compat.js'
 
 function createMockNative() {
   const calls = []
@@ -138,6 +139,34 @@ test('openai_computer maps batched actions and supports virtual pointer moves', 
   assert.equal(native.calls.filter(c => c.method === 'mouseMove').length, 1)
   assert.equal(native.calls.filter(c => c.method === 'mouseClick').length, 1)
   assert.deepEqual(native.calls.find(c => c.method === 'keyPress')?.args, ['control+l', undefined])
+})
+
+test('legacy OpenAI compatibility mapping is pure and preserves drag, scroll, and target arguments', () => {
+  const common = { target_app: 'app.fixture', focus_strategy: 'strict' }
+  assert.deepEqual(
+    mapLegacyOpenAiAction({ type: 'drag', path: [[1, 2], [8, 9]] }, {
+      common, useVirtualPointer: false,
+    }),
+    {
+      actionType: 'drag', tool: 'left_click_drag',
+      args: { start_coordinate: [1, 2], coordinate: [8, 9], ...common },
+    },
+  )
+  assert.deepEqual(
+    mapLegacyOpenAiAction({ type: 'scroll', x: 5, y: 6, dx: -4 }, {
+      common, useVirtualPointer: false,
+    }),
+    {
+      actionType: 'scroll', tool: 'scroll',
+      args: { coordinate: [5, 6], direction: 'left', amount: 4, ...common },
+    },
+  )
+  assert.throws(
+    () => mapLegacyOpenAiAction({ type: 'drag', path: [[1], [2, 3]] }, {
+      common, useVirtualPointer: false,
+    }),
+    /drag path must contain \[x,y\] points/,
+  )
 })
 
 test('policy approval gate blocks configured tools until token is supplied', async () => {

@@ -184,6 +184,20 @@ test('elicitation ACCEPT → tool proceeds (not approval_required)', async () =>
   assert.equal(parse(r).width, 1920, 'get_display_size executed after approval')
 })
 
+test('elicitation approval is one-shot and cannot silently approve a later call', async () => {
+  await withApprovalEnv({ COMPUTER_USE_REQUIRE_APPROVAL_FOR: 'get_display_size' }, async () => {
+    let calls = 0
+    const session = createSession({
+      native: createMockNative(), disableSessionLock: true,
+      elicitApproval: async () => { calls++; return calls === 1 },
+    })
+    assert.equal((await session.dispatch('get_display_size', {})).isError, undefined)
+    const second = await session.dispatch('get_display_size', {})
+    assert.equal(calls, 2)
+    assert.equal(parse(second).error, 'approval_required')
+  })
+})
+
 test('elicitation DECLINE → approval_required error', async () => {
   let calls = 0
   const r = await dispatchWithElicit({
