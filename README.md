@@ -49,7 +49,7 @@ npx -y --package @zavora-ai/computer-use-mcp@7.1.0 computer-use-mcp-http
 
 The bundled runner refuses non-loopback binds and validates `Host` and `Origin`. Remote deployments should embed the fetch-shaped handler behind verified OAuth middleware.
 
-The npm package selects the matching optional native package for:
+The v7.1 npm tarball contains the matching native binary for:
 
 - macOS arm64 and x64
 - Windows arm64 and x64
@@ -253,7 +253,7 @@ npm run build:ts
 npm test
 ```
 
-The v7.1.0 release gate additionally installs the packed tarball without optional native packages, imports every public entry point, tests both MCP protocol eras, and verifies all six platform package manifests. See the [v7.1.0 release record](docs/releases/v7.1.0.md).
+The v7.1.0 release gate additionally installs the packed universal tarball, imports every public entry point, tests both MCP protocol eras, and verifies all six native targets. The exact attested tarball is submitted with npm staged publishing for maintainer review and 2FA approval. See the [v7.1.0 release record](docs/releases/v7.1.0.md).
 
 Native development requires the Rust toolchain and platform SDK:
 

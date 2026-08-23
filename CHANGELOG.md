@@ -26,6 +26,7 @@ Additive MCP capability release. All 64 v7 tool names and input schemas remain s
 - Migrated from the monolithic SDK 1.30.0 package to exact `@modelcontextprotocol/{server,client,core,node}` 2.0.0 packages.
 - Minimum Node.js version is now 20.
 - Legacy logging, roots, and reverse elicitation remain available but are deprecated by MCP 2026-07-28.
+- The root tarball ships all six native targets and is submitted through npm staged publishing for explicit maintainer/2FA approval. Split-package manifests remain version-locked for a future bootstrap, but v7.1 does not declare package names that npm cannot stage before their first publication.
 
 ### Removed
 
@@ -40,7 +41,7 @@ Additive MCP capability release. All 64 v7 tool names and input schemas remain s
 ### Verification
 
 - All 208 automated tests pass locally, including legacy MCP, stateless MCP 2026-07-28, Tasks, MRTR, subscriptions, annotations, targeting, cancellation, filesystem containment, and package installation.
-- The packed npm artifact installs without optional packages and all seven public entry points import successfully.
+- The packed universal npm artifact installs cleanly and all seven public entry points import successfully.
 - A live macOS arm64 test loaded the native module, enumerated the desktop, observed Accessibility state, captured a screenshot, injected a no-op pointer event, opened TextEdit, clicked, typed, round-tripped and restored the clipboard, and saved/read files.
 - Direct native typing preserves Unicode punctuation, accented text, and emoji. TextEdit AppleScript callers remain responsible for choosing a Unicode-safe file encoding when saving plain text.
 

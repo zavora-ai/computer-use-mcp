@@ -127,14 +127,6 @@
     "@modelcontextprotocol/server": "2.0.0",
     "zod": "^4.2.0"
   },
-  "optionalDependencies": {
-    "@zavora-ai/computer-use-mcp-darwin-arm64": "7.1.0",
-    "@zavora-ai/computer-use-mcp-darwin-x64": "7.1.0",
-    "@zavora-ai/computer-use-mcp-linux-arm64": "7.1.0",
-    "@zavora-ai/computer-use-mcp-linux-x64": "7.1.0",
-    "@zavora-ai/computer-use-mcp-win32-arm64": "7.1.0",
-    "@zavora-ai/computer-use-mcp-win32-x64": "7.1.0"
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "fast-check": "^4.7.0",
