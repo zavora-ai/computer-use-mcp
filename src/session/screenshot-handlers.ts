@@ -8,6 +8,7 @@ export interface CachedScreenshot {
   mimeType: string
   data: string
   capturedAt: number
+  targetArgs?: Record<string, unknown>
 }
 
 /** Screenshot/zoom handler with cache and pointer projection isolated from dispatch. */
@@ -19,6 +20,7 @@ export class ScreenshotHandler {
   readonly #defaultProvider: string
   readonly #env: NodeJS.ProcessEnv
   readonly #now: () => number
+  #lastCaptureScope: string | undefined
   #lastHash: string | undefined
   #lastResult: ToolResult | undefined
   #lastScreenshot: CachedScreenshot | undefined
@@ -43,7 +45,7 @@ export class ScreenshotHandler {
 
   lastHash(): string | undefined { return this.#lastHash }
   lastScreenshot(): CachedScreenshot | undefined {
-    return this.#lastScreenshot ? { ...this.#lastScreenshot } : undefined
+    return this.#lastScreenshot ? structuredClone(this.#lastScreenshot) : undefined
   }
 
   handle(tool: string, args: Record<string, unknown>): ToolResult | undefined {
@@ -65,15 +67,17 @@ export class ScreenshotHandler {
         return ok(`Screen: ${display.width}×${display.height} | Frontmost: ${frontmost?.bundleId ?? 'unknown'} (${frontmost?.displayName ?? ''})`)
       }
       const showPointer = args.show_agent_pointer === true
+      const scope = JSON.stringify([app, windowId, width, quality, windowId !== undefined ? this.#native.getWindow?.(windowId)?.bounds : undefined])
       let image = this.#native.takeScreenshot(
-        width, app, quality, showPointer ? undefined : this.#lastHash, windowId,
+        width, app, quality, showPointer || scope !== this.#lastCaptureScope ? undefined : this.#lastHash, windowId,
       )
       if (!showPointer && image.unchanged && this.#lastResult) return this.#lastResult
       if (!image.base64) throw new Error('Screenshot capture missing image payload')
       if (showPointer) image = this.#pointer.annotateScreenshot(image)
       if (!image.base64) throw new Error('Screenshot capture missing image payload')
+      this.#lastCaptureScope = scope
       this.#lastHash = image.hash
-      this.#lastScreenshot = { mimeType: image.mimeType, data: image.base64, capturedAt: this.#now() }
+      this.#lastScreenshot = { mimeType: image.mimeType, data: image.base64, capturedAt: this.#now(), ...(windowId !== undefined || app ? { targetArgs: { ...(windowId !== undefined ? { target_window_id: windowId } : {}), ...(app ? { target_app: app } : {}) } } : {}) }
       this.#lastResult = {
         content: [
           { type: 'image', data: image.base64, mimeType: image.mimeType },

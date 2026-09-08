@@ -3,6 +3,11 @@
  * Computer Use MCP Server — stable v7 tools with additive MCP v7.1 features.
  */
 
+import { BrowserBackend } from './browser.js'
+import { registerBrowserTools } from './browser-tools.js'
+import { DesktopBroker } from './desktop-broker.js'
+import { registerStrategy, UI_EXTENSION } from './strategy.js'
+import { principalKey } from './authority.js'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   CLIENT_INFO_META_KEY,
@@ -22,7 +27,7 @@ import { createSession, type Session, type SessionOptions } from './session.js'
 import { parseProfile, type FocusRequired, type ToolMeta, type ProfileName } from './tool-catalog.js'
 import { SERVER_INSTRUCTIONS } from './instructions.js'
 import { registerPrompts } from './prompts.js'
-import { registerResources } from './resources.js'
+import { registerResources, authorizeResourceAccess } from './resources.js'
 import { isStdioEntrypoint } from './entrypoint.js'
 import { ToolRegistry } from './registry/registry.js'
 import { approvalTokenParam, defineV7Tools } from './registry/definitions.js'
@@ -66,13 +71,14 @@ const requestStateCodec = createRequestStateCodec<{
   argsHash: string
   clientRoots?: string[]
   approval?: true
+  approvalId?: string
 }>({
   key: requestStateKey,
   ttlSeconds: 600,
   bind: (ctx: ServerContext) => {
     const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined
     const clientInfo = envelope?.[CLIENT_INFO_META_KEY] as { name?: unknown } | undefined
-    return `${ctx.mcpReq.method}\0${ctx.http?.authInfo?.clientId ?? String(clientInfo?.name ?? 'local')}`
+    return `${ctx.mcpReq.method}\0${principalKey(ctx.http?.authInfo) ?? String(clientInfo?.name ?? 'local')}`
   },
 })
 
@@ -83,6 +89,10 @@ const taskManager = new McpTaskManager({
 })
 
 export interface ServerOptions extends SessionOptions {
+  taskManager?: McpTaskManager
+  desktopBroker?: DesktopBroker
+  browserBackend?: BrowserBackend
+
   /** Override session instance for tests. */
   session?: Session
   /** Init-time maximum tool profile. Default full. */
@@ -139,7 +149,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       capabilities: {
         logging: {},
         resources: { subscribe: true },
-        extensions: { [TASKS_EXTENSION_ID]: {} },
+        extensions: { [TASKS_EXTENSION_ID]: {}, ...(opts.desktopBroker ? { [UI_EXTENSION]: {} } : {}) },
       },
       cacheHints: {
         'server/discover': { ttlMs: 30_000, cacheScope: 'private' },
@@ -158,7 +168,8 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     },
   )
 
-  const mcp = new McpV71Controller(server, {
+  const mcp: McpV71Controller = new McpV71Controller(server, {
+    authorizeSubscription: (uri, context) => authorizeResourceAccess(registry, uri, context),
     isSubscribable: uri => FIXED_RESOURCES.has(uri) || uri.startsWith(FILESYSTEM_RESOURCE_PREFIX),
   })
   const resourceUpdated = async (uri: string) => {
@@ -206,7 +217,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     }
   })
 
-  const session = opts.session ?? createSession({
+  const session: Session = opts.session ?? createSession({
     vision: opts.vision ?? (process.env.COMPUTER_USE_VISION !== 'false'),
     provider: opts.provider ?? process.env.COMPUTER_USE_PROVIDER,
     native: opts.native,
@@ -218,7 +229,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     getClientRoots: () => mcp.clientRoots(),
   })
 
-  const registry = new ToolRegistry({
+  const registry: ToolRegistry = new ToolRegistry({
     profile,
     activeProfile,
     structuredContent,
@@ -267,17 +278,24 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
 
   defineV7Tools(registry)
   registry.registerAll(server)
-  taskManager.install(server, registry)
+  const extensions = opts.desktopBroker ? registerStrategy(server, registry, opts.desktopBroker) : new Map()
+  if (opts.browserBackend) for (const [name, execute] of registerBrowserTools(server, opts.browserBackend, registry)) extensions.set(name, execute)
+  ;(opts.taskManager ?? taskManager).install(server, registry, extensions)
   opts.onRegistry?.(registry)
   registerPrompts(server, session)
   registerResources(server, {
     session,
+    registry,
     profile,
     getActiveProfile: () => registry.activeProfile(),
     getLastScreenshot: () => session.getLastScreenshot?.(),
     getClientRoots: () => mcp.clientRoots(),
   })
 
+  if (!opts.session) {
+    const previousClose = server.server.onclose
+    server.server.onclose = () => { previousClose?.(); session.close?.() }
+  }
   return server
 }
 
@@ -295,20 +313,36 @@ export function createComputerUseHttpHandler(
   opts: ServerOptions = {},
   handlerOptions: CreateMcpHandlerOptions = {},
 ): McpHttpHandler {
+  const httpTasks = opts.taskManager ?? new McpTaskManager()
   let handler!: McpHttpHandler
-  handler = createMcpHandler(() => createComputerUseServer({
+  handler = createMcpHandler(async context => {
+    const id = context.requestInfo?.headers.get('computer-use-session')
+    const retained = id && opts.desktopBroker ? await opts.desktopBroker.session(principalKey(context.authInfo) ?? 'local', id) : undefined
+    return createComputerUseServer({
     ...opts,
+    taskManager: httpTasks,
+    ...(retained ? { session: retained } : {}),
     notifyResourceUpdated: uri => handler.notify.resourceUpdated(uri),
     notifyToolsChanged: () => handler.notify.toolsChanged(),
-  }), {
+  })
+  }, {
     legacy: 'stateless',
     maxSubscriptions: 256,
     ...handlerOptions,
   })
   return {
     ...handler,
+    close: async () => { if (!opts.taskManager) httpTasks.close(); await handler.close() },
     fetch: async (request, requestOptions) => {
-      const taskResponse = await handleHttpTaskExtension(request, requestOptions?.authInfo?.clientId)
+      // The SDK shared event bus cannot reauthorize each recipient at delivery.
+      // Restricted hosts use explicit status polling until they supply a scoped bus.
+      if (opts.authorizeToolCall || opts.desktopBroker) {
+        const body = requestOptions?.parsedBody ?? await request.clone().json().catch(() => undefined)
+        if (body?.method === 'subscriptions/listen') return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id,
+          error: { code: -32600, message: 'Scoped resource subscriptions unavailable; poll authorized resources instead' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      const taskResponse = await handleHttpTaskExtension(request, requestOptions?.authInfo, httpTasks, opts.authorizeToolCall)
       return taskResponse ?? handler.fetch(request, requestOptions)
     },
   }
@@ -323,7 +357,7 @@ const SERVER_INFO = {
   websiteUrl: 'https://github.com/zavora-ai/computer-use-mcp',
 }
 
-async function handleHttpTaskExtension(request: Request, clientId?: string): Promise<Response | undefined> {
+async function handleHttpTaskExtension(request: Request, authInfo?: Parameters<typeof principalKey>[0], manager = taskManager, authorize?: ServerOptions['authorizeToolCall']): Promise<Response | undefined> {
   if (request.method !== 'POST') return undefined
   let body: unknown
   try {
@@ -376,10 +410,10 @@ async function handleHttpTaskExtension(request: Request, clientId?: string): Pro
   }
 
   try {
-    const result = taskManager.handleProtocolRequest(rpc.method, params, {
+    const result = await manager.handleProtocolRequest(rpc.method, params, {
       envelope,
-      ...(clientId ? { authInfo: { clientId } } : {}),
-    })
+      ...(authInfo ? { authInfo } : {}),
+    }, authorize)
     return new Response(JSON.stringify({
       jsonrpc: '2.0', id,
       result: { ...result, _meta: { 'io.modelcontextprotocol/serverInfo': SERVER_INFO } },

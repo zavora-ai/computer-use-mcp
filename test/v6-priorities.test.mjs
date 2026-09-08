@@ -149,7 +149,7 @@ test('legacy OpenAI compatibility mapping is pure and preserves drag, scroll, an
     }),
     {
       actionType: 'drag', tool: 'left_click_drag',
-      args: { start_coordinate: [1, 2], coordinate: [8, 9], ...common },
+      args: { start_coordinate: [1, 2], coordinate: [8, 9], path: [[1, 2], [8, 9]], ...common },
     },
   )
   assert.deepEqual(
@@ -158,14 +158,14 @@ test('legacy OpenAI compatibility mapping is pure and preserves drag, scroll, an
     }),
     {
       actionType: 'scroll', tool: 'scroll',
-      args: { coordinate: [5, 6], direction: 'left', amount: 4, ...common },
+      args: { coordinate: [5, 6], direction: 'left', amount: 3, delta_x: -1, delta_y: 0, ...common },
     },
   )
   assert.throws(
     () => mapLegacyOpenAiAction({ type: 'drag', path: [[1], [2, 3]] }, {
       common, useVirtualPointer: false,
     }),
-    /drag path must contain \[x,y\] points/,
+    /requires x\/y or coordinate/,
   )
 })
 

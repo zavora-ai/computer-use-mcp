@@ -37,24 +37,27 @@ export class OpenAiCompatibilityHandler {
     }
     const summaries: Array<Record<string, unknown>> = []
     const content: ToolResult['content'] = []
-    for (let index = 0; index < actions.length; index++) {
-      if (signal?.aborted) throw new Error('openai_computer batch aborted before the next action')
-      const action = actions[index]
-      if (!action || typeof action !== 'object' || Array.isArray(action)) {
-        summaries.push({ index, ok: false, error: 'invalid_action' })
-        continue
-      }
-      const value = action as Record<string, unknown>
-      let actionType = String(value.type ?? value.action ?? '').toLowerCase()
-      try {
-        const mapped = mapLegacyOpenAiAction(value, {
+    let mappedActions
+    try {
+      if (actions.length > 100) throw new Error('Batch exceeds 100 actions')
+      mappedActions = actions.map(action => {
+        if (!action || typeof action !== 'object' || Array.isArray(action)) throw new Error('invalid_action')
+        return mapLegacyOpenAiAction(action as Record<string, unknown>, {
           common,
           ...(typeof args.width === 'number' ? { width: args.width } : {}),
           ...(typeof args.quality === 'number' ? { quality: args.quality } : {}),
           ...(typeof args.provider === 'string' ? { provider: args.provider } : {}),
           useVirtualPointer: args.use_virtual_pointer === true,
-          ...(typeof args.native_overlay === 'boolean' ? { nativeOverlay: args.native_overlay } : {}),
         })
+      })
+    } catch (error) {
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ ok: false, status: 'blocked', completed: 0, error: String(error) }) }] }
+    }
+    for (let index = 0; index < mappedActions.length; index++) {
+      const mapped = mappedActions[index]
+      let actionType = mapped.actionType
+      try {
+        signal?.throwIfAborted()
         actionType = mapped.actionType
         const result = await this.#dispatch(mapped.tool, mapped.args, signal, onProgress, requestContext)
         summaries.push({ index, action: actionType, tool: mapped.tool, ok: !result.isError })
@@ -62,7 +65,7 @@ export class OpenAiCompatibilityHandler {
         if (result.isError) {
           return {
             content: [
-              { type: 'text', text: JSON.stringify({ ok: false, failed_index: index, summaries }) },
+              { type: 'text', text: JSON.stringify({ ok: false, status: 'unknown_outcome', completed: index, failed_index: index, summaries }) },
               ...result.content,
             ],
             isError: true,
@@ -72,7 +75,7 @@ export class OpenAiCompatibilityHandler {
         const message = error instanceof Error ? error.message : String(error)
         summaries.push({ index, action: actionType, ok: false, error: message })
         return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: false, failed_index: index, summaries }) }],
+          content: [{ type: 'text', text: JSON.stringify({ ok: false, status: 'unknown_outcome', completed: index, failed_index: index, summaries }) }],
           isError: true,
         }
       }
@@ -85,10 +88,11 @@ export class OpenAiCompatibilityHandler {
         show_agent_pointer: args.use_virtual_pointer === true,
       }, signal, onProgress, requestContext)
       content.push(...result.content)
+      if (result.isError) return { isError: true, content: [{ type: 'text', text: JSON.stringify({ ok: false, status: 'executed', verificationError: true, summaries }) }, ...content] }
     }
     return {
       content: [
-        { type: 'text', text: JSON.stringify({ ok: true, count: summaries.length, summaries }) },
+        { type: 'text', text: JSON.stringify({ ok: true, status: 'executed', count: summaries.length, summaries }) },
         ...content,
       ],
     }

@@ -176,6 +176,11 @@ jobs:
               "AGENTS.md", "README.md", "SECURITY.md", "LICENSE",
               "mcp-server.toml", "docs/ARCHITECTURE.md", "docs/releases/v7.1.0.md",
               "dist/server.js", "dist/client.js", "dist/efficiency.js", "dist/efficiency.d.ts", "docs/EFFICIENCY.md",
+              "dist/desktop-broker.js", "dist/strategy.js", "dist/session-console.js",
+              "dist/browser.js", "dist/runtime.js", "dist/runtime-worker.js",
+              "dist/task-store.js", "dist/authority.js", "dist/approval-ledger.js",
+              "dist/supervisor.js", "dist/supervisor-worker.js", "dist/task-client.js",
+              "dist/isolated-worker.js", "dist/evaluation.js", "libexec/linux-atspi.py", "docs/STRATEGY.md",
               "dist/result.js", "dist/tool-catalog.js",
               "dist/output-schemas.js", "dist/prompts.js", "dist/resources.js",
               "dist/http.js", "dist/mcp-v7.1.js", "dist/mcp-tasks.js", "dist/resource-links.js",
@@ -241,7 +246,7 @@ jobs:
           cd install-probe
           npm init -y >/dev/null
           npm install "../$tarball" --ignore-scripts --omit=optional
-          node --input-type=module -e "await import('@zavora-ai/computer-use-mcp'); await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/efficiency'); await import('@zavora-ai/computer-use-mcp/server'); await import('@zavora-ai/computer-use-mcp/http'); await import('@zavora-ai/computer-use-mcp/tool-catalog'); await import('@zavora-ai/computer-use-mcp/registry'); await import('@zavora-ai/computer-use-mcp/host-native'); console.log(process.version, 'packed entry points loaded')"
+          node --input-type=module -e "await import('@zavora-ai/computer-use-mcp'); await import('@zavora-ai/computer-use-mcp/client'); await import('@zavora-ai/computer-use-mcp/efficiency'); await import('@zavora-ai/computer-use-mcp/desktop-broker'); await import('@zavora-ai/computer-use-mcp/browser'); await import('@zavora-ai/computer-use-mcp/runtime'); await import('@zavora-ai/computer-use-mcp/task-store'); await import('@zavora-ai/computer-use-mcp/server'); await import('@zavora-ai/computer-use-mcp/http'); await import('@zavora-ai/computer-use-mcp/tool-catalog'); await import('@zavora-ai/computer-use-mcp/registry'); await import('@zavora-ai/computer-use-mcp/host-native'); console.log(process.version, 'packed entry points loaded')"
 
   publish:
     name: Stage npm release for approval

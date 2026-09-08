@@ -270,3 +270,7 @@ MIT © James Karanja Maina / Zavora Technologies Ltd.
 ## Token and interaction efficiency
 
 The opt-in [efficiency helpers](docs/EFFICIENCY.md) provide lazy tool discovery, bounded accessibility observations, multimodal result projection, explicit retained-image reuse, and cancellable local waits. The [OpenAI Responses example](agents/openai-agent/agent.mjs) demonstrates these helpers with real image feedback and API usage reporting. Run `npm run measure:efficiency` for reproducible payload measurements. Existing MCP tool schemas and default results remain unchanged.
+
+## Computer-use strategy services
+
+[Implementation and integration guide](docs/STRATEGY.md): owner-bound desktop sessions, observation-grounded actions, verified workflows, a portable MCP App console, persistent Tasks, an isolated browser backend, a brokered JavaScript runtime, native stop supervision, and Linux AT-SPI support. These host services are opt-in; the guide lists capability limits and remaining live-platform release gates.

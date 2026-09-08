@@ -36,6 +36,7 @@ export type SpawnBounded = (
   args: string[],
   timeoutMs: number,
   signal?: AbortSignal,
+  input?: string,
 ) => Promise<SpawnResult>
 
 const CONTROL_PLANE_ENV = /^(?:COMPUTER_USE_SUPERVISOR_|COMPUTER_USE_REMOTE_|COMPUTER_USE_APPROVAL_TOKEN$|COMPUTER_USE_PRINCIPAL_ID$|COMPUTER_USE_SESSION_ID$)/
@@ -107,7 +108,7 @@ function terminateProcessTree(child: ChildProcess): void {
 }
 
 /** Spawn a process with a hard timeout. Terminates its process tree on overrun or abort. */
-export const defaultSpawnBounded: SpawnBounded = (cmd, args, timeoutMs, signal) =>
+export const defaultSpawnBounded: SpawnBounded = (cmd, args, timeoutMs, signal, input) =>
   new Promise<SpawnResult>(resolve => {
     if (signal?.aborted) {
       resolve({ stdout: '', stderr: 'aborted', code: -1, timedOut: false })
@@ -120,6 +121,8 @@ export const defaultSpawnBounded: SpawnBounded = (cmd, args, timeoutMs, signal) 
       // Windows recursive termination is handled with taskkill /T below.
       detached: process.platform !== 'win32',
     })
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(input)
     let stdout = ''
     let stderr = ''
     let capturedBytes = 0
