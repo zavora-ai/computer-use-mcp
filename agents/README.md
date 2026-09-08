@@ -4,14 +4,14 @@ End-to-end AI agent examples using `computer-use-mcp` for desktop automation. Ea
 
 ```
 agents/
-├── claude-agent/        TypeScript agent using Anthropic Claude
-├── openai-agent/        TypeScript agent using OpenAI GPT-4o
-└── langchain-agent/     TypeScript agent using LangChain + Claude
+├── claude-agent/        JavaScript agent using Anthropic Claude
+├── openai-agent/        JavaScript agent using OpenAI Responses
+└── langchain-agent/     JavaScript agent using LangChain + Claude
 ```
 
 ## Quick Start
 
-All TypeScript agents use the in-process MCP server — no separate process needed.
+These JavaScript agents use the in-process MCP server — no separate process needed.
 
 ### Claude Agent (recommended for vision tasks)
 ```bash
@@ -21,6 +21,9 @@ node agents/claude-agent/agent.mjs "Open Calculator and compute 42 * 58"
 ```
 
 ### OpenAI Agent
+
+Build the TypeScript library first with `npm run build:ts`.
+
 ```bash
 export OPENAI_API_KEY=your-key
 npm install openai
@@ -36,7 +39,7 @@ node agents/langchain-agent/agent.mjs "Open Finder and list files on Desktop"
 
 ## How They Work
 
-All four agents follow the same pattern:
+These agents follow the same pattern:
 
 1. **Connect** — Start or connect to the computer-use-mcp MCP server
 2. **Observe** — Take a screenshot to see the current desktop state
@@ -49,11 +52,11 @@ All four agents follow the same pattern:
 
 | Agent | LLM | Language | Vision | Best For |
 |---|---|---|---|---|
-| Claude | Claude Sonnet | TypeScript | ✓ screenshots | Vision-heavy tasks, UI navigation |
-| OpenAI | GPT-4o | TypeScript | text only* | Text-based tasks, scripting |
-| LangChain | Claude (swappable) | TypeScript | ✓ via Claude | Framework integration, chains |
+| Claude | Claude Sonnet | JavaScript | ✓ screenshots | Vision-heavy tasks, UI navigation |
+| OpenAI | Configurable Responses model | JavaScript | ✓ image tool outputs | Lazy tool discovery, compact observations, local waits |
+| LangChain | Claude (swappable) | JavaScript | ✓ via Claude | Framework integration, chains |
 
-*OpenAI function calling doesn't support image returns in tool results — screenshots are described as text.
+The OpenAI example uses Responses function outputs with real image inputs and preserves MCP input schemas. Set `OPENAI_MODEL` to choose a compatible model (default `gpt-6-astra`). It starts with three bootstrap tools, loads up to six schemas on demand, and reports actual API token usage. Image reuse is opt-in through `COMPUTER_USE_REUSE_IMAGES=true`. See [efficiency helpers and limits](../docs/EFFICIENCY.md).
 
 ## Custom Tasks
 
