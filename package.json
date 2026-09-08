@@ -34,6 +34,10 @@
       "import": "./dist/client.js",
       "types": "./dist/client.d.ts"
     },
+    "./efficiency": {
+      "import": "./dist/efficiency.js",
+      "types": "./dist/efficiency.d.ts"
+    },
     "./server": {
       "import": "./dist/server.js",
       "types": "./dist/server.d.ts"
@@ -62,6 +66,7 @@
     "README.md",
     "SECURITY.md",
     "docs/ARCHITECTURE.md",
+    "docs/EFFICIENCY.md",
     "docs/releases/v7.1.0.md",
     "dist/entrypoint.d.ts",
     "dist/entrypoint.js",
@@ -74,6 +79,8 @@
     "computer-use-napi.win32-arm64.node",
     "dist/client.d.ts",
     "dist/client.js",
+    "dist/efficiency.d.ts",
+    "dist/efficiency.js",
     "dist/instructions.d.ts",
     "dist/instructions.js",
     "dist/http.d.ts",
@@ -115,6 +122,7 @@
     "prepare:packages": "node scripts/prepare-platform-packages.mjs",
     "test": "npm run build:ts && node --test test/*.test.mjs",
     "test:input-attribution": "node scripts/verify-input-attribution.mjs",
+    "measure:efficiency": "npm run build:ts && node scripts/measure-efficiency.mjs",
     "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",

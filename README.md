@@ -266,3 +266,7 @@ The release gate runs TypeScript compilation, Node tests, native builds on the s
 ## License
 
 MIT © James Karanja Maina / Zavora Technologies Ltd.
+
+## Token and interaction efficiency
+
+The opt-in [efficiency helpers](docs/EFFICIENCY.md) provide lazy tool discovery, bounded accessibility observations, multimodal result projection, explicit retained-image reuse, and cancellable local waits. The [OpenAI Responses example](agents/openai-agent/agent.mjs) demonstrates these helpers with real image feedback and API usage reporting. Run `npm run measure:efficiency` for reproducible payload measurements. Existing MCP tool schemas and default results remain unchanged.

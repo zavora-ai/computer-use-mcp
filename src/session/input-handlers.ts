@@ -272,7 +272,8 @@ export class InputHandler {
         await this.#sleep(100)
       } finally {
         if (typeof saved === 'string') {
-          try { this.#native.writeClipboard(saved) } catch { /* best effort */ }
+          // Preserve a new clipboard value copied by the user while paste settled.
+          try { if (this.#native.readClipboard() === text) this.#native.writeClipboard(saved) } catch { /* best effort */ }
         }
       }
       return
@@ -288,7 +289,9 @@ export class InputHandler {
       } else this.#native.typeText(text)
     } finally {
       if (typeof saved === 'string') {
-        try { this.#execFile('pbcopy', [], { input: saved }) } catch { /* best effort */ }
+        try {
+          if (this.#execFile('pbpaste', []).toString() === text) this.#execFile('pbcopy', [], { input: saved })
+        } catch { /* best effort */ }
       }
     }
   }

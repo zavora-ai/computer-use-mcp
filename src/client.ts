@@ -65,9 +65,14 @@ export type OpenAIComputerAction = {
   [key: string]: unknown
 }
 
+export interface ToolCallOptions {
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
 export interface ComputerUseClient {
   listTools(): Promise<ListedTool[]>
-  callTool(name: string, args?: Record<string, unknown>): Promise<ToolResult>
+  callTool(name: string, args?: Record<string, unknown>, options?: ToolCallOptions): Promise<ToolResult>
   listResources?(): Promise<Array<{ uri: string; name: string; description?: string; mimeType?: string }>>
   listResourceTemplates?(): Promise<Array<{ uriTemplate: string; name: string; description?: string; mimeType?: string }>>
   readResource?(uri: string): Promise<unknown>
@@ -180,8 +185,12 @@ function targetArgs(app?: string, opts?: WindowTargetOpts): Record<string, unkno
 }
 
 function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
-  const call = async (name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
-    const raw = await client.callTool({ name, arguments: args }) as ToolResult & { structuredContent?: Record<string, unknown> }
+  const call = async (name: string, args: Record<string, unknown> = {}, options: ToolCallOptions = {}): Promise<ToolResult> => {
+    options.signal?.throwIfAborted()
+    const raw = await client.callTool({ name, arguments: args }, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+    }) as ToolResult & { structuredContent?: Record<string, unknown> }
     return {
       content: raw.content,
       ...(raw.structuredContent !== undefined ? { structuredContent: raw.structuredContent } : {}),
