@@ -106,6 +106,7 @@ export interface ComputerUseClient {
   listWindows(bundleId?: string): Promise<ToolResult>
   cursorPosition(): Promise<ToolResult>
   wait(seconds: number): Promise<ToolResult>
+  discoverApplications(options?: { query?: string; limit?: number; include_capabilities?: boolean }): Promise<ToolResult>
   listRunningApps(): Promise<ToolResult>
   hideApp(bundleId: string): Promise<ToolResult>
   unhideApp(bundleId: string): Promise<ToolResult>
@@ -287,6 +288,7 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
     listWindows: (bundleId) => call('list_windows', bundleId ? { bundle_id: bundleId } : {}),
     cursorPosition: () => call('cursor_position'),
     wait: (s) => call('wait', { duration: s }),
+    discoverApplications: (options = {}) => call('discover_applications', options),
     listRunningApps: () => call('list_running_apps'),
     hideApp: (id) => call('hide_app', { bundle_id: id }),
     unhideApp: (id) => call('unhide_app', { bundle_id: id }),

@@ -13,6 +13,7 @@ description: Desktop automation with computer-use-mcp. Use when controlling nati
 - Prefer connectors, shell, filesystem, or browser automation (Playwright) first
 
 ## Mandatory first steps
+If the app ID is unknown, first use `discover_applications({query, include_capabilities: true})`. Use its `targetApp` when present; do not assume a desktop registration ID is a process target.
 1. `get_tool_guide({ task_description })` — pick scripting vs AX vs coordinates
 2. `get_app_capabilities({ bundle_id })` — is the app scriptable/accessible/running?
 3. Prefer `run_script` → accessibility (`fill_form`, `click_element`) → `left_click`/`type` last

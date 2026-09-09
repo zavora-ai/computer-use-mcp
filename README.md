@@ -65,18 +65,9 @@ On Linux, screenshot and input support depend on the active X11/Wayland environm
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  Client["MCP 2026 or legacy client"] <-->|"stdio or Streamable HTTP"| Entry["SDK v2 serving entry"]
-  Entry --> Server["McpServer 7.1 per request/connection"]
-  Server --> Registry["64-tool registry"]
-  Server --> Protocol["MRTR roots/elicitation, Tasks, subscriptions"]
-  Server --> Resources["Prompts and resources"]
-  Registry --> Session["Policy, targeting, lock, cancellation"]
-  Session --> Native["Rust N-API backend"]
-  Session --> Scripts["Bounded AppleScript, JXA, or PowerShell"]
-  Native --> OS["macOS / Windows / Linux"]
-```
+![Computer-use MCP architecture](https://raw.githubusercontent.com/zavora-ai/computer-use-mcp/main/docs/assets/architecture.svg)
+
+The diagram separates the always-on MCP serving path from opt-in host services. Desktop and browser tools remain behind registry and host authorization, with backend-specific policy checks.
 
 Filesystem authority is the intersection of operator configuration and client-declared roots:
 
@@ -108,7 +99,7 @@ See [docs/releases/v7.1.0.md](docs/releases/v7.1.0.md) for the complete release 
 | Resource links | Filesystem success results reference `computer://filesystem/{encodedPath}` | Existing text content is preserved |
 | List changed | Runtime profile enable/disable operations notify the client | Initial profiles remain unchanged |
 | Completion | Completes application IDs in relevant prompts and paths in the filesystem template | Empty suggestions on unsupported/unreadable state |
-| Annotations | All 64 tools expose all four standard behavior hints; resources expose assistant audience and priority | Hints are descriptive, never authorization |
+| Annotations | All 65 tools expose all four standard behavior hints; resources expose assistant audience and priority | Hints are descriptive, never authorization |
 | Cache hints | Discovery/list operations are private-cacheable for 30 seconds; live resource reads are not cached | 2026 only |
 
 Task status notifications are optional in the extension and are not advertised; clients poll at `pollIntervalMs`. Sampling, MCP Apps, and authentication extensions are not advertised: this server does not need model delegation or an embedded UI, and remote authentication must be supplied by the embedding host rather than simulated. Legacy roots, logging, and elicitation remain available during the protocol deprecation window.
@@ -136,9 +127,9 @@ Tasks require an extension-aware host. The core `@modelcontextprotocol/client` 2
 
 ## Tool groups
 
-The full profile exposes 64 tools:
+The full profile exposes 65 tools:
 
-- Observation: `screenshot`, `zoom`, `cursor_position`, `get_display_size`, `list_displays`, `get_frontmost_app`, `list_windows`, `list_running_apps`, `get_window`, `get_cursor_window`, `snapshot`.
+- Observation: `screenshot`, `zoom`, `cursor_position`, `get_display_size`, `list_displays`, `get_frontmost_app`, `list_windows`, `list_running_apps`, `discover_applications`, `get_window`, `get_cursor_window`, `snapshot`.
 - Pointer and keyboard: `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click`, `mouse_move`, `left_click_drag`, `left_mouse_down`, `left_mouse_up`, `scroll`, `type`, `key`, `hold_key`, `multi_select`, `multi_edit`.
 - Accessibility: `get_ui_tree`, `get_focused_element`, `find_element`, `click_element`, `set_value`, `press_button`, `select_menu_item`, `fill_form`, `list_menu_bar`.
 - Applications and windows: `open_application`, `activate_app`, `activate_window`, `resize_window`, `hide_app`, `unhide_app`.
@@ -171,7 +162,7 @@ Use `get_tool_guide` and `get_app_capabilities` before unfamiliar workflows. Sup
 | `ax` | Core plus accessibility tools |
 | `scripting` | Core plus scripting and filesystem tools |
 | `windows-admin` | Scripting plus process, registry, notification, and desktop administration |
-| `full` | All 64 tools; default for compatibility |
+| `full` | All 65 tools; default for compatibility |
 
 Embedded hosts may set a narrower active v7 profile through `onRegistry`. The active profile can never expand beyond the maximum profile, and changes generate MCP tool-list notifications.
 
@@ -274,3 +265,29 @@ The opt-in [efficiency helpers](docs/EFFICIENCY.md) provide lazy tool discovery,
 ## Computer-use strategy services
 
 [Implementation and integration guide](docs/STRATEGY.md): owner-bound desktop sessions, observation-grounded actions, verified workflows, a portable MCP App console, persistent Tasks, an isolated browser backend, a brokered JavaScript runtime, native stop supervision, and Linux AT-SPI support. These host services are opt-in; the guide lists capability limits and remaining live-platform release gates.
+
+### Discover applications before targeting them
+
+Use `discover_applications({query: "office", include_capabilities: true})` to find
+installed and running apps without knowing their IDs or launching them. Results
+include `id`, `name`, `targetApp` when known, installation/running state, and
+optional scripting/accessibility facts. The core profile includes this tool.
+Search accepts names or IDs and recognizes Office suite queries. Results default
+to 20 (maximum 100); at most ten returned apps receive capability probes.
+
+macOS reads standard application folders; Windows reads Start-menu registrations;
+Linux reads standard desktop-entry folders. Discovery reports partial results
+and warnings, and does not claim to find every portable application. A Windows
+AppID or Linux desktop ID is not necessarily an input target: use `targetApp`
+when present, or resolve the running process after launch. Capability checks on
+closed apps cannot establish live accessibility support.
+
+Run `node scripts/test-office.mjs` on macOS for an explicit live Office smoke test
+using discovery and `run_script`. It creates new scratch files and writes a report
+in a unique temporary directory; it is not part of the unattended test suite.
+
+### Responses API showcases
+
+[Run GPT-6 Astra desktop agents](agents/openai-agent/README.md): paint a Van Gogh-inspired
+landscape through real mouse strokes, build a coordinated Office briefing, or
+inspect installed app capabilities. Runs save screenshots, usage and artifact evidence.

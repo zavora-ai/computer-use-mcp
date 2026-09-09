@@ -143,6 +143,7 @@ export const TOOL_CATALOG: Record<string, ToolMeta> = {
   get_frontmost_app: AX_READ('core'),
   list_windows: AX_READ('core'),
   list_running_apps: AX_READ('ax'),
+  discover_applications: NONE_READ('core'),
   hide_app: AX_MUT('ax'),
   unhide_app: AX_MUT('ax'),
   get_display_size: NONE_READ('core'),

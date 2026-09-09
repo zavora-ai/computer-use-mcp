@@ -22,6 +22,13 @@ interface ToolGuidePattern extends ToolGuideEntry {
 }
 
 const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
+  {
+    pattern: /\b(office|microsoft 365|microsoft word|excel|powerpoint)\b/i,
+    approach: 'scripting',
+    toolSequence: ['discover_applications', 'get_app_capabilities', 'run_script'],
+    explanation: 'Discover installed Office apps by name first, then use their returned targetApp IDs. Probe capabilities before scripting. Use AppleScript on macOS or supported PowerShell/COM automation on Windows; accessibility is a fallback.',
+    fallbackSequence: ['list_windows', 'get_ui_tree', 'find_element', 'click_element'],
+  },
   // ── Windows-specific entries (checked first on Windows) ─────────────────
   ...(process.platform === 'win32' ? [
     {

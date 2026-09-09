@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>MCP Paint Studio</title>
+<style>body{margin:0;background:#20232a;color:#fff;font:16px system-ui}header{display:flex;gap:12px;align-items:center;padding:12px 20px}h1{font-size:20px;margin:0 12px 0 0}button,input{font:inherit}button{padding:8px 12px;border:1px solid #aaa;border-radius:5px;cursor:pointer}#palette{display:flex;gap:5px}#palette button{width:32px;height:32px;padding:0}button[aria-pressed=true]{outline:3px solid white;outline-offset:2px}canvas{display:block;background:#fff;margin:12px 20px;touch-action:none;cursor:crosshair;width:1000px;height:600px}#status{padding:0 20px}input{width:55px}</style>
+<header><h1>MCP Paint Studio</h1><div id="palette" aria-label="Palette"></div><label>Brush <input id="width" aria-label="Brush width" type="number" min="1" max="100" value="20"></label><button id="undo">Undo</button><button id="export">Export PNG</button></header>
+<canvas id="canvas" width="1000" height="600" aria-label="Painting canvas"></canvas><p id="status" role="status">Start with a background, then build layers with brush strokes.</p>
+<script>
+const notify=()=>fetch('/state/'+location.hash.slice(1),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({width:Number(document.querySelector('#width').value),color})}).catch(()=>{});
+const colors=[['Midnight','#111d3b'],['Cobalt','#234da2'],['Sky','#568fc1'],['Cream','#f6e3a2'],['Gold','#e9b83f'],['Green','#214a3d'],['Brown','#704b36'],['White','#fff7dc']];
+const paletteEl=document.querySelector('#palette'),canvas=document.querySelector('#canvas'),ctx=canvas.getContext('2d'),strokes=[];let color=colors[0][1],active;
+function redraw(){ctx.fillStyle='#ffffff';ctx.fillRect(0,0,1000,600);for(const s of strokes){ctx.strokeStyle=s.color;ctx.lineWidth=s.width;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();s.points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));if(s.points.length===1)ctx.lineTo(s.points[0][0]+.01,s.points[0][1]);ctx.stroke()}}
+for(const [name,hex] of colors){const b=document.createElement('button');b.setAttribute('aria-label',name+' '+hex);b.title=name+' '+hex;b.style.background=hex;b.setAttribute('aria-pressed',hex===color);b.onclick=()=>{color=hex;for(const other of paletteEl.children)other.setAttribute('aria-pressed',other===b);notify()};paletteEl.append(b)}
+const point=e=>{const r=canvas.getBoundingClientRect();return [Math.max(0,Math.min(1000,(e.clientX-r.left)*1000/r.width)),Math.max(0,Math.min(600,(e.clientY-r.top)*600/r.height))]};
+canvas.onpointerdown=e=>{if(e.button!==0)return;active={color,width:Math.max(1,Math.min(100,Number(document.querySelector('#width').value)||20)),points:[point(e)],trusted:e.isTrusted};strokes.push(active);canvas.setPointerCapture(e.pointerId);redraw()};
+canvas.onpointermove=e=>{if(active){active.points.push(point(e));redraw()}};canvas.onpointerup=canvas.onpointercancel=()=>{active=null;document.querySelector('#status').textContent=strokes.length+' strokes painted.'};
+document.querySelector('#undo').onclick=()=>{strokes.pop();redraw()};
+document.querySelector('#export').onclick=async()=>{const result=await fetch('/export/'+location.hash.slice(1),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:canvas.toDataURL('image/png'),strokes})});document.querySelector('#status').textContent=result.ok?'Saved painting.png':'Export failed'};
+document.querySelector('#width').addEventListener('input',notify);
+redraw();
+</script></html>

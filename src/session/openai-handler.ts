@@ -85,6 +85,8 @@ export class OpenAiCompatibilityHandler {
         ...(typeof args.width === 'number' ? { width: args.width } : {}),
         ...(typeof args.quality === 'number' ? { quality: args.quality } : {}),
         ...(typeof args.provider === 'string' ? { provider: args.provider } : {}),
+        ...(common.target_app === undefined ? {} : { target_app: common.target_app }),
+        ...(common.target_window_id === undefined ? {} : { target_window_id: common.target_window_id }),
         show_agent_pointer: args.use_virtual_pointer === true,
       }, signal, onProgress, requestContext)
       content.push(...result.content)

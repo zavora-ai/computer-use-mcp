@@ -33,9 +33,19 @@ const BOOTSTRAP = [
 export async function runAgent({
   openai, client, task, model = 'gpt-6-astra', maxTurns = 40,
   signal, onProgress = () => {}, reuseImages = false,
+  extraInstructions = '', allowedTools, onToolResult = () => {}, onResponse = () => {},
+  maxTokens = 200000, maxOutputTokens = 8000, reasoningEffort = 'low', customTools = [], finalizeToolName,
 }) {
   if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 200) throw new Error('maxTurns must be 1..200')
-  const discovery = createToolDiscovery(client)
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) throw new Error('maxTokens must be positive')
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 64 || maxOutputTokens > 32000) throw new Error('maxOutputTokens must be 64..32000')
+  if (!['low','medium','high','xhigh','max'].includes(reasoningEffort)) throw new Error('Unsupported reasoning effort')
+  const custom = new Map(customTools.map(t => [t.schema.name, t]))
+  if(custom.size !== customTools.length || customTools.some(t => BOOTSTRAP.some(b => b.name === t.schema.name))) throw new Error('Duplicate custom tool')
+  const allowed = allowedTools ? new Set(allowedTools) : null
+  const discovery = createToolDiscovery({ ...client, listTools: async () => (await client.listTools()).filter(t => !allowed || allowed.has(t.name)) })
+  if(finalizeToolName&&!custom.has(finalizeToolName))throw new Error('Finalization tool must be registered')
+  let finalized=false
   let loaded = []
   let previousResponseId
   let input = [{ role: 'user', content: task }]
@@ -51,9 +61,13 @@ with an unknown outcome before checking whether it already succeeded.
 An unchanged image ID references identical pixels already returned in this conversation;
 it does not establish unchanged window position or permission. Coordinates use logical
 desktop pixels: account for screenshot scaling/window origin using display/window tools.
-Do not claim completion on a tool error, partial result, or unverified final state.`
+Do not claim completion on a tool error, partial result, or unverified final state.
+Begin unknown-app tasks with discover_applications, then use its targetApp IDs.
+Complete the task within the supplied scope; make routine artistic and implementation choices yourself.
+${extraInstructions}`
 
   const execute = async (name, args) => {
+    if (custom.has(name)) return custom.get(name).execute(args, signal)
     if (name === 'discover_tools') {
       loaded = await discovery.search(args.query)
       return { content: [{ type: 'text', text: JSON.stringify({
@@ -87,10 +101,13 @@ Do not claim completion on a tool error, partial result, or unverified final sta
 
   for (let turn = 0; turn < maxTurns; turn++) {
     signal?.throwIfAborted()
+    input.push({ role: 'developer', content: `Runtime budget: ${maxTurns-turn} responses and approximately ${Math.max(0,maxTokens-usage.inputTokens-usage.outputTokens)} total input/output tokens remain. ${turn>=maxTurns-4 || usage.inputTokens+usage.outputTokens>maxTokens*.7 ? 'Finish the current composition, export/save now, verify it, and give a final report.' : 'Batch useful work and reserve budget to save and verify.'}` })
     const response = await openai.responses.create({
       model, instructions, input, previous_response_id: previousResponseId,
+      reasoning: { effort: reasoningEffort }, max_output_tokens: maxOutputTokens,
       parallel_tool_calls: false,
-      tools: [...BOOTSTRAP, ...loaded.map(tool => ({
+      ...(finalized?{tool_choice:'none'}:finalizeToolName&&(turn>=maxTurns-4||usage.inputTokens+usage.outputTokens>maxTokens*.6)?{tool_choice:{type:'function',name:finalizeToolName}}:{}),
+      tools: [...BOOTSTRAP, ...customTools.map(t => t.schema), ...loaded.filter(t => !custom.has(t.name)).map(tool => ({
         type: 'function', name: tool.name, description: tool.description,
         parameters: tool.inputSchema, strict: false,
       }))],
@@ -99,6 +116,8 @@ Do not claim completion on a tool error, partial result, or unverified final sta
     usage.inputTokens += response.usage?.input_tokens ?? 0
     usage.cachedInputTokens += response.usage?.input_tokens_details?.cached_tokens ?? 0
     usage.outputTokens += response.usage?.output_tokens ?? 0
+    await onResponse({ response, usage: { ...usage } })
+    if (usage.inputTokens + usage.outputTokens > maxTokens) throw new Error('Agent token budget exceeded; inspect completed work before retry')
     if (response.status !== 'completed') throw new Error(`Response stopped: ${response.status}`)
     const calls = response.output.filter(item => item.type === 'function_call')
     if (!calls.length && response.output.some(item => item.type === 'message' && item.phase !== 'commentary')) {
@@ -118,6 +137,8 @@ Do not claim completion on a tool error, partial result, or unverified final sta
         signal?.throwIfAborted()
         result = { isError: true, content: [{ type: 'text', text: error.message }] }
       }
+      if(call.name===finalizeToolName&&!result.isError)finalized=true
+      await onToolResult({ tool: call.name, args, result })
       const content = toModelContent(result, reuseImages ? {
         imageScope: JSON.stringify([call.name, args]), knownImageIds: [...knownImageIds],
       } : {})

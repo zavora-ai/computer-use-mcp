@@ -157,6 +157,11 @@ export function defineV7Tools(registry: ToolRegistry): void {
   tool('list_windows', 'List visible on-screen windows, optionally filtered by bundle ID', {
     bundle_id: z.string().optional().describe('Bundle ID to filter windows by'),
   }, AX_READ)
+  tool('discover_applications', 'Find installed and running applications by name or ID before choosing an app. Supports Office suite queries. Returns stable IDs, targetApp when known, running state and optional bounded capability probes; never launches apps.', {
+    query: z.string().max(200).optional(),
+    limit: z.number().int().min(1).max(100).optional().default(20),
+    include_capabilities: z.boolean().optional().default(false),
+  }, NONE_READ)
   tool('list_running_apps', 'List all running regular applications', {}, AX_READ)
   tool('hide_app', 'Hide an app by bundle ID', { bundle_id: z.string() }, AX_MUT)
   tool('unhide_app', 'Unhide an app by bundle ID', { bundle_id: z.string() }, AX_MUT)

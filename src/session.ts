@@ -7,6 +7,8 @@
  * All runs in-process via NAPI — no child processes, no focus stealing.
  */
 
+import { discoverApplications } from './session/application-discovery.js'
+import { okJson } from './result.js'
 import { loadNative, type NativeModule } from './native.js'
 import { MUTATING_TOOLS } from './tool-catalog.js'
 import { sleep, sleepAbortable, defaultSpawnBounded } from './session/spawn.js'
@@ -391,6 +393,13 @@ export function createSession(opts: SessionOptions = {}): Session {
       const linuxResult = process.platform === 'linux' && !opts.native
         ? await handleLinuxAccessibility(tool, args, accessibilityContext, spawnBounded) : undefined
       if (linuxResult) return linuxResult
+      if (tool === 'discover_applications') return okJson(await discoverApplications(args, {
+        platform: process.platform, spawn: spawnBounded, signal, running: n.listRunningApps(),
+        capabilities: async id => {
+          const result = await handleAccessibilityTool('get_app_capabilities', { bundle_id: id }, accessibilityContext)
+          return result?.structuredContent ?? JSON.parse(result?.content.find(c => c.type === 'text')?.text ?? 'null')
+        },
+      }))
       const accessibilityResult = await handleAccessibilityTool(tool, args, accessibilityContext)
       if (accessibilityResult) return accessibilityResult
       const spacesResult = await spacesHandler.handle(tool, args)

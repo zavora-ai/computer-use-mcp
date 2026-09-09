@@ -65,6 +65,8 @@ export function mapLegacyOpenAiAction(
           ...(options.width === undefined ? {} : { width: options.width }),
           ...(options.quality === undefined ? {} : { quality: options.quality }),
           ...(options.provider === undefined ? {} : { provider: options.provider }),
+          ...(common.target_app === undefined ? {} : { target_app: common.target_app }),
+          ...(common.target_window_id === undefined ? {} : { target_window_id: common.target_window_id }),
           show_agent_pointer: action.show_agent_pointer === true || options.useVirtualPointer,
         },
       }
@@ -124,7 +126,12 @@ export function mapLegacyOpenAiAction(
       if (typeof action.text !== 'string') throw new Error('type requires text')
       return {
         actionType, tool: 'type',
-        args: { text: typeof action.text === 'string' ? action.text : '', ...common },
+        args: {
+          text: action.text,
+          ...(action.clear === true ? { clear: true } : {}),
+          ...(action.press_enter === true ? { press_enter: true } : {}),
+          ...common,
+        },
       }
     case 'keypress':
     case 'key':

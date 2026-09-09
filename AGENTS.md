@@ -236,7 +236,7 @@ const model = new ChatAnthropic({ model: 'claude-opus-4-5' }).bindTools(tools)
 
 ## Pick the right approach first
 
-Before screenshot + click, call the two discovery tools. They exist to save context tokens and wall-clock time.
+Before screenshot + click, discover the app with `discover_applications({query: "office", include_capabilities: true})` when its identity is unknown. Use the returned `targetApp` for targeting; installed launch IDs are not always process IDs. Then use `get_tool_guide` and `get_app_capabilities` to choose the approach. Discovery never launches apps and is bounded to standard registration locations.
 
 ### macOS example
 ```typescript
