@@ -6,6 +6,19 @@ Application discovery, optional desktop/browser/runtime services, persistent Tas
 Responses showcases, efficiency and authorization improvements, and documentation
 cleanup. See [the release notes](docs/releases/v7.2.0.md).
 
+### Added
+
+- DeepSeek Flash vision example under `agents/deepseek-agent`: `vision.mjs` asks a
+  single question about a capture (describe a screen, transcribe a window, read a
+  chart, diff two captures, or use an externally hosted image) and `agent.mjs` runs
+  the full MCP tool loop with image feedback. DeepSeek accepts images in user
+  messages only, so tool screenshots are moved out of the `tool` message into a
+  following user message; the per-image, per-request and dimension limits are
+  checked locally rather than surfaced as a 400.
+- `deepseek-flash` screenshot provider preset at 1280px. The model rescales every
+  image to roughly the pixel count of 1300x1300 and caps it at 1024 tokens, so a
+  wider capture costs upload bytes without adding detail.
+
 ### Fixed
 
 - Arguments are validated against the advertised input schema at the MCP boundary, and

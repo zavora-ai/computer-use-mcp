@@ -22,7 +22,7 @@ const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
   focus_strategy: focusStrategyParam,
 })
 
-const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'phi', 'auto'] as const
+const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'deepseek-flash', 'phi', 'auto'] as const
 
 /** Complete v7 compatibility surface, defined independently of MCP transport setup. */
 export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>): void {
@@ -91,7 +91,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       .describe('Bundle ID of app to capture (window only). Omit for full screen.'),
     target_window_id: targetWindowIdParam,
     provider: z.enum(PROVIDERS).optional()
-      .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
+      .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, deepseek-flash=1280px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
     show_agent_pointer: z.boolean().optional()
       .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
   }, NONE_READ)
