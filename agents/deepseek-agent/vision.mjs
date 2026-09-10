@@ -97,7 +97,7 @@ export function buildVisionMessages({ prompt, images = [], urls = [], detail = '
 }
 
 /** Capture, ask, and return the answer. One model call. */
-export async function runVision({ deepseek, client, options, model = 'deepseek-flash', maxTokens = 2048, signal }) {
+export async function runVision({ deepseek, client, options, model = 'deepseek-flash', maxTokens = 4096, signal }) {
   const scenario = options.scenario === 'url' ? null : SCENARIOS[options.scenario]
   const prompt = options.prompt
     ?? scenario?.prompt
@@ -120,8 +120,15 @@ export async function runVision({ deepseek, client, options, model = 'deepseek-f
     model, messages, max_tokens: maxTokens,
   }, signal ? { signal } : undefined)
 
+  const choice = response.choices?.[0]
+  // The model reasons before answering and that reasoning is billed against
+  // max_tokens, so an exhausted budget looks like an empty answer.
+  if (choice?.finish_reason === 'length' && !choice.message?.content?.trim()) {
+    throw new Error(`The model exhausted max_tokens (${maxTokens}) on reasoning before answering. Raise maxTokens.`)
+  }
+
   return {
-    text: response.choices?.[0]?.message?.content ?? '',
+    text: choice?.message?.content ?? '',
     imageCount,
     detail,
     usage: {

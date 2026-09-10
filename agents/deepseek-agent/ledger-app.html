@@ -1,0 +1,224 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>MCP Ledger — Vision Data Entry</title>
+<style>
+body{margin:0;background:#1b1f27;color:#e8ecf4;font:16px system-ui}
+header{display:flex;gap:16px;align-items:baseline;padding:10px 18px}
+h1{font-size:19px;margin:0}
+#hint{color:#9aa7bd;font-size:14px}
+main{display:flex;gap:18px;padding:0 18px 12px}
+#scan{background:#fff;border-radius:4px;box-shadow:0 2px 10px #0008}
+form{display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-content:start;min-width:360px}
+label{align-self:center;color:#c3cddd;font-size:14px}
+input{font:inherit;padding:6px 8px;border:1px solid #55617a;border-radius:4px;background:#101319;color:#fff;width:190px}
+input[data-state=correct]{border-color:#3ea36b;background:#0f1a14}
+input[data-state=wrong]{border-color:#c8543f;background:#1c1210}
+#actions{grid-column:1 / -1;display:flex;gap:10px;margin-top:6px}
+button{font:inherit;padding:8px 14px;border:1px solid #7d8aa5;border-radius:5px;background:#2b3242;color:#fff;cursor:pointer}
+#status{grid-column:1 / -1;color:#9aa7bd;font-size:14px;min-height:20px}
+</style>
+<header>
+  <h1>MCP Ledger</h1>
+  <span id="hint">The scan on the left is an image. Read it, fill every field, then Verify.</span>
+</header>
+<main>
+  <canvas id="scan" width="620" height="700" aria-label="Scanned receipt image. Its contents are pixels only and are not exposed as text."></canvas>
+  <form id="entry" autocomplete="off"></form>
+</main>
+<script>
+const token = location.hash.slice(1)
+const post = (path, body) => fetch(path + '/' + token, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}).then(r => r.ok ? r.json() : Promise.reject(new Error('request failed')))
+
+const statusEl = () => document.querySelector('#status')
+
+/**
+ * Every field edit is recorded with the event's isTrusted flag and the value at
+ * that moment. On submit the host compares the recorded value against the live
+ * one, so assigning `input.value` directly — which fires no event at all — is
+ * visible as an unobserved mutation rather than passing as data entry.
+ */
+const observed = new Map()
+const journal = []
+
+function buildForm(fields) {
+  const form = document.querySelector('#entry')
+  for (const field of fields) {
+    const id = 'f_' + field.name
+    const label = document.createElement('label')
+    label.htmlFor = id
+    label.textContent = field.label
+    const input = document.createElement('input')
+    input.id = id
+    input.name = field.name
+    input.type = 'text'
+    input.setAttribute('aria-label', field.label)
+    input.placeholder = field.placeholder ?? ''
+    input.addEventListener('input', event => {
+      observed.set(field.name, input.value)
+      journal.push({ field: field.name, trusted: event.isTrusted === true, length: input.value.length })
+      input.removeAttribute('data-state')
+    })
+    form.append(label, input)
+  }
+  const actions = document.createElement('div')
+  actions.id = 'actions'
+  actions.innerHTML = '<button id="verify" type="button">Verify</button>'
+    + '<button id="submit" type="button">Submit ledger</button>'
+  const status = document.createElement('p')
+  status.id = 'status'
+  status.setAttribute('role', 'status')
+  form.append(actions, status)
+
+  document.querySelector('#verify').onclick = verify
+  document.querySelector('#submit').onclick = submit
+}
+
+const currentValues = () => Object.fromEntries(
+  Array.from(document.querySelectorAll('#entry input'), input => [input.name, input.value.trim()]))
+
+/** Ask the host to score the entries. Correctness comes back, never the answers. */
+async function verify() {
+  const button = document.querySelector('#verify')
+  button.disabled = true
+  try {
+    const report = await post('/verify', { values: currentValues() })
+    if (report.scored === false) {
+      // A real photograph has no answer key, so there is nothing to grade against.
+      statusEl().textContent = `${report.filled} of ${report.total} fields filled.`
+        + ' This is a real receipt with no answer key, so entries are recorded for review, not scored.'
+      return
+    }
+    for (const [name, correct] of Object.entries(report.fields)) {
+      const input = document.querySelector('#entry input[name="' + name + '"]')
+      if (input) input.dataset.state = correct ? 'correct' : 'wrong'
+    }
+    statusEl().textContent = `${report.correct} of ${report.total} fields correct`
+      + (report.blank ? ` — ${report.blank} still blank` : '')
+      + '. Wrong fields are outlined in red; re-read the scan for those.'
+  } catch {
+    statusEl().textContent = 'Verify failed'
+  } finally {
+    button.disabled = false
+  }
+}
+
+async function submit() {
+  const button = document.querySelector('#submit')
+  button.disabled = true
+  try {
+    const result = await post('/submit', {
+      values: currentValues(),
+      observed: Object.fromEntries(observed),
+      journal,
+      image: document.querySelector('#scan').toDataURL('image/png'),
+    })
+    statusEl().textContent = !result.accepted
+      ? 'Submission rejected: ' + result.reason
+      : result.scored === false
+        ? `Submitted: ${result.filled} of ${result.total} fields recorded (unscored).`
+        : `Submitted: ${result.correct} of ${result.total} fields correct.`
+  } catch {
+    statusEl().textContent = 'Submit failed'
+  } finally {
+    button.disabled = false
+  }
+}
+
+/**
+ * Draw a real receipt photograph, scaled to fit the canvas.
+ *
+ * It goes onto the canvas rather than into an <img> for the same reason the
+ * synthetic scan does: pixels on a canvas are invisible to the accessibility
+ * tree, so the values can only be obtained by looking.
+ */
+function paintPhoto(dataUrl) {
+  const canvas = document.querySelector('#scan')
+  const ctx = canvas.getContext('2d')
+  return new Promise(resolve => {
+    const photo = new Image()
+    photo.onload = () => {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      const scale = Math.min(canvas.width / photo.width, canvas.height / photo.height)
+      const width = photo.width * scale
+      const height = photo.height * scale
+      ctx.drawImage(photo, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height)
+      resolve()
+    }
+    photo.onerror = () => resolve()
+    photo.src = dataUrl
+  })
+}
+
+/**
+ * Paint the scan. Text is drawn into the canvas, never inserted into the DOM, so
+ * the values are unavailable to the accessibility tree and can only be obtained
+ * by looking at the pixels.
+ */
+function paint(scan) {
+  const canvas = document.querySelector('#scan')
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#f4f1e8'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  ctx.save()
+  ctx.translate(canvas.width / 2, canvas.height / 2)
+  ctx.rotate(scan.rotation)
+  ctx.translate(-canvas.width / 2, -canvas.height / 2)
+
+  ctx.fillStyle = '#141414'
+  ctx.textBaseline = 'top'
+  for (const line of scan.lines) {
+    ctx.font = `${line.weight ?? 'normal'} ${line.size}px ${line.mono ? 'ui-monospace, Menlo, monospace' : 'Georgia, serif'}`
+    ctx.fillStyle = line.faint ? '#5c5a53' : '#141414'
+    ctx.textAlign = line.align ?? 'left'
+    ctx.fillText(line.text, line.x, line.y)
+  }
+  for (const rule of scan.rules) {
+    ctx.fillStyle = '#8a8779'
+    ctx.fillRect(rule.x, rule.y, rule.width, 1)
+  }
+
+  // Bar chart: one field can only be answered by reading it.
+  const chart = scan.chart
+  ctx.fillStyle = '#141414'
+  ctx.font = 'bold 13px Georgia, serif'
+  ctx.textAlign = 'left'
+  // Clear of the tallest bar's value label, which sits 15px above the bar top.
+  ctx.fillText(chart.title, chart.x, chart.y - 36)
+  const peak = Math.max(...chart.bars.map(bar => bar.value))
+  chart.bars.forEach((bar, index) => {
+    const height = Math.round((bar.value / peak) * chart.height)
+    const x = chart.x + index * (chart.barWidth + 10)
+    ctx.fillStyle = '#3c4a63'
+    ctx.fillRect(x, chart.y + chart.height - height, chart.barWidth, height)
+    ctx.fillStyle = '#141414'
+    ctx.textAlign = 'center'
+    // Print each bar's value: peak_amount has to be readable, not guessed from
+    // bar heights.
+    ctx.font = 'bold 11px ui-monospace, Menlo, monospace'
+    ctx.fillText(String(bar.value), x + chart.barWidth / 2, chart.y + chart.height - height - 15)
+    ctx.font = '11px ui-monospace, Menlo, monospace'
+    ctx.fillText(bar.label, x + chart.barWidth / 2, chart.y + chart.height + 4)
+  })
+  ctx.restore()
+
+  // Paper grain, so this reads as a scan rather than crisp vector text.
+  for (const [x, y, alpha] of scan.grain) {
+    ctx.fillStyle = `rgba(90,85,70,${alpha})`
+    ctx.fillRect(x, y, 1, 1)
+  }
+}
+
+post('/scan', {}).then(async payload => {
+  if (payload.imageDataUrl) {
+    await paintPhoto(payload.imageDataUrl)
+    const p = payload.provenance ?? {}
+    document.querySelector('#hint').textContent =
+      `Real receipt from ${p.source ?? 'the web'} — ${p.title ?? 'untitled'} (${p.license ?? 'see source'}, ${p.author ?? 'unknown author'}). Read it and fill every field.`
+  } else {
+    paint(payload.scan)
+  }
+  buildForm(payload.fields)
+}).catch(() => { document.querySelector('#hint').textContent = 'Failed to load the scan.' })
+</script></html>
