@@ -54,6 +54,25 @@ export function errJson(data: Record<string, unknown>): ToolResult {
 }
 
 /**
+ * A tool that exists in the catalog but has no implementation on this platform.
+ * Structured rather than prose so an agent can branch on `error` and follow
+ * `remediation` to the platform-appropriate tool instead of retrying.
+ */
+export function platformUnsupported(
+  tool: string,
+  supportedOn: string,
+  alternative: string,
+): ToolResult {
+  return errJson({
+    error: 'platform_unsupported',
+    tool,
+    platform: process.platform,
+    supported_on: supportedOn,
+    remediation: [alternative],
+  })
+}
+
+/**
  * Map an internal ToolResult to the MCP wire shape.
  *
  * When `includeStructuredContent` is false (the `COMPUTER_USE_STRUCTURED_CONTENT=false`

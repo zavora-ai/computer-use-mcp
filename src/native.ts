@@ -194,6 +194,7 @@ export interface NativeModule {
   }
   // Mouse
   mouseMove(x: number, y: number): void
+  mouseClickAdditive?(x: number, y: number, button: string, count: number): void
   mouseClick(x: number, y: number, button: string, count: number): void  // throws on invalid button
   mouseButton(action: string, x: number, y: number): void                // throws on invalid action
   mouseScroll(dy: number, dx: number): void

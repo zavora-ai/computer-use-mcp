@@ -209,13 +209,30 @@ export class InputHandler {
         }
       }
       if (locations.length === 0) return this.#noCoordinates()
-      if (args.press_ctrl) this.#native.keyPress(this.#platform === 'win32' ? 'ctrl' : 'command')
+      // press_ctrl advertises default true, so additive is the documented behavior.
+      // The modifier has to be held across the click, which only the native
+      // additive entry point does — tapping it separately selects nothing.
+      const additive = args.press_ctrl !== false
+      if (additive && !this.#native.mouseClickAdditive) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            error: 'native_capability_missing',
+            capability: 'mouseClickAdditive',
+            remediation: [
+              'Additive selection needs a native module built from this release; rebuild it (npm run build:native) or reinstall the package.',
+              'Pass press_ctrl=false to replace the selection instead of extending it.',
+            ],
+          }) }],
+          isError: true,
+        }
+      }
       for (const [x, y] of locations) {
         this.#checkAbort(signal, 'multi_select aborted before the next selection')
         this.#native.mouseMove(x, y)
         await this.#sleep(50)
         this.#checkAbort(signal, 'multi_select aborted before click')
-        this.#native.mouseClick(x, y, 'left', 1)
+        if (additive) this.#native.mouseClickAdditive!(x, y, 'left', 1)
+        else this.#native.mouseClick(x, y, 'left', 1)
         await this.#sleep(30)
       }
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')

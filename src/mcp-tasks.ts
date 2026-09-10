@@ -92,14 +92,6 @@ function authenticatedOwner(client: TaskClientIdentity): string | undefined {
   return principalKey(client.authInfo)
 }
 
-function displayClient(client: TaskClientIdentity): string {
-  const envelope = client.envelope
-  const info = envelope?.[CLIENT_INFO_META_KEY]
-  if (!info || typeof info !== 'object') return 'anonymous'
-  const record = info as Record<string, unknown>
-  return `${String(record.name ?? 'anonymous')}@${String(record.version ?? 'unknown')}`
-}
-
 function shouldCreateTask(tool: string, args: Record<string, unknown>): boolean {
   if (tool === 'wait') return Number(args.duration ?? 0) >= 2
   if (tool === 'scrape' || tool === 'get_ui_tree' || tool === 'get_app_dictionary') return true

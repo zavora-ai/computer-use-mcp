@@ -1,3 +1,4 @@
+import { withToolDefaults } from './registry/definitions.js'
 /**
  * Session — resilient computer use session with in-process focus management.
  *
@@ -264,6 +265,8 @@ export function createSession(opts: SessionOptions = {}): Session {
     requestContext?: SessionRequestContext,
   ): Promise<ToolResult> {
 
+    args = withToolDefaults(tool, args)
+
     // v5.2: Only mutating tools take the session lock and start the pump.
     // Observation tools stay concurrent and cheap.
     const startedAt = Date.now()
@@ -468,7 +471,7 @@ export function createSession(opts: SessionOptions = {}): Session {
           ? { type: 'image', mimeType: c.mimeType, bytesBase64: c.data.length }
           : c.type === 'resource_link'
             ? { type: 'resource_link', uri: c.uri }
-            : { type: 'text', length: c.text.length, sha256: legacyPolicy.digestText(c.text) }),
+            : { type: 'text', length: c.text.length, hmac_sha256: legacyPolicy.digestText(c.text) }),
       },
     })
     return result

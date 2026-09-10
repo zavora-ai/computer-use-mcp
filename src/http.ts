@@ -27,14 +27,24 @@ export function startComputerUseHttpServer() {
   })
   const validateHost = localhostHostValidation()
   const validateOrigin = localhostOriginValidation()
-  const http = createServer(async (req, res) => {
-    if (req.url !== '/mcp') {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end('Not found')
-      return
-    }
-    if (!validateHost(req, res) || !validateOrigin(req, res)) return
-    await handleMcp(req, res)
+  const http = createServer((req, res) => {
+    // Node does not await this callback, so a rejection would be unhandled and
+    // terminate the process. Contain it and answer the request instead.
+    void (async () => {
+      try {
+        if (req.url !== '/mcp') {
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('Not found')
+          return
+        }
+        if (!validateHost(req, res) || !validateOrigin(req, res)) return
+        await handleMcp(req, res)
+      } catch (error) {
+        console.error('[computer-use-mcp:http]', error instanceof Error ? error.message : String(error))
+        if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+        if (!res.writableEnded) res.end('Internal error')
+      }
+    })()
   })
   http.listen(port, host, () => {
     console.error(`[computer-use-mcp:http] Listening on http://${host}:${port}/mcp (MCP 2026-07-28 + stateless legacy)`)

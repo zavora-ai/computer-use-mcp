@@ -42,6 +42,83 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
+/**
+ * A holder renews its lease while it works, so liveness never depends on PID
+ * existence alone — an operating system that recycles a dead holder's PID would
+ * otherwise make the lock permanently unreclaimable.
+ */
+const LEASE_TTL_MS = 30_000
+const LEASE_RENEW_INTERVAL_MS = 5_000
+/** An orphaned reclaim guard must expire, or one crash disables stale recovery forever. */
+const RECLAIM_GUARD_TTL_MS = 10_000
+
+/** Exposed so callers and tests can reason about staleness without duplicating the constant. */
+export const SESSION_LEASE_TTL_MS = LEASE_TTL_MS
+
+interface Lease {
+  pid: number
+  /** Absent for locks written by older versions, which only recorded a bare PID. */
+  renewedAt?: number
+}
+
+export type SessionLease = Lease
+
+export function readSessionLease(lockPath: string): SessionLease | undefined {
+  return readLease(lockPath)
+}
+
+function readLease(lockPath: string): Lease | undefined {
+  let raw: string
+  try { raw = fs.readFileSync(lockPath, 'utf8').trim() } catch { return undefined }
+  if (!raw) return undefined
+  let parsed: unknown
+  // A legacy lease is a bare PID, which is itself valid JSON — parse first, then
+  // decide by shape rather than relying on a parse failure to signal the format.
+  try { parsed = JSON.parse(raw) } catch { parsed = undefined }
+  if (parsed !== null && typeof parsed === 'object') {
+    const record = parsed as { pid?: unknown; renewedAt?: unknown }
+    const pid = Number(record.pid)
+    if (!Number.isInteger(pid) || pid <= 0) return undefined
+    return typeof record.renewedAt === 'number'
+      ? { pid, renewedAt: record.renewedAt }
+      : { pid }
+  }
+  // Bare PID from an older process: liveness is the only signal available.
+  const pid = typeof parsed === 'number' ? parsed : Number.parseInt(raw, 10)
+  return Number.isInteger(pid) && pid > 0 ? { pid } : undefined
+}
+
+/** Reclaimable when the owner is gone, or when it stopped renewing while still holding a PID. */
+function leaseIsStale(lease: Lease, now: number): boolean {
+  if (!pidIsAlive(lease.pid)) return true
+  return lease.renewedAt !== undefined && now - lease.renewedAt > LEASE_TTL_MS
+}
+
+function writeLease(descriptor: number, pid: number): void {
+  const payload = JSON.stringify({ pid, renewedAt: Date.now() })
+  fs.ftruncateSync(descriptor, 0)
+  fs.writeSync(descriptor, payload, 0, 'utf8')
+}
+
+/**
+ * Serialize stale recovery so two reclaimers cannot remove a new lease. Returns
+ * `undefined` when another reclaimer holds a still-fresh guard.
+ */
+function acquireReclaimGuard(guardPath: string): number | undefined {
+  try { return fs.openSync(guardPath, 'wx', 0o600) } catch { /* fall through to expiry */ }
+  try {
+    if (Date.now() - fs.statSync(guardPath).mtimeMs < RECLAIM_GUARD_TTL_MS) return undefined
+    fs.unlinkSync(guardPath)
+  } catch { return undefined }
+  try { return fs.openSync(guardPath, 'wx', 0o600) } catch { return undefined }
+}
+
+function releaseReclaimGuard(descriptor: number, guardPath: string): void {
+  try { fs.closeSync(descriptor) } catch { /* already closed */ }
+  // A failed unlink must not mask the outcome; RECLAIM_GUARD_TTL_MS expires it.
+  try { fs.unlinkSync(guardPath) } catch { /* expiry handles the leftover */ }
+}
+
 /** Acquire the cross-process writer lock, reclaiming only files with a confirmed dead owner. */
 export function acquireSessionLock(lockPath: string): LockHandle {
   try {
@@ -50,13 +127,19 @@ export function acquireSessionLock(lockPath: string): LockHandle {
       fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_RDWR,
       0o600,
     )
-    fs.writeSync(descriptor, String(process.pid))
+    writeLease(descriptor, process.pid)
     const identity = fs.fstatSync(descriptor)
     let released = false
+    const renew = setInterval(() => {
+      if (released) return
+      try { writeLease(descriptor, process.pid) } catch { /* release reports the real failure */ }
+    }, LEASE_RENEW_INTERVAL_MS)
+    renew.unref?.()
     return {
       release() {
         if (released) return
         released = true
+        clearInterval(renew)
         try {
           const current = fs.lstatSync(lockPath)
           if (current.dev === identity.dev && current.ino === identity.ino) fs.unlinkSync(lockPath)
@@ -66,23 +149,22 @@ export function acquireSessionLock(lockPath: string): LockHandle {
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    let holder: number | null = null
-    try {
-      const parsed = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10)
-      if (Number.isFinite(parsed) && parsed > 0) holder = parsed
-    } catch { /* raced with another cleanup */ }
+    const lease = readLease(lockPath)
+    const holder = lease?.pid ?? null
 
-    if (holder !== null && holder !== process.pid && !pidIsAlive(holder)) {
-      // Serialize stale recovery so two reclaimers cannot remove a new lease.
+    if (lease && holder !== process.pid && leaseIsStale(lease, Date.now())) {
       const guardPath = lockPath + '.reclaim'
-      let guard: number
-      try { guard = fs.openSync(guardPath, 'wx', 0o600) } catch { throw new LockError(holder) }
+      const guard = acquireReclaimGuard(guardPath)
+      if (guard === undefined) throw new LockError(holder)
       try {
-        const current = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10)
-        if (current !== holder || pidIsAlive(current)) throw new LockError(current)
+        const current = readLease(lockPath)
+        // Re-read under the guard: the lease may have been replaced or renewed.
+        if (!current || current.pid !== lease.pid || !leaseIsStale(current, Date.now())) {
+          throw new LockError(current?.pid ?? holder)
+        }
         fs.unlinkSync(lockPath)
-        return acquireSessionLock(lockPath)
-      } finally { fs.closeSync(guard); fs.unlinkSync(guardPath) }
+      } finally { releaseReclaimGuard(guard, guardPath) }
+      return acquireSessionLock(lockPath)
     }
     throw new LockError(holder)
   }

@@ -314,8 +314,9 @@ export function createComputerUseHttpHandler(
   handlerOptions: CreateMcpHandlerOptions = {},
 ): McpHttpHandler {
   const httpTasks = opts.taskManager ?? new McpTaskManager()
-  let handler!: McpHttpHandler
-  handler = createMcpHandler(async context => {
+  // The handler is referenced from inside its own factory callback, which only
+  // runs per request — after initialization — so a const self-reference is safe.
+  const handler: McpHttpHandler = createMcpHandler(async context => {
     const id = context.requestInfo?.headers.get('computer-use-session')
     const retained = id && opts.desktopBroker ? await opts.desktopBroker.session(principalKey(context.authInfo) ?? 'local', id) : undefined
     return createComputerUseServer({

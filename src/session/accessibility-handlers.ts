@@ -1,5 +1,5 @@
 import type { NativeModule } from '../native.js'
-import { ok, okJson, type ToolResult } from '../result.js'
+import { ok, okJson, platformUnsupported, type ToolResult } from '../result.js'
 import { lookupToolGuide } from './tool-guide.js'
 import type { FocusController } from './focus.js'
 import type { SpawnResult } from './spawn.js'
@@ -219,7 +219,7 @@ export async function handleAccessibilityTool(
     const menu = stringArg(args, 'menu')
     const item = stringArg(args, 'item')
     const submenu = typeof args.submenu === 'string' ? args.submenu : undefined
-    await context.focus.ensure({ bundleId }, 'strict')
+    await context.focus.ensure({ bundleId }, context.focus.strategyFor(tool, args))
     const result = native.pressMenuItem(bundleId, menu, item, submenu)
     if (result.pressed) {
       context.targets.update({ bundleId }, 'activation')
@@ -234,7 +234,8 @@ export async function handleAccessibilityTool(
     }
   }
   if (tool === 'list_menu_bar') {
-    if (isWindows) return { content: [{ type: 'text', text: 'platform_unsupported: list_menu_bar is macOS-only. Use get_ui_tree to discover menu structure on Windows.' }], isError: true }
+    if (isWindows) return platformUnsupported('list_menu_bar', 'macOS',
+      'Use get_ui_tree to discover menu structure on Windows.')
     return ok(JSON.stringify(native.getMenuBar(stringArg(args, 'bundle_id'))))
   }
 
@@ -251,7 +252,8 @@ export async function handleAccessibilityTool(
   }
 
   if (tool === 'get_app_dictionary') {
-    if (isWindows) return { content: [{ type: 'text', text: 'platform_unsupported: get_app_dictionary is macOS-only. Use get_ui_tree to discover UI structure on Windows.' }], isError: true }
+    if (isWindows) return platformUnsupported('get_app_dictionary', 'macOS',
+      'Use get_ui_tree to discover UI structure on Windows.')
     const result = await context.getAppDictionary(
       stringArg(args, 'bundle_id'), typeof args.suite === 'string' ? args.suite : undefined,
     )

@@ -39,7 +39,7 @@ function keypressText(action: Record<string, unknown>): string {
   if (typeof action.text === 'string') return action.text
   if (typeof action.key === 'string') return action.key
   if (Array.isArray(action.keys) && action.keys.every(key => typeof key === 'string')) {
-    return (action.keys as string[])
+    return action.keys
       .map(key => key.toLowerCase().replace(/^ctrl$/, 'control'))
       .join('+')
   }

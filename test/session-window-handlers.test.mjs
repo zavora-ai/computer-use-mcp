@@ -77,3 +77,55 @@ test('extracted snapshot preserves image blocks and semantic annotations', async
   assert.ok(result.content.some(block => block.type === 'text' && block.text.includes('UI Tree')))
   assert.ok(result.content.some(block => block.type === 'text' && block.text.includes('Annotations')))
 })
+
+// resize_window builds a shell script around a caller-supplied window name. The
+// name must be quoted, not interpolated, or the tool becomes arbitrary script
+// execution for any caller that cannot already reach run_script.
+
+test('resize_window quotes window_name so it cannot break out of the AppleScript literal', async () => {
+  const service = native()
+  let captured
+  const ctx = {
+    ...context(service),
+    runScript: async (language, script) => {
+      captured = { language, script }
+      return { stdout: 'Resized', stderr: '', code: 0, timedOut: false }
+    },
+    platform: 'darwin',
+  }
+  await handleWindowTool('resize_window', {
+    window_name: 'Evil" \nend tell\ndo shell script "touch /tmp/pwned',
+    window_size: [800, 600],
+  }, ctx)
+
+  assert.equal(captured.language, 'applescript')
+  // The whole payload must survive as one inert single-line literal: no raw
+  // newline can end the `tell` line, and no unescaped quote can end the string.
+  const lines = captured.script.split('\n')
+  assert.equal(lines[0], 'tell application "Evil\\" \\nend tell\\ndo shell script \\"touch /tmp/pwned"')
+  assert.deepEqual(lines.slice(1), ['set size of front window to {800, 600}', 'end tell'])
+  assert.equal((captured.script.match(/^end tell$/gm) ?? []).length, 1,
+    'the injected `end tell` must not become a statement')
+})
+
+test('resize_window doubles single quotes so window_name cannot break out of PowerShell', async () => {
+  const service = native()
+  let captured
+  const ctx = {
+    ...context(service),
+    runScript: async (language, script) => {
+      captured = { language, script }
+      return { stdout: 'Resized', stderr: '', code: 0, timedOut: false }
+    },
+    platform: 'win32',
+  }
+  await handleWindowTool('resize_window', {
+    window_name: "notepad'; Remove-Item C:\\ -Recurse; '",
+    window_size: [800, 600],
+  }, ctx)
+
+  assert.equal(captured.language, 'powershell')
+  assert.doesNotMatch(captured.script, /Remove-Item C:\\ -Recurse; '\s/,
+    'injected statement must remain inside a quoted literal')
+  assert.match(captured.script, /''; Remove-Item/, 'the closing quote must be doubled')
+})

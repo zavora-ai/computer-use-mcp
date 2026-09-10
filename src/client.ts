@@ -127,7 +127,7 @@ export interface ComputerUseClient {
   clickElement(windowId: number, role: string, label: string, opts?: SemanticOpts): Promise<ToolResult>
   setValue(windowId: number, role: string, label: string, value: string, opts?: SemanticOpts): Promise<ToolResult>
   pressButton(windowId: number, label: string, opts?: SemanticOpts): Promise<ToolResult>
-  selectMenuItem(bundleId: string, menu: string, item: string, submenu?: string): Promise<ToolResult>
+  selectMenuItem(bundleId: string, menu: string, item: string, submenu?: string, opts?: Pick<WindowTargetOpts, 'focusStrategy'>): Promise<ToolResult>
   listMenuBar(bundleId: string): Promise<ToolResult>
   fillForm(windowId: number, fields: FillFormField[], opts?: SemanticOpts): Promise<ToolResult>
 
@@ -145,7 +145,8 @@ export interface ComputerUseClient {
   createAgentSpace(): Promise<ToolResult>
   moveWindowToSpace(windowId: number, spaceId: number): Promise<ToolResult>
   removeWindowFromSpace(windowId: number, spaceId: number): Promise<ToolResult>
-  destroySpace(spaceId: number): Promise<ToolResult>
+  /** Numeric Space ID on macOS; the GUID string from `create_agent_space` on Windows. */
+  destroySpace(spaceId: number | string): Promise<ToolResult>
 
   // ── v5.2: Tool metadata ───────────────────────────────────────────────
   getToolMetadata(toolName: string): Promise<ToolResult>
@@ -327,9 +328,10 @@ function wrap(client: Client, closeFn: () => Promise<void>): ComputerUseClient {
       window_id: windowId, label,
       ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
     }),
-    selectMenuItem: (bundleId, menu, item, submenu?) => call('select_menu_item', {
+    selectMenuItem: (bundleId, menu, item, submenu?, opts?) => call('select_menu_item', {
       bundle_id: bundleId, menu, item,
       ...(submenu !== undefined ? { submenu } : {}),
+      ...(opts?.focusStrategy ? { focus_strategy: opts.focusStrategy } : {}),
     }),
     listMenuBar: (bundleId) => call('list_menu_bar', { bundle_id: bundleId }),
     fillForm: (windowId, fields, opts?) => call('fill_form', {
