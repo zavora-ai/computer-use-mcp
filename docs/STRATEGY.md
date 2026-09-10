@@ -4,8 +4,8 @@ The strategy is implemented as fixes to the existing server plus opt-in host
 services. The original 64 tool names and input schemas remain available;
 `discover_applications` adds installed-app discovery to the core profile.
 Enabling a desktop broker adds six tools; enabling a browser backend adds ten.
-This is unreleased source work, not a claim of benchmark superiority or a new
-npm release.
+These services ship in v7.2. See the release notes for validation limits;
+this is not a claim of benchmark superiority.
 
 ## Implementation scope and deployment prerequisites
 

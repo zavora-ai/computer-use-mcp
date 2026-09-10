@@ -1,6 +1,6 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "7.1.0",
+  "version": "7.2.0",
   "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) \u2014 screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
@@ -183,7 +183,10 @@
     "dist/isolated-worker.d.ts",
     "dist/task-client.js",
     "dist/task-client.d.ts",
-    "workers"
+    "workers",
+    "docs/releases/v7.2.0.md",
+    "docs/assets/architecture.svg",
+    "docs/assets/astra-painting.png"
   ],
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",
@@ -196,10 +199,9 @@
     "test": "npm run build:ts && node --test test/*.test.mjs",
     "test:input-attribution": "node scripts/verify-input-attribution.mjs",
     "measure:efficiency": "npm run build:ts && node scripts/measure-efficiency.mjs",
-    "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
+    "smoke": "npm run build:ts && node scripts/smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",
-    "demo": "tsx examples/demo.ts",
     "test:strategy": "npm run build:ts && node --test test/strategy*.test.mjs test/runtime.test.mjs test/session-console.test.mjs",
     "test:browser": "npm run build:ts && node scripts/test-browser.mjs",
     "evaluate:strategy": "npm run build:ts && node scripts/evaluate-strategy.mjs"

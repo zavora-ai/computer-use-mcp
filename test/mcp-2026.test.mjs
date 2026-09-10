@@ -67,7 +67,7 @@ test('2026 discover is stateless and advertises only implemented extensions', as
     assert.deepEqual(discover.body.result.supportedVersions, ['2026-07-28'])
     assert.deepEqual(discover.body.result.capabilities.extensions, { [TASKS]: {} })
     assert.equal(discover.body.result.resultType, 'complete')
-    assert.equal(discover.body.result._meta['io.modelcontextprotocol/serverInfo'].version, '7.1.0')
+    assert.equal(discover.body.result._meta['io.modelcontextprotocol/serverInfo'].version, '7.2.0')
 
     const listed = await modernRequest(handler, 'tools/list')
     assert.equal(listed.body.result.tools.length, 65)

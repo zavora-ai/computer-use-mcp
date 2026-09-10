@@ -352,7 +352,7 @@ const TASK_PROTOCOL_METHODS = new Set(['tasks/get', 'tasks/update', 'tasks/cance
 const SERVER_INFO = {
   name: 'computer-use',
   title: 'Computer Use MCP',
-  version: '7.1.0',
+  version: '7.2.0',
   description: 'Cross-platform desktop control with policy-aware automation.',
   websiteUrl: 'https://github.com/zavora-ai/computer-use-mcp',
 }

@@ -174,7 +174,7 @@ jobs:
             const files = (entries[0]?.files ?? []).map(f => f.path);
             const required = [
               "AGENTS.md", "README.md", "SECURITY.md", "LICENSE",
-              "mcp-server.toml", "docs/ARCHITECTURE.md", "docs/releases/v7.1.0.md",
+              "mcp-server.toml", "docs/ARCHITECTURE.md", "docs/releases/v7.2.0.md", "docs/assets/astra-painting.png",
               "dist/server.js", "dist/client.js", "dist/efficiency.js", "dist/efficiency.d.ts", "docs/EFFICIENCY.md",
               "dist/desktop-broker.js", "dist/strategy.js", "dist/session-console.js",
               "dist/browser.js", "dist/runtime.js", "dist/runtime-worker.js",
@@ -184,6 +184,7 @@ jobs:
               "dist/result.js", "dist/tool-catalog.js",
               "dist/output-schemas.js", "dist/prompts.js", "dist/resources.js",
               "dist/http.js", "dist/mcp-v7.1.js", "dist/mcp-tasks.js", "dist/resource-links.js",
+              "dist/session/application-discovery.js", "dist/session/application-discovery.d.ts",
               "dist/session/tool-guide.js",
               "dist/session/fs-jail.js",
               "dist/session/scripting-dictionary.js",
@@ -311,7 +312,7 @@ jobs:
             process.stdin.on("data", chunk => source += chunk);
             process.stdin.on("end", () => {
               const manifest = JSON.parse(source);
-              if (manifest.optionalDependencies) {
+              if (Object.keys(manifest.optionalDependencies ?? {}).some(name => name.startsWith("@zavora-ai/computer-use-mcp-"))) {
                 throw new Error("staged universal package must not reference unbootstrapped optional packages");
               }
               console.log("universal tarball contains all six native targets");
@@ -337,7 +338,7 @@ jobs:
       - name: Upload immutable release evidence
         uses: actions/upload-artifact@v4
         with:
-          name: v7.1-release-evidence-${{ github.sha }}
+          name: release-evidence-${{ github.sha }}
           path: |
             release/
             release-sbom.cdx.json

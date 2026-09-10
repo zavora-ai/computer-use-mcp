@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1900" viewBox="0 0 1600 1900" role="img" aria-labelledby="title desc">
+<title id="title">Computer-use MCP: current source architecture</title>
+<desc id="desc">Core tool dispatch and four execution adapters, protocol services, and separate flows for optional desktop sessions, browser automation, persistence, human takeover, Docker JavaScript execution and isolated Linux desktops. Arrows show the labeled call or control direction. Replies return along the call path.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#3c6685"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#193950}.title{font-size:34px;font-weight:700}.section{font-size:21px;font-weight:700}.heading{font-size:19px;font-weight:700}.body{font-size:16px}.small{font-size:14px;fill:#4a677c}.edge{fill:none;stroke:#3c6685;stroke-width:2;marker-end:url(#arrow)}.card{fill:#edf5fd;stroke:#a7c5de;stroke-width:1.4}.opt{fill:#eaf8f4;stroke:#a0ccc0;stroke-width:1.4}.panel{fill:white;stroke:#d5e1ea;stroke-width:1.3}</style>
+<rect width="1600" height="1900" fill="#f5f8fc"/>
+<text x="50" y="62" class="title">computer-use-mcp</text>
+<text x="50" y="95" class="body">Version 7.2 • 10 September 2026</text>
+<text x="50" y="124" class="small">Arrows show calls or the labeled control operation. Results return along the call path.</text>
+<rect x="30" y="150" width="1540" height="540" rx="12" class="panel"/>
+<text x="55" y="187" class="section">1   Core tool execution</text>
+<rect x="60" y="225" width="320" height="115" rx="12" class="card"/>
+<text x="80" y="255" class="heading">MCP client</text>
+<text x="80" y="282" class="body">2026 stateless requests</text>
+<text x="80" y="305" class="body">Legacy 2025 connections</text>
+<rect x="440" y="225" width="320" height="115" rx="12" class="card"/>
+<text x="460" y="255" class="heading">SDK v2 / McpServer</text>
+<text x="460" y="282" class="body">stdio or Streamable HTTP</text>
+<text x="460" y="305" class="body">Node.js • TypeScript</text>
+<rect x="820" y="225" width="320" height="115" rx="12" class="card"/>
+<text x="840" y="255" class="heading">ToolRegistry</text>
+<text x="840" y="282" class="body">65 tools • profiles • host auth</text>
+<text x="840" y="305" class="body">Roots / approval negotiation</text>
+<rect x="1200" y="225" width="340" height="115" rx="12" class="card"/>
+<text x="1220" y="255" class="heading">Session dispatch</text>
+<text x="1220" y="282" class="body">Policy • target / focus • lock</text>
+<text x="1220" y="305" class="body">Cancellation • screenshot cache</text>
+<path d="M380 280H440" class="edge"/>
+<path d="M760 280H820" class="edge"/>
+<path d="M1140 280H1200" class="edge"/>
+<path d="M1370 340V391H220" fill="none" stroke="#3c6685" stroke-width="2"/>
+<text x="60" y="377" class="small">Session selects the appropriate handler</text>
+<path d="M220 391V425" class="edge"/>
+<path d="M600 391V425" class="edge"/>
+<path d="M980 391V425" class="edge"/>
+<path d="M1370 391V425" class="edge"/>
+<rect x="60" y="425" width="320" height="112" rx="12" class="card"/>
+<text x="80" y="455" class="heading">Rust N-API</text>
+<text x="80" y="482" class="body">Screen capture • input • AX</text>
+<text x="80" y="505" class="body">Windows / apps • native APIs</text>
+<rect x="440" y="425" width="320" height="112" rx="12" class="card"/>
+<text x="460" y="455" class="heading">Bounded scripts</text>
+<text x="460" y="482" class="body">AppleScript • JXA • PowerShell</text>
+<text x="460" y="505" class="body">Subprocess timeout / cancellation</text>
+<rect x="820" y="425" width="320" height="112" rx="12" class="card"/>
+<text x="840" y="455" class="heading">Linux accessibility</text>
+<text x="840" y="482" class="body">Fixed Python / GI helper</text>
+<text x="840" y="505" class="body">AT-SPI • bounded observations</text>
+<rect x="1200" y="425" width="340" height="112" rx="12" class="card"/>
+<text x="1220" y="455" class="heading">Direct system handlers</text>
+<text x="1220" y="482" class="body">Node.js filesystem operations</text>
+<text x="1220" y="505" class="body">Root containment checks</text>
+<path d="M220 537V568" fill="none" stroke="#3c6685" stroke-width="2"/>
+<path d="M600 537V568" fill="none" stroke="#3c6685" stroke-width="2"/>
+<path d="M980 537V568" fill="none" stroke="#3c6685" stroke-width="2"/>
+<path d="M1370 537V568" fill="none" stroke="#3c6685" stroke-width="2"/>
+<path d="M220 568H1370" fill="none" stroke="#3c6685" stroke-width="2"/>
+<path d="M800 568V594" class="edge"/>
+<rect x="60" y="594" width="1480" height="64" rx="12" class="card"/>
+<text x="80" y="621" class="heading">macOS / Windows / Linux — applications, displays, accessibility services and filesystem</text>
+<text x="80" y="645" class="small">Backend support varies by operating system; the Linux helper is an execution adapter, not an operating system.</text>
+<rect x="30" y="715" width="1540" height="174" rx="12" class="panel"/>
+<text x="55" y="750" class="section">2   Protocol services registered on McpServer</text>
+<rect x="60" y="770" width="455" height="94" rx="12" class="card"/>
+<text x="80" y="800" class="heading">Resources / prompts / completion</text>
+<text x="80" y="827" class="body">Live reads use authorization checks</text>
+<rect x="545" y="770" width="475" height="94" rx="12" class="card"/>
+<text x="565" y="800" class="heading">McpTaskManager (opt-in extension)</text>
+<text x="565" y="827" class="body">Read-only jobs • poll / cancel / input</text>
+<rect x="1050" y="770" width="490" height="94" rx="12" class="card"/>
+<text x="1070" y="800" class="heading">Protocol coordination</text>
+<text x="1070" y="827" class="body">Roots • elicitation • updates • logging</text>
+<rect x="30" y="915" width="1540" height="825" rx="12" class="panel"/>
+<text x="55" y="953" class="section">3   Optional host integrations — implemented in source, unreleased</text>
+<text x="55" y="980" class="small">Each row is a separate relationship. Repeated core components identify where that integration connects.</text>
+<rect x="60" y="1010" width="400" height="90" rx="12" class="opt"/>
+<text x="80" y="1040" class="heading">Desktop tools (+6)</text>
+<text x="80" y="1067" class="body">Session / observe / act / workflow</text>
+<rect x="600" y="1010" width="400" height="90" rx="12" class="opt"/>
+<text x="620" y="1040" class="heading">DesktopBroker</text>
+<text x="620" y="1067" class="body">Owner-bound state • observe → act → verify</text>
+<rect x="1140" y="1010" width="400" height="90" rx="12" class="opt"/>
+<text x="1160" y="1040" class="heading">Registry → Session</text>
+<text x="1160" y="1067" class="body">Rechecks policy for underlying calls</text>
+<path d="M460 1055H600" class="edge"/>
+<text x="472" y="1040" class="small">authorize</text>
+<path d="M1000 1055H1140" class="edge"/>
+<text x="1012" y="1040" class="small">execute</text>
+<rect x="60" y="1120" width="400" height="90" rx="12" class="opt"/>
+<text x="80" y="1150" class="heading">Browser tools (+10)</text>
+<text x="80" y="1177" class="body">Registry extension authorization</text>
+<rect x="600" y="1120" width="400" height="90" rx="12" class="opt"/>
+<text x="620" y="1150" class="heading">BrowserBackend</text>
+<text x="620" y="1177" class="body">Owner / origin / upload / download grants</text>
+<rect x="1140" y="1120" width="400" height="90" rx="12" class="opt"/>
+<text x="1160" y="1150" class="heading">Isolated Chromium</text>
+<text x="1160" y="1177" class="body">Playwright • per-tab action serialization</text>
+<path d="M460 1165H600" class="edge"/>
+<text x="472" y="1150" class="small">dispatch</text>
+<path d="M1000 1165H1140" class="edge"/>
+<text x="1012" y="1150" class="small">automate</text>
+<rect x="60" y="1230" width="400" height="90" rx="12" class="opt"/>
+<text x="80" y="1260" class="heading">McpTaskManager / DesktopBroker</text>
+<text x="80" y="1287" class="body">Task results / desktop operation journals</text>
+<rect x="600" y="1230" width="400" height="90" rx="12" class="opt"/>
+<text x="620" y="1260" class="heading">TaskStore interface</text>
+<text x="620" y="1287" class="body">Host-supplied persistence</text>
+<rect x="1140" y="1230" width="400" height="90" rx="12" class="opt"/>
+<text x="1160" y="1260" class="heading">FileTaskStore (optional)</text>
+<text x="1160" y="1287" class="body">Atomic local checkpoints • single worker</text>
+<path d="M460 1275H600" class="edge"/>
+<text x="472" y="1260" class="small">save / load</text>
+<path d="M1000 1275H1140" class="edge"/>
+<text x="1012" y="1260" class="small">local adapter</text>
+<rect x="60" y="1340" width="400" height="90" rx="12" class="opt"/>
+<text x="80" y="1370" class="heading">Native human-input / stop latch</text>
+<text x="80" y="1397" class="body">Native input also enforces stop latch</text>
+<rect x="600" y="1340" width="400" height="90" rx="12" class="opt"/>
+<text x="620" y="1370" class="heading">DesktopSupervisor</text>
+<text x="620" y="1397" class="body">Worker thread monitors takeover</text>
+<rect x="1140" y="1340" width="400" height="90" rx="12" class="opt"/>
+<text x="1160" y="1370" class="heading">DesktopBroker</text>
+<text x="1160" y="1397" class="body">Pause sessions • invalidate observations</text>
+<path d="M460 1385H600" class="edge"/>
+<text x="472" y="1370" class="small">takeover event</text>
+<path d="M1000 1385H1140" class="edge"/>
+<text x="1012" y="1370" class="small">pause</text>
+<rect x="60" y="1450" width="400" height="90" rx="12" class="opt"/>
+<text x="80" y="1480" class="heading">ComputerRuntime</text>
+<text x="80" y="1507" class="body">Docker JavaScript • persistent state</text>
+<rect x="600" y="1450" width="400" height="90" rx="12" class="opt"/>
+<text x="620" y="1480" class="heading">Host execute callback</text>
+<text x="620" y="1507" class="body">Allowlisted calls • deadlines / budgets</text>
+<rect x="1140" y="1450" width="400" height="90" rx="12" class="opt"/>
+<text x="1160" y="1480" class="heading">Authorized execution broker</text>
+<text x="1160" y="1507" class="body">Host wires current grants and execution</text>
+<path d="M460 1495H600" class="edge"/>
+<text x="472" y="1480" class="small">computer.call</text>
+<path d="M1000 1495H1140" class="edge"/>
+<text x="1012" y="1480" class="small">authorize</text>
+<rect x="60" y="1560" width="400" height="90" rx="12" class="opt"/>
+<text x="80" y="1590" class="heading">Host: connectIsolatedWorker</text>
+<text x="80" y="1617" class="body">Separate deployment from host desktop</text>
+<rect x="600" y="1560" width="400" height="90" rx="12" class="opt"/>
+<text x="620" y="1590" class="heading">Docker Linux desktop</text>
+<text x="620" y="1617" class="body">Xvfb • Openbox • D-Bus • AT-SPI</text>
+<rect x="1140" y="1560" width="400" height="90" rx="12" class="opt"/>
+<text x="1160" y="1590" class="heading">Worker MCP server</text>
+<text x="1160" y="1617" class="body">Own session / native / Linux backends</text>
+<path d="M460 1605H600" class="edge"/>
+<text x="472" y="1590" class="small">start</text>
+<path d="M1000 1605H1140" class="edge"/>
+<text x="1012" y="1590" class="small">MCP stdio</text>
+<text x="60" y="1688" class="body">Desktop console: desktop_console returns session state; an optional MCP App renders it with a text fallback.</text>
+<text x="60" y="1715" class="small">Runtime and isolated desktop containers default to no network. Reset / resume authority remains with the trusted host.</text>
+<text x="50" y="1780" class="body">Authority: filesystem access = operator roots ∩ negotiated client roots. Remote identity is verified by the embedding host.</text>
+<text x="50" y="1810" class="small">Scope: runtime component overview, not every module or deployment topology. Optional integration does not imply platform validation.</text>
+<text x="50" y="1838" class="small">Sources: server.ts • registry/registry.ts • session.ts • strategy.ts • browser-tools.ts • docs/STRATEGY.md</text>
+<text x="50" y="1866" class="small">See docs/ARCHITECTURE.md for protocol details and docs/STRATEGY.md for service behavior and release gates.</text>
+</svg>
