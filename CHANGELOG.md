@@ -6,6 +6,57 @@ Application discovery, optional desktop/browser/runtime services, persistent Tas
 Responses showcases, efficiency and authorization improvements, and documentation
 cleanup. See [the release notes](docs/releases/v7.2.0.md).
 
+### Fixed
+
+- Arguments are validated against the advertised input schema at the MCP boundary, and
+  schema defaults now reach handlers. Previously a declared `.default()` was advertised
+  but never applied, so `snapshot` returned an unrequested UI tree and `multi_select`
+  was non-additive despite `press_ctrl` defaulting to `true`.
+- Malformed arguments return a structured `invalid_arguments` result naming each
+  offending path, instead of a JSON-RPC internal error carrying a raw validation dump.
+- `multi_select` holds the modifier across each click through a new native additive
+  click, rather than tapping it once beforehand where it selected nothing.
+- `run_script` is checked against the sensitive-app and blocked-app lists by script
+  body. It has no target argument, so those rules previously had nothing to match and
+  a script could drive a credential manager ungated.
+- The approval token is compared in constant time.
+- Audit records drop sensitive values outright. They previously stored an unsalted
+  SHA-256 digest and the plaintext length, which is recoverable for short secrets.
+  Text digests in audit records are now keyed per session. The audit directory and
+  file are created with owner-only permissions.
+- The cross-process session lock records a renewed lease. A crashed holder whose PID
+  the operating system recycled previously wedged every mutating tool indefinitely, and
+  a reclaimer that crashed mid-recovery left a guard file that disabled stale recovery
+  permanently.
+- `resize_window` quotes `window_name` for PowerShell and AppleScript instead of
+  interpolating it, and reports `platform_unsupported` on Linux rather than emitting
+  AppleScript that has no interpreter there.
+- `destroy_space` accepts the GUID string that `create_agent_space` returns on Windows.
+- Tools without an implementation on the running platform return a structured
+  `platform_unsupported` result naming the supported platforms and the alternative.
+- `select_menu_item` accepts `focus_strategy`, so the documented `prepare_display`
+  recovery path works for menu selection.
+- `filesystem` operates on the path the root check canonicalized, closing the window
+  where a symlink swapped in after the check could redirect the syscall outside the
+  configured roots. With no boundary configured the caller's path is used unchanged.
+- The loopback HTTP request handler and the v7.1 `oninitialized` hook contain their own
+  async failures. Both were passed as promise-returning callbacks where a void return
+  was expected, so a rejection became an unhandled rejection rather than a served error.
+
+### Changed
+
+- `AGENTS.md` documents the permissive default security posture explicitly and every
+  `COMPUTER_USE_*` variable, and its client examples and platform table now match the
+  implementation.
+- CI runs `cargo test` and a correctness/suspicious `clippy` gate on macOS, Windows and
+  Linux hosts, plus a type-aware ESLint gate (`npm run lint`) focused on unhandled
+  promises, unused code, and undocumented empty catches.
+
+### Removed
+
+- Dead `displayClient` helper in the Tasks manager and an unused profile lookup in the
+  tool registry.
+
 ## v7.1.0 (2026-08-23)
 
 Additive MCP capability release. All 64 v7 tool names and input schemas remain stable.
