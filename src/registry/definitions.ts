@@ -308,12 +308,13 @@ export function defineV7Tools(registry: ToolRegistry): void {
   // ── Windows-parity tools (cross-platform where possible) ────────────────
 
   // FileSystem tool — Node.js fs, cross-platform
+  const noTraversal = (value: string) => !value.split(/[\\/]/).includes('..')
   tool('filesystem',
-    'File and directory operations: read, write, copy, move, delete, list, search, info. Relative paths resolve from Desktop.',
+    'File and directory operations: read, write, copy, move, delete, list, search, info. Relative paths resolve from Desktop. Paths may not contain ".." segments.',
     {
       mode: z.enum(['read', 'write', 'copy', 'move', 'delete', 'list', 'search', 'info']).describe('Operation mode'),
-      path: z.string().describe('File or directory path'),
-      destination: z.string().optional().describe('Destination path for copy/move'),
+      path: z.string().refine(noTraversal, 'Path must not contain ".." traversal segments').describe('File or directory path'),
+      destination: z.string().refine(noTraversal, 'Path must not contain ".." traversal segments').optional().describe('Destination path for copy/move'),
       content: z.string().optional().describe('Content for write mode'),
       pattern: z.string().optional().describe('Glob pattern for list/search'),
       recursive: z.boolean().optional().default(false).describe('Recursive delete/list/search'),
