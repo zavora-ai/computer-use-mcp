@@ -13,12 +13,69 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 **Profiles:** `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default `full`)
 
 **v7 environment & behaviors:**
-- `COMPUTER_USE_FS_ROOTS` — confine the `filesystem` tool to comma-separated absolute roots (blocks `..`/symlink escape). Unset = unrestricted.
-- `COMPUTER_USE_NATIVE_PATH` — override native `.node` resolution (else: separately installed platform package → bundled binary).
-- `COMPUTER_USE_LEGACY_FOCUS_TAG=true` — restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`).
-- `COMPUTER_USE_STRUCTURED_CONTENT=false` — legacy text-only results (omits `structuredContent` + `outputSchema`).
 - **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` terminates its subprocess tree through a POSIX process group or recursive Windows `taskkill`).
 - **Progress:** long `filesystem` searches emit `notifications/progress` when a progress token is present.
+- **Argument validation:** arguments are validated against the advertised input schema at the MCP boundary. Schema defaults are applied before the handler runs, and malformed input returns a structured `invalid_arguments` result listing each offending path — not a JSON-RPC fault. Retry with corrected arguments.
+
+## Default security posture
+
+**Out of the box this server is permissive by design.** With no configuration:
+`run_script` executes arbitrary AppleScript/JXA/PowerShell, and `filesystem`
+reads and writes anywhere the host process can reach. Nothing prompts for
+approval. That default exists so desktop automation works without setup — it is
+not a sandbox.
+
+The only rule enabled by default is the sensitive-app gate: an action whose
+target is a credential manager (Keychain Access, Passwords, 1Password) requires
+approval. Because `run_script` takes no target argument, its script body is
+matched against the same app names; a script that addresses a sensitive app
+requires approval, and one that addresses a blocked app is denied. That matching
+is defense in depth, not a boundary — a script can compose a name at runtime.
+Use `COMPUTER_USE_REQUIRE_APPROVAL_FOR=run_script` when unconditional consent is
+required.
+
+Harden with the variables below before granting a model desktop access on a
+machine that holds anything you care about. `doctor` reports the effective
+posture, and `policy_status` returns it as structured data.
+
+### Access control and approval
+
+| Variable | Effect |
+|---|---|
+| `COMPUTER_USE_ALLOWED_APPS` | Comma-separated allowlist. When set, mutating tools may only target these apps. `run_script` cannot be checked against it, so it requires approval whenever an allowlist is configured. |
+| `COMPUTER_USE_BLOCKED_APPS` | Comma-separated denylist, checked before everything else. Also denies a `run_script` body that names a blocked app. |
+| `COMPUTER_USE_CREDENTIAL_APPS` | Overrides the built-in sensitive-app list. Set to an empty string to opt out entirely. |
+| `COMPUTER_USE_REQUIRE_APPROVAL=true` | Every mutating tool requires approval. |
+| `COMPUTER_USE_REQUIRE_APPROVAL_FOR` | Comma-separated tool names that always require approval. |
+| `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL=true` | Require approval for `run_script`, `process_kill --kill`, `registry` set/delete, and `filesystem` write/copy/move/delete. |
+| `COMPUTER_USE_APPROVAL_TOKEN` | Shared secret for headless approval; pass it as the `approval_token` argument. Compared in constant time. Without it, approval needs host elicitation. |
+| `COMPUTER_USE_FS_ROOTS` | Confine `filesystem` to comma-separated absolute roots, checked on both `path` and `destination` after `..`/symlink resolution. Unset = unrestricted. |
+| `COMPUTER_USE_SCRIPT_ENV_ALLOWLIST` | Comma-separated env names a model-authored script may inherit. Secret-shaped and high-risk variables are stripped by default; supervisor/remote authority is never inheritable, even through this list. |
+| `COMPUTER_USE_AUDIT_LOG` | Path to a JSONL audit log, or `true`/`false`. Defaults on to `~/.computer-use-mcp/audit.jsonl`. Sensitive argument values are dropped, not hashed. |
+| `COMPUTER_USE_REQUEST_STATE_SECRET` | Signing key for multi-round-trip request state. Unset = a random per-process key, so approvals never survive a restart. |
+
+### Surface and behavior
+
+| Variable | Effect |
+|---|---|
+| `COMPUTER_USE_PROFILE` | `core \| ax \| scripting \| windows-admin \| full` (default `full`). Bounds the maximum exposed tool surface. |
+| `COMPUTER_USE_ACTIVE_PROFILE` | Starting profile within that bound; may be narrowed at runtime but never widened past `COMPUTER_USE_PROFILE`. |
+| `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: separately installed platform package → bundled binary). |
+| `COMPUTER_USE_LEGACY_FOCUS_TAG=true` | Restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`). |
+| `COMPUTER_USE_STRUCTURED_CONTENT=false` | Legacy text-only results (omits `structuredContent` + `outputSchema`). |
+| `COMPUTER_USE_PREPARE_KEEP_VISIBLE` | Comma-separated bundle IDs that `focus_strategy: "prepare_display"` must not hide. Defaults to the target plus the terminal. |
+| `COMPUTER_USE_SPACES_BACKEND` | `auto \| yabai \| mission_control \| cgs` — virtual-desktop backend selection on macOS. |
+| `COMPUTER_USE_PROVIDER`, `COMPUTER_USE_WIDTH`, `COMPUTER_USE_QUALITY`, `COMPUTER_USE_VISION` | Screenshot defaults: provider preset, width, JPEG quality (`0` = PNG), and whether vision is enabled. |
+
+### Hosting and runtime
+
+| Variable | Effect |
+|---|---|
+| `COMPUTER_USE_HTTP_HOST`, `COMPUTER_USE_HTTP_PORT` | Bind address and port for `computer-use-mcp-http` (default `127.0.0.1:3100`). The bundled runner refuses any non-loopback host. |
+| `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS`, `COMPUTER_USE_TASK_POLL_INTERVAL_MS` | Tasks-extension concurrency per owner (16), record TTL (1h), and poll hint (1s). |
+| `COMPUTER_USE_PRINCIPAL_ID`, `COMPUTER_USE_SESSION_ID` | Identity labels for audit records in host-managed deployments. |
+| `COMPUTER_USE_SUPERVISOR_*`, `COMPUTER_USE_REMOTE_*` | Control-plane configuration for the optional supervisor and remote packages. Never inherited by scripts.
+
 
 **v7.1 MCP behavior:**
 - Legacy MCP clients continue through `initialize`; no tool names or v7 input schemas changed.
@@ -26,6 +83,13 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - The `io.modelcontextprotocol/tasks` extension is opt-in and server-directed for selected long-running read-only calls. Extension-aware hosts poll `tasks/get`; stock clients should omit the extension capability and receive synchronous results.
 - `computer-use-mcp-http` serves the bundled loopback-only HTTP endpoint. Remote hosts must embed `createComputerUseHttpHandler`, validate OAuth themselves, and pass only verified `authInfo`.
 - Tool annotations are descriptive hints, never an authorization boundary.
+
+**v7.2 behavior changes:**
+- Advertised schema defaults now reach handlers, so an omitted argument behaves exactly like its documented default. `snapshot` no longer returns a UI tree unless `use_vision: true`, and `multi_select` is additive unless you pass `press_ctrl: false`.
+- Malformed arguments return a structured `invalid_arguments` result instead of a JSON-RPC fault.
+- `run_script` is matched against the sensitive-app and blocked-app lists by script body, since it has no target argument.
+- The cross-process session lock records a renewed lease, so a crashed holder whose PID is recycled no longer wedges every mutating tool.
+- `resize_window` quotes `window_name` for PowerShell and AppleScript rather than interpolating it.
 
 ## Tool priority guidance
 
@@ -43,7 +107,7 @@ Desktop control works for anything on screen, but structured tools are faster, m
 The server speaks both legacy and MCP 2026-07-28 over stdio. Start it with:
 
 ```bash
-npx @zavora-ai/computer-use-mcp
+npx --yes @zavora-ai/computer-use-mcp
 ```
 
 Any agent framework with MCP support can connect to it immediately.
@@ -123,7 +187,7 @@ async function runAgent(task: string) {
       messages,
     })
 
-    if (response.stop_reason === 'end_turn') break
+    if (response.stop_reason !== 'tool_use') break
 
     // Execute tool calls
     const toolResults = []
@@ -150,7 +214,7 @@ async function runAgent(task: string) {
 await runAgent('Open Calculator and compute 123 * 456')
 ```
 
-## OpenAI Agents SDK
+## OpenAI (Chat Completions)
 
 ```typescript
 import OpenAI from 'openai'
@@ -216,13 +280,14 @@ const mcpClient = await connectInProcess(server)
 
 // Wrap as LangChain tools
 import { DynamicStructuredTool } from '@langchain/core/tools'
-import { z } from 'zod'
 
 const tools = (await mcpClient.listTools()).map(t =>
   new DynamicStructuredTool({
     name: t.name,
     description: t.description ?? '',
-    schema: z.object({}).passthrough(),
+    // Pass the advertised JSON Schema through. Substituting an empty schema
+    // hides every parameter from the model and guarantees malformed calls.
+    schema: t.inputSchema,
     func: async (args) => {
       const result = await mcpClient.callTool(t.name, args)
       return result.content.map(c => c.type === 'text' ? c.text : '[image]').join('\n')
@@ -292,11 +357,12 @@ ask the user to complete them directly.
 The error payload includes ranked-by-similarity label suggestions. Use them instead of retrying blindly:
 
 ```typescript
-const r = await client.clickElement({ role: 'AXButton', label: 'Sumbit', target_app: 'com.example.app' })
+// clickElement(windowId, role, label, opts?) — the window comes first.
+const r = await client.clickElement(windowId, 'AXButton', 'Sumbit')
 if (r.isError) {
   const err = JSON.parse(r.content[0].text)
   // err.similarLabels might be ["Submit", "Submit Form", "Send"]
-  await client.clickElement({ role: 'AXButton', label: err.similarLabels[0], target_app: 'com.example.app' })
+  await client.clickElement(windowId, 'AXButton', err.similarLabels[0])
 }
 ```
 
@@ -305,10 +371,12 @@ if (r.isError) {
 The error returns `availableMenus` — the full menu bar structure — so you can adjust the path without another observation call:
 
 ```typescript
-const r = await client.selectMenuItem({ menu_path: ['File', 'Save As…'], target_app: 'com.apple.TextEdit' })
+// selectMenuItem(bundleId, menu, item, submenu?, opts?) — `item` is the leaf,
+// `submenu` is the optional level between `menu` and `item`.
+const r = await client.selectMenuItem('com.apple.TextEdit', 'File', 'Save As…')
 if (r.isError) {
   const err = JSON.parse(r.content[0].text)
-  // err.availableMenus lets you find the right path (e.g. ["File", "Duplicate"])
+  // err.availableMenus lets you find the right path (e.g. File ▸ Duplicate)
 }
 ```
 
@@ -323,14 +391,16 @@ const spaces = await client.listSpaces()
 // → { supported: true, displays: [{ spaces: [{ name: "Desktop 1", uuid: "{...}" }, ...] }] }
 
 // Create a new desktop (Ctrl+Win+D)
-await client.createAgentSpace()
-// → { created: true, name: "Desktop 4", space_id: "{...}" }
+const created = await client.createAgentSpace()
+// → { created: true, name: "Desktop 4", space_id: "{...}" }  ← a GUID string on Windows
 
 // Do work on the new desktop...
 await client.callTool('run_script', { language: 'powershell', script: 'Start-Process notepad' })
 
-// Close the desktop when done (Ctrl+Win+F4)
-await client.callTool('destroy_space', { space_id: 0 })
+// Close the desktop when done (Ctrl+Win+F4). Windows always closes the current
+// desktop, so space_id is accepted and ignored; pass it through for traceability.
+const { space_id } = JSON.parse(created.content.find(c => c.type === 'text').text)
+await client.callTool('destroy_space', { space_id })
 
 // Switch between desktops with keyboard shortcuts
 await client.key('ctrl+win+left')   // previous desktop
@@ -342,12 +412,12 @@ await client.key('ctrl+win+right')  // next desktop
 If your mutating call returned a `FocusFailure` payload whose `frontmostAfter` shows a third-party app (screenshot watcher, notification panel, overlay) that you don't control, retry with `focus_strategy: "prepare_display"`. The session will hide every regular app except your target and the terminal, then activate — nothing else on screen can race you to the front.
 
 ```typescript
-try {
-  await client.selectMenuItem('com.apple.freeform', 'Insert', 'Shape', 'Oval')
-} catch (err) {
+// Insert ▸ Shape ▸ Oval — the leaf is `item`, the level above it is `submenu`.
+const first = await client.selectMenuItem('com.apple.freeform', 'Insert', 'Oval', 'Shape')
+if (first.isError) {
   // Second try with the hammer: hide every other app first.
-  await client.selectMenuItem('com.apple.freeform', 'Insert', 'Shape', 'Oval', {
-    focus_strategy: 'prepare_display',
+  await client.selectMenuItem('com.apple.freeform', 'Insert', 'Oval', 'Shape', {
+    focusStrategy: 'prepare_display',
   })
 }
 ```
@@ -509,9 +579,12 @@ const size = await client.getDisplaySize()
 ```
 
 
-## Windows-specific tools
+## Direct system access tools
 
-These tools are available on Windows and provide direct system access without GUI interaction:
+These tools provide system access without GUI interaction. The examples use
+Windows paths, but only `registry` and `notification` are Windows-only —
+`filesystem`, `process_kill`, `resize_window`, `snapshot` and `scrape` all work
+on macOS and Linux too. See the platform table below.
 
 ### FileSystem
 ```typescript
@@ -584,18 +657,28 @@ await client.callTool('scrape', { url: 'https://example.com' })
 
 ## Platform compatibility
 
-| Tool | macOS | Windows |
-|---|---|---|
-| screenshot, zoom, click, type, key, scroll, mouse_move ✅ |
-| clipboard (read/write) | ✅ | ✅ |
-| window management (list, activate, hide/unhide) | ✅ | ✅ |
-| UI automation (get_ui_tree, find_element, click_element) | ✅ | ✅ |
-| run_script | AppleScript, JXA | PowerShell |
-| get_app_dictionary, list_menu_bar | ✅ | ❌ (macOS only) |
-| filesystem, registry, notification | ❌ | ✅ (Windows only) |
-| process_kill | ✅ | ✅ |
-| virtual desktops (list, create, destroy) | Read-only | Full lifecycle |
-| snapshot (combined capture) | ✅ | ✅ |
-| scrape | ✅ | ✅ |
-| resize_window | ❌ | ✅ |
-| multi_select, multi_edit | ✅ | ✅ |
+Verified against the platform guards in `src/session/` and the `target_os` gates in
+`native/src/`. An available tool is not a promise that every application exposes
+usable controls.
+
+| Tool | macOS | Windows | Linux |
+|---|---|---|---|
+| screenshot, zoom, click, type, key, scroll, mouse_move | ✅ | ✅ | ✅ X11; Wayland needs `ydotool` |
+| clipboard (read/write) | ✅ | ✅ | ✅ |
+| window management (list, activate, hide/unhide) | ✅ | ✅ | ✅ |
+| UI automation (get_ui_tree, find_element, click_element) | ✅ | ✅ | ✅ AT-SPI |
+| run_script | AppleScript, JXA | PowerShell | bash, PowerShell (`pwsh`) |
+| get_app_dictionary, list_menu_bar | ✅ | ❌ macOS only | ❌ macOS only |
+| filesystem | ✅ | ✅ | ✅ |
+| registry, notification | ❌ Windows only | ✅ | ❌ Windows only |
+| process_kill | ✅ | ✅ | ✅ |
+| virtual desktops (list, create, destroy) | Read-only | Full lifecycle | ❌ |
+| snapshot (combined capture) | ✅ | ✅ | ✅ |
+| scrape | ✅ | ✅ | ✅ |
+| resize_window | ✅ AppleScript | ✅ | ❌ use `wmctrl`/`xdotool` via run_script |
+| multi_select, multi_edit | ✅ | ✅ | ✅ X11 only |
+| doctor, discover_applications, get_tool_guide, get_tool_metadata | ✅ | ✅ | ✅ |
+
+Tools that exist in the catalog but have no implementation on the running platform
+return a structured `platform_unsupported` result naming the supported platforms
+and the alternative to use, so the tool count is the same everywhere.

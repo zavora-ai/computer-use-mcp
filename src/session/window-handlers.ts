@@ -1,5 +1,5 @@
 import type { NativeModule } from '../native.js'
-import { ok, okJson, okJsonWrappedArray, type ToolResult } from '../result.js'
+import { ok, okJson, okJsonWrappedArray, platformUnsupported, type ToolResult } from '../result.js'
 import { PROVIDER_WIDTH } from './constants.js'
 import type { SpawnResult } from './spawn.js'
 import type { TargetStateController } from './target-state.js'
@@ -24,6 +24,30 @@ function numberArg(args: Record<string, unknown>, key: string, fallback: number)
   return typeof args[key] === 'number' ? args[key] : fallback
 }
 
+/**
+ * Quote a caller-supplied value as a PowerShell single-quoted literal. Doubling
+ * `'` is the only escape PowerShell recognizes there, and no other character is
+ * interpreted, so this cannot be escaped out of.
+ */
+export function powerShellSingleQuoted(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+/**
+ * Quote a caller-supplied value as an AppleScript string literal. Backslash is
+ * escaped first so the escapes added afterwards are not re-escaped. Newlines
+ * become `\n` escapes so the literal always stays on one line and cannot be
+ * terminated early by the payload.
+ */
+export function appleScriptQuoted(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+  return `"${escaped}"`
+}
+
 /** App/window/display handlers with target provenance supplied explicitly. */
 export async function handleWindowTool(
   tool: string,
@@ -33,6 +57,7 @@ export async function handleWindowTool(
   const native = context.native
   const targets = context.targets
   const isWindows = (context.platform ?? process.platform) === 'win32'
+  const platform = context.platform ?? process.platform
 
   if (tool === 'get_window') {
     const windowId = numberArg(args, 'window_id', -1)
@@ -136,14 +161,21 @@ export async function handleWindowTool(
     if (!windowSize && !windowLocation) {
       return { content: [{ type: 'text', text: 'window_size or window_loc required' }], isError: true }
     }
+    // The non-Windows path is AppleScript, which Linux has no interpreter for.
+    // Say so instead of emitting a script the scripting service will reject.
+    if (platform === 'linux') {
+      return platformUnsupported('resize_window', 'macOS and Windows',
+        'On Linux, move or resize windows with run_script (bash) using wmctrl or xdotool.')
+    }
     let language: string
     let script: string
     if (isWindows) {
       const windowId = typeof args.window_id === 'number' ? args.window_id : undefined
+      const quotedName = windowName !== undefined ? powerShellSingleQuoted(windowName) : undefined
       const target = windowId
         ? `$hwnd = [IntPtr]${windowId}`
-        : windowName
-          ? `$hwnd = (Get-Process -Name '${windowName.replace(/\.exe$/i, '')}' -ErrorAction SilentlyContinue | Select-Object -First 1).MainWindowHandle; if (-not $hwnd -or $hwnd -eq 0) { $hwnd = (Get-Process | Where-Object { $_.MainWindowTitle -like '*${windowName}*' } | Select-Object -First 1).MainWindowHandle }`
+        : quotedName
+          ? `$hwnd = (Get-Process -Name ${powerShellSingleQuoted(windowName!.replace(/\.exe$/i, ''))} -ErrorAction SilentlyContinue | Select-Object -First 1).MainWindowHandle; if (-not $hwnd -or $hwnd -eq 0) { $hwnd = (Get-Process | Where-Object { $_.MainWindowTitle -like ${powerShellSingleQuoted(`*${windowName}*`)} } | Select-Object -First 1).MainWindowHandle }`
           : `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();}'; $hwnd = [W]::GetForegroundWindow()`
       let move: string
       if (windowSize && windowLocation) {
@@ -157,7 +189,7 @@ export async function handleWindowTool(
       script = `${target}; if ($hwnd -and $hwnd -ne 0) { ${move}; 'Resized' } else { 'Window not found' }`
     } else {
       const target = windowName
-        ? `tell application "${windowName}"`
+        ? `tell application ${appleScriptQuoted(windowName)}`
         : 'tell application (path to frontmost application as text)'
       const parts = [
         ...(windowLocation ? [`set position of front window to {${windowLocation[0]}, ${windowLocation[1]}}`] : []),
@@ -185,7 +217,7 @@ export async function handleWindowTool(
       desktop += `\n\nWindows:\n${windows.map(window =>
         `  ${window.windowId} | ${window.bundleId} | ${window.title ?? '(no title)'}`).join('\n')}`
     }
-    if (args.use_vision !== false && Array.isArray(windows)) {
+    if (args.use_vision === true && Array.isArray(windows)) {
       const focused = windows.find(window => window.isFocused)
       if (focused) {
         try { desktop += `\n\nUI Tree (${focused.bundleId}):\n${JSON.stringify(native.getUiTree(focused.windowId, 5)).slice(0, 4000)}` }

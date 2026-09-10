@@ -186,7 +186,9 @@
     "workers",
     "docs/releases/v7.2.0.md",
     "docs/assets/architecture.svg",
-    "docs/assets/astra-painting.png"
+    "docs/assets/astra-painting.png",
+    "docs/assets/deepseek-ledger-run.gif",
+    "docs/assets/deepseek-ledger-run.mp4"
   ],
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",
@@ -194,6 +196,7 @@
     "build:native:win:arm64": "cd native && cargo build --release --target aarch64-pc-windows-msvc && copy target\\aarch64-pc-windows-msvc\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-arm64.node",
     "build:native:linux": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.so ../computer-use-napi.linux-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.so ../computer-use-napi.node",
     "build:ts": "node scripts/clean-dist.mjs && tsc",
+    "lint": "eslint src",
     "build": "npm run build:native && npm run build:ts",
     "prepare:packages": "node scripts/prepare-platform-packages.mjs",
     "test": "npm run build:ts && node --test test/*.test.mjs",
@@ -215,9 +218,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "eslint": "9.39.1",
     "fast-check": "^4.7.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "8.46.0"
   },
   "optionalDependencies": {
     "playwright": "^1.63.0"

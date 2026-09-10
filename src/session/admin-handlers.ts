@@ -2,9 +2,9 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createHash, type Hash } from 'node:crypto'
-import { fsRootsViolation } from './fs-jail.js'
+import { enforceFsRoots } from './fs-jail.js'
 import type { SpawnBounded } from './spawn.js'
-import { errJson, ok, type ToolResult } from '../result.js'
+import { errJson, ok, platformUnsupported, type ToolResult } from '../result.js'
 
 export interface AdminHandlerContext {
   platform?: NodeJS.Platform
@@ -108,10 +108,15 @@ export async function handleAdminTool(
     if (!path.isAbsolute(filePath)) filePath = path.join(home, 'Desktop', filePath)
     let destination = typeof args.destination === 'string' ? args.destination : undefined
     if (destination && !path.isAbsolute(destination)) destination = path.join(home, 'Desktop', destination)
-    for (const candidate of [filePath, destination]) {
-      if (!candidate) continue
-      const violation = fsRootsViolation(candidate, context.clientRoots)
-      if (violation) return errJson(violation)
+    // Operate on the paths the boundary check actually validated, so a symlink
+    // swapped in after the check cannot redirect the syscall outside the roots.
+    const pathDecision = enforceFsRoots(filePath, context.clientRoots)
+    if (pathDecision.violation) return errJson(pathDecision.violation)
+    filePath = pathDecision.path
+    if (destination) {
+      const destinationDecision = enforceFsRoots(destination, context.clientRoots)
+      if (destinationDecision.violation) return errJson(destinationDecision.violation)
+      destination = destinationDecision.path
     }
     const encoding = (typeof args.encoding === 'string' ? args.encoding : 'utf-8') as BufferEncoding
     if (mode === 'read') {
@@ -226,7 +231,8 @@ export async function handleAdminTool(
   }
 
   if (tool === 'registry') {
-    if (!isWindows) return { content: [{ type: 'text', text: 'registry is Windows-only. Use `defaults` via run_script on macOS.' }], isError: true }
+    if (!isWindows) return platformUnsupported('registry', 'Windows',
+      'Use `defaults` via run_script on macOS, or the equivalent config file on Linux.')
     const mode = requiredString(args, 'mode')
     const registryPath = requiredString(args, 'path')
     const name = typeof args.name === 'string' ? args.name : undefined
@@ -259,7 +265,8 @@ export async function handleAdminTool(
   }
 
   if (tool === 'notification') {
-    if (!isWindows) return { content: [{ type: 'text', text: 'notification is Windows-only. Use osascript via run_script on macOS.' }], isError: true }
+    if (!isWindows) return platformUnsupported('notification', 'Windows',
+      'Use `display notification` via run_script (osascript) on macOS, or notify-send on Linux.')
     const title = xmlEscape(requiredString(args, 'title'))
     const message = xmlEscape(requiredString(args, 'message'))
     const appId = typeof args.app_id === 'string' ? args.app_id : 'Windows.SystemToastNotification'

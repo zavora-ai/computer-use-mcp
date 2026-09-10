@@ -97,7 +97,7 @@ test('Tasks extension creates, polls, isolates, cancels, and validates routing h
   const authB = { token: 'b', clientId: 'client-b', scopes: ['mcp'], expiresAt: Date.now() / 1000 + 60 }
   try {
     const created = await modernRequest(handler, 'tools/call', {
-      name: 'get_ui_tree', arguments: {},
+      name: 'get_ui_tree', arguments: { window_id: 1 },
     }, { name: 'get_ui_tree', capabilities, authInfo: authA })
     assert.equal(created.body.result.resultType, 'task')
     assert.equal(created.body.result.status, 'working')
@@ -177,7 +177,7 @@ test('Tasks extension returns the final CallToolResult inline', async () => {
   const capabilities = { extensions: { [TASKS]: {} } }
   try {
     const created = await modernRequest(handler, 'tools/call', {
-      name: 'get_ui_tree', arguments: {},
+      name: 'get_ui_tree', arguments: { window_id: 1 },
     }, { name: 'get_ui_tree', capabilities })
     const taskId = created.body.result.taskId
     let polled

@@ -13,7 +13,7 @@ import {
   type RequestStateCodec,
   type ServerContext,
 } from '@modelcontextprotocol/server'
-import type { ZodTypeAny } from 'zod'
+import { z, type ZodTypeAny } from 'zod'
 import type { ElicitApproval, Session, SessionRequestContext } from '../session.js'
 import {
   TOOL_CATALOG,
@@ -200,7 +200,6 @@ export class ToolRegistry {
     const enabled: string[] = []
     const disabled: string[] = []
     for (const [name, tool] of this.#registeredTools) {
-      const meta = this.#registeredMeta.get(name)!
       const definition = this.#definitions.get(name)!
       const shouldEnable = this.#withinMaximum(definition) && this.#inActiveSurface(definition, profile)
       if (shouldEnable && !tool.enabled) tool.enable()
@@ -309,6 +308,26 @@ export class ToolRegistry {
           _meta: wireMeta,
         },
         async (args: Record<string, unknown>, extra) => {
+          // Apply advertised defaults and coercions before anything reads `args`,
+          // so handlers never have to restate a schema default. Malformed input
+          // becomes a recoverable tool result rather than a JSON-RPC fault: an
+          // agent can read `issues` and retry, but cannot retry a thrown error.
+          const validated = z.object(inputSchema).passthrough().safeParse(args)
+          if (!validated.success) {
+            return {
+              content: [{ type: 'text', text: JSON.stringify({
+                error: 'invalid_arguments',
+                tool: definition.name,
+                issues: validated.error.issues.map(issue => ({
+                  path: issue.path.join('.') || '(root)',
+                  message: issue.message,
+                })),
+                remediation: ['Correct the listed arguments against the tool input schema and call again.'],
+              }) }],
+              isError: true,
+            }
+          }
+          args = validated.data
           const capabilities = modernClientCapabilities(extra)
           const hash = argsHash(definition.name, args)
           const echoedState = extra.mcpReq.requestState<McpRequestState>()
@@ -369,7 +388,7 @@ export class ToolRegistry {
               }
               const elicitation = capabilities.elicitation
               const supportsForm = elicitation && typeof elicitation === 'object'
-                && (Object.keys(elicitation as object).length === 0
+                && (Object.keys(elicitation).length === 0
                   || 'form' in (elicitation as Record<string, unknown>))
               if (!supportsForm) return false
               const requestState = await this.#options.requestStateCodec?.mint({

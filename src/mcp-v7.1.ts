@@ -39,13 +39,19 @@ export class McpV71Controller {
     })
 
     const previousInitialized = server.server.oninitialized
-    server.server.oninitialized = async () => {
+    server.server.oninitialized = () => {
       previousInitialized?.()
-      await this.refreshRoots()
-      await this.log('info', 'computer-use v7.1 MCP capabilities initialized', {
-        roots: this.#clientRoots?.length ?? null,
-        resourceSubscriptions: true,
-      })
+      // This hook is void-returning, so a rejection here would surface as an
+      // unhandled rejection and take the process down instead of degrading.
+      void (async () => {
+        try {
+          await this.refreshRoots()
+          await this.log('info', 'computer-use v7.1 MCP capabilities initialized', {
+            roots: this.#clientRoots?.length ?? null,
+            resourceSubscriptions: true,
+          })
+        } catch { /* capability negotiation is best effort; the session still serves */ }
+      })()
     }
   }
 

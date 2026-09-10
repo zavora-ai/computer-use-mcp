@@ -240,3 +240,46 @@ test('no token + no elicitation callback → approval_required', async () => {
   assert.ok(r.isError)
   assert.equal(parse(r).error, 'approval_required')
 })
+
+// Argument validation runs at the MCP boundary. It must apply advertised schema
+// defaults and report malformed input as a recoverable tool result — a thrown
+// JSON-RPC fault gives an agent nothing to retry against.
+
+test('malformed arguments return a structured invalid_arguments result, not a JSON-RPC fault', async () => {
+  const client = await connectInProcess(createComputerUseServer({ session: createSession({
+    native: createMockNative(), disableSessionLock: true,
+  }) }))
+  try {
+    const missing = await client.callTool('get_ui_tree', {})
+    assert.ok(missing.isError, 'missing required argument must be an error result')
+    const payload = parse(missing)
+    assert.equal(payload.error, 'invalid_arguments')
+    assert.equal(payload.tool, 'get_ui_tree')
+    assert.deepEqual(payload.issues.map(issue => issue.path), ['window_id'])
+    assert.ok(Array.isArray(payload.remediation) && payload.remediation.length > 0)
+
+    const badEnum = await client.callTool('scroll', { coordinate: [1, 2], direction: 'sideways' })
+    assert.ok(badEnum.isError)
+    assert.equal(parse(badEnum).error, 'invalid_arguments')
+    assert.deepEqual(parse(badEnum).issues.map(issue => issue.path), ['direction'])
+  } finally {
+    await client.close()
+  }
+})
+
+test('advertised schema defaults reach handlers so declared and actual behavior agree', async () => {
+  const client = await connectInProcess(createComputerUseServer({ session: createSession({
+    native: createMockNative(), disableSessionLock: true,
+  }) }))
+  try {
+    // snapshot.use_vision advertises default false, so an omitted flag must behave
+    // exactly like an explicit false rather than smuggling in a UI tree.
+    const textOf = result => result.content.filter(c => c.type === 'text').map(c => c.text).join('\n')
+    const omitted = textOf(await client.callTool('snapshot', {}))
+    const explicit = textOf(await client.callTool('snapshot', { use_vision: false }))
+    assert.equal(omitted.includes('UI Tree'), false, 'omitted use_vision must not include a UI tree')
+    assert.equal(omitted, explicit, 'omitted default must match the advertised default')
+  } finally {
+    await client.close()
+  }
+})

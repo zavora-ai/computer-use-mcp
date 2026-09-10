@@ -1,0 +1,12 @@
+{
+  "name": "computer-use-deepseek-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "describe": "node vision.mjs describe",
+    "read": "node vision.mjs read",
+    "chart": "node vision.mjs chart",
+    "compare": "node vision.mjs compare"
+  },
+  "dependencies": { "openai": "^6.0.0" }
+}

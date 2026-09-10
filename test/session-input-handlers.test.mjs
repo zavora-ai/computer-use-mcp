@@ -106,3 +106,41 @@ test('drag always emits a terminal release at the requested endpoint', async () 
   assert.deepEqual(f.native.calls.at(-1), ['button', 'release', 42, 10])
   assert.equal(f.native.calls.some(call => call[0] === 'drag'), true)
 })
+
+// multi_select advertises press_ctrl default true. Additive selection needs the
+// modifier held for the duration of each click, so it routes through a dedicated
+// native entry point; tapping the key separately selects nothing.
+
+test('multi_select defaults to additive clicks and honors an explicit press_ctrl=false', async () => {
+  const f = fixture()
+  f.native.mouseClickAdditive = (...args) => f.native.calls.push(['click-additive', ...args])
+
+  await f.handler.handle('multi_select', { locs: [[10, 20], [30, 40]] })
+  assert.deepEqual(
+    f.native.calls.filter(c => c[0].startsWith('click')),
+    [['click-additive', 10, 20, 'left', 1], ['click-additive', 30, 40, 'left', 1]],
+    'omitted press_ctrl must behave like the advertised default of true',
+  )
+  assert.equal(f.native.calls.filter(c => c[0] === 'key').length, 0,
+    'the modifier must not be tapped as a separate key event')
+
+  f.native.calls.length = 0
+  await f.handler.handle('multi_select', { locs: [[1, 2]], press_ctrl: false })
+  assert.deepEqual(
+    f.native.calls.filter(c => c[0].startsWith('click')),
+    [['click', 1, 2, 'left', 1]],
+  )
+})
+
+test('multi_select reports a missing native capability as a recoverable result', async () => {
+  const f = fixture()
+  assert.equal(f.native.mouseClickAdditive, undefined)
+  const result = await f.handler.handle('multi_select', { locs: [[10, 20]] })
+  assert.equal(result.isError, true)
+  const payload = JSON.parse(result.content[0].text)
+  assert.equal(payload.error, 'native_capability_missing')
+  assert.equal(payload.capability, 'mouseClickAdditive')
+  assert.ok(payload.remediation.some(line => line.includes('press_ctrl=false')))
+  assert.equal(f.native.calls.filter(c => c[0].startsWith('click')).length, 0,
+    'no click may be sent when additive selection cannot be honored')
+})

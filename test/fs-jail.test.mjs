@@ -5,7 +5,7 @@ import test from 'node:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { fsRootsViolation, resolveForJail, fsRoots } from '../dist/session/fs-jail.js'
+import { fsRootsViolation, resolveForJail, fsRoots, enforceFsRoots } from '../dist/session/fs-jail.js'
 import { createSession } from '../dist/session.js'
 
 function withRoots(roots, fn) {
@@ -173,4 +173,85 @@ test('filesystem unrestricted when COMPUTER_USE_FS_ROOTS unset (legacy, dispatch
       assert.ok(fs.existsSync(path.join(root, 'legacy.txt')))
     })
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
+
+// ── Check-then-use: operate on the path that was validated ──────────────────
+// fsRootsViolation canonicalizes the target to make its decision. If the caller
+// then passes the *original* string to the syscall, a symlink swapped in between
+// the two steps redirects the operation outside the roots. enforceFsRoots hands
+// back the canonicalized path so there is nothing left to swap.
+
+test('enforceFsRoots returns the canonicalized path while a boundary is in force', () => {
+  const root = tmpDir()
+  try {
+    fs.mkdirSync(path.join(root, 'real'))
+    fs.symlinkSync(path.join(root, 'real'), path.join(root, 'link'), 'dir')
+    const through = path.join(root, 'link', 'note.txt')
+
+    withRoots(root, () => {
+      const decision = enforceFsRoots(through)
+      assert.equal(decision.violation, null)
+      assert.equal(decision.path, path.join(root, 'real', 'note.txt'),
+        'the returned path must be the one the check validated, not the caller string')
+    })
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('enforceFsRoots leaves the path untouched when no boundary is configured', () => {
+  const root = tmpDir()
+  try {
+    fs.mkdirSync(path.join(root, 'real'))
+    fs.symlinkSync(path.join(root, 'real'), path.join(root, 'link'), 'dir')
+    const through = path.join(root, 'link', 'note.txt')
+
+    withRoots(undefined, () => {
+      const decision = enforceFsRoots(through)
+      assert.equal(decision.violation, null)
+      assert.equal(decision.path, through,
+        'with nothing to enforce, a deliberate symlink must keep working')
+    })
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('enforceFsRoots still denies an escape and reports it structurally', () => {
+  const root = tmpDir()
+  const outside = tmpDir()
+  try {
+    fs.symlinkSync(outside, path.join(root, 'escape'), 'dir')
+    withRoots(root, () => {
+      const decision = enforceFsRoots(path.join(root, 'escape', 'secret.txt'))
+      assert.ok(decision.violation, 'symlink escape must still be denied')
+      assert.equal(decision.violation.error, 'fs_root_denied')
+      assert.equal(decision.path, undefined)
+    })
+  } finally {
+    for (const dir of [root, outside]) fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a jailed write lands on the canonical path, not the symlinked one', async () => {
+  const root = tmpDir()
+  try {
+    fs.mkdirSync(path.join(root, 'real'))
+    fs.symlinkSync(path.join(root, 'real'), path.join(root, 'link'), 'dir')
+
+    await withRootsAsync(root, async () => {
+      const session = createSession({ native: {}, disableSessionLock: true })
+      const result = await session.dispatch('filesystem', {
+        mode: 'write',
+        path: path.join(root, 'link', 'note.txt'),
+        content: 'inside',
+      })
+      assert.ok(!result.isError, result.content?.[0]?.text)
+      assert.match(result.content[0].text, /real/, 'the report names the path actually written')
+    })
+
+    assert.equal(fs.readFileSync(path.join(root, 'real', 'note.txt'), 'utf8'), 'inside')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

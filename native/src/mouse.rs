@@ -40,7 +40,7 @@ mod linux {
             }
         }
 
-        pub fn mouse_click(x: i32, y: i32, btn: u32, count: i32) {
+        pub fn mouse_click(x: i32, y: i32, btn: u32, count: i32, additive: bool) {
             unsafe {
                 let dpy = open_display();
                 if dpy.is_null() {
@@ -49,6 +49,13 @@ mod linux {
                 XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
                 XFlush(dpy);
                 std::thread::sleep(std::time::Duration::from_millis(10));
+                let ctrl = XKeysymToKeycode(dpy, 0xffe3);
+                // c_char is signed on x86_64 Linux and unsigned on aarch64, so the
+                // element type has to come from the platform rather than be assumed.
+                let mut keymap = [0 as std::os::raw::c_char; 32];
+                XQueryKeymap(dpy, keymap.as_mut_ptr());
+                let already_held = (keymap[(ctrl / 8) as usize] as u8 & (1 << (ctrl % 8))) != 0;
+                if additive && !already_held { XTestFakeKeyEvent(dpy, ctrl as u32, 1, 0); }
                 for i in 0..count {
                     XTestFakeButtonEvent(dpy, btn, 1, 0);
                     XTestFakeButtonEvent(dpy, btn, 0, 0);
@@ -57,6 +64,7 @@ mod linux {
                         std::thread::sleep(std::time::Duration::from_millis(30));
                     }
                 }
+                if additive && !already_held { XTestFakeKeyEvent(dpy, ctrl as u32, 0, 0); }
                 XFlush(dpy);
                 XCloseDisplay(dpy);
             }
@@ -232,6 +240,15 @@ mod linux {
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        mouse_click_impl(x, y, button, count, false)
+    }
+
+    #[napi]
+    pub fn mouse_click_additive(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        mouse_click_impl(x, y, button, count, true)
+    }
+
+    fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, additive: bool) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
         let btn = match button.as_str() {
             "left" => 1u32,
@@ -243,10 +260,12 @@ mod linux {
                 )))
             }
         };
-        if is_wayland() && ydotool_available() {
+        if is_wayland() {
+            if additive { return Err(napi::Error::from_reason("Additive selection is unavailable on Wayland; use accessibility selection")); }
+            if !ydotool_available() { return Err(napi::Error::from_reason("ydotool is unavailable")); }
             wayland_impl::mouse_click(x as i32, y as i32, btn, count);
         } else {
-            x11_impl::mouse_click(x as i32, y as i32, btn, count);
+            x11_impl::mouse_click(x as i32, y as i32, btn, count, additive);
         }
         Ok(())
     }
@@ -310,7 +329,7 @@ mod linux {
 #[cfg(target_os = "macos")]
 mod macos {
     use core_graphics::event::{
-        CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
+        CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
     };
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use core_graphics::geometry::CGPoint;
@@ -347,6 +366,15 @@ mod macos {
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        mouse_click_impl(x, y, button, count, false)
+    }
+
+    #[napi]
+    pub fn mouse_click_additive(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        mouse_click_impl(x, y, button, count, true)
+    }
+
+    fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, additive: bool) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
         let point = CGPoint::new(x, y);
         let (btn, down_type, up_type) = match button.as_str() {
@@ -385,9 +413,11 @@ mod macos {
         for i in 1..=count {
             crate::activity::ensure_not_emergency_stopped()?;
             let down = CGEvent::new_mouse_event(source(), down_type, point, btn).unwrap();
+            if additive { down.set_flags(CGEventFlags::CGEventFlagCommand); }
             down.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
             post(down);
             let up = CGEvent::new_mouse_event(source(), up_type, point, btn).unwrap();
+            if additive { up.set_flags(CGEventFlags::CGEventFlagCommand); }
             up.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
             post(up);
             if i < count {
@@ -480,6 +510,18 @@ mod win {
     static AGENT_LEFT_HELD: AtomicBool = AtomicBool::new(false);
     use windows::Win32::UI::WindowsAndMessaging::*;
 
+    struct ControlGuard(bool);
+    fn control_event(up: bool) {
+        let input = INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT {
+            wVk: VK_CONTROL, wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+            time: 0, dwExtraInfo: 0,
+        } } };
+        unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32); }
+    }
+    impl Drop for ControlGuard {
+        fn drop(&mut self) { if self.0 { control_event(true); } }
+    }
+
     fn screen_size() -> (i32, i32) {
         unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
     }
@@ -521,6 +563,15 @@ mod win {
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        mouse_click_impl(x, y, button, count, false)
+    }
+
+    #[napi]
+    pub fn mouse_click_additive(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
+        mouse_click_impl(x, y, button, count, true)
+    }
+
+    fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, additive: bool) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
         let (ax, ay) = to_absolute(x, y);
         // Move first, settle
@@ -538,6 +589,9 @@ mod win {
             }
         };
 
+        let inject_ctrl = additive && unsafe { GetAsyncKeyState(VK_CONTROL.0 as i32) } >= 0;
+        let _guard = ControlGuard(inject_ctrl);
+        if inject_ctrl { control_event(false); }
         for i in 0..count {
             crate::activity::ensure_not_emergency_stopped()?;
             send_mouse(ax, ay, down | MOUSEEVENTF_ABSOLUTE, 0);

@@ -5,6 +5,7 @@ End-to-end AI agent examples using `computer-use-mcp` for desktop automation. Ea
 ```
 agents/
 ├── claude-agent/        JavaScript agent using Anthropic Claude
+├── deepseek-agent/      JavaScript vision agent using DeepSeek Flash
 ├── openai-agent/        JavaScript agent using OpenAI Responses
 └── langchain-agent/     JavaScript agent using LangChain + Claude
 ```
@@ -30,6 +31,17 @@ npm install openai
 node agents/openai-agent/agent.mjs "Open Safari and search for Rust programming"
 ```
 
+### DeepSeek Flash Agent
+
+Build the TypeScript library first with `npm run build:ts`.
+
+```bash
+export DEEPSEEK_API_KEY=your-key
+npm install --prefix agents/deepseek-agent
+node agents/deepseek-agent/vision.mjs describe          # one call, no tool use
+node agents/deepseek-agent/agent.mjs "Open Calculator and compute 42 * 58"
+```
+
 ### LangChain Agent
 ```bash
 export ANTHROPIC_API_KEY=your-key
@@ -53,8 +65,15 @@ These agents follow the same pattern:
 | Agent | LLM | Language | Vision | Best For |
 |---|---|---|---|---|
 | Claude | Claude Sonnet | JavaScript | ✓ screenshots | Vision-heavy tasks, UI navigation |
+| DeepSeek | `deepseek-flash` | JavaScript | ✓ inline base64, URL, Files API | Reading screens and charts, cheap change detection |
 | OpenAI | Configurable Responses model | JavaScript | ✓ image tool outputs | Lazy tool discovery, compact observations, local waits |
 | LangChain | Claude (swappable) | JavaScript | ✓ via Claude | Framework integration, chains |
+
+The DeepSeek example ships two entry points: `vision.mjs` asks one question about a
+capture, and `agent.mjs` runs the full tool loop. DeepSeek accepts images in user
+messages only, so tool screenshots are relocated out of the `tool` message — see
+[its README](deepseek-agent/README.md) for that pattern and the image limits it
+enforces locally.
 
 The OpenAI example uses Responses function outputs with real image inputs and preserves MCP input schemas. Set `OPENAI_MODEL` to choose a compatible model (default `gpt-6-astra`). It starts with three bootstrap tools, loads up to six schemas on demand, and reports actual API token usage. Image reuse is opt-in through `COMPUTER_USE_REUSE_IMAGES=true`. See [efficiency helpers and limits](../docs/EFFICIENCY.md).
 

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -43,7 +43,63 @@ export interface LegacyPolicyRuntime {
 
 function list(env: NodeJS.ProcessEnv, name: string, fallback: string[] = []): string[] {
   const raw = env[name]
-  return raw ? raw.split(',').map(value => value.trim()).filter(Boolean) : [...fallback]
+  return raw !== undefined ? raw.split(',').map(value => value.trim()).filter(Boolean) : [...fallback]
+}
+
+/** Collapse to comparable identifier characters so quoting and spacing cannot hide a name. */
+const identifierChars = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+/**
+ * Identifier fragments that plausibly name `app` inside script source. Bundle
+ * IDs contribute their trailing segment (`com.apple.keychainaccess` →
+ * `keychainaccess`) because scripts address apps by display name, not bundle ID.
+ * Executable names drop their extension (`1Password.exe` → `1password`).
+ */
+function appMatchTokens(app: string): string[] {
+  const withoutExtension = app.toLowerCase().replace(/\.(exe|app)$/, '')
+  const segments = withoutExtension.split('.')
+  const tokens = new Set([withoutExtension])
+  const tail = segments[segments.length - 1]
+  if (segments.length > 1 && tail) tokens.add(tail)
+  return [...tokens].map(identifierChars).filter(token => token.length >= 4)
+}
+
+export interface ScriptApplicationScope {
+  /** Blocked apps named in the script body. */
+  blocked: string[]
+  /** Sensitive apps named in the script body. */
+  sensitive: string[]
+  /**
+   * True when an allowlist is configured. A script can address any application,
+   * so membership cannot be proven the way it can for a `target_app` argument.
+   */
+  unverifiable: boolean
+}
+
+/**
+ * Best-effort scope analysis for `run_script`.
+ *
+ * `run_script` accepts no target argument, so the app-scoped rules that protect
+ * every other mutating tool have nothing to match against — without this a
+ * script could drive Keychain Access while the policy saw no target at all.
+ * Name matching is deliberately conservative and is defense in depth, not a
+ * sandbox: a determined script can compose an app name at runtime. Configure
+ * COMPUTER_USE_REQUIRE_APPROVAL_FOR=run_script (or
+ * COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL=true) when unconditional consent
+ * is required.
+ */
+export function scriptApplicationScope(
+  args: Record<string, unknown>,
+  config: Pick<LegacyPolicyConfig, 'sensitiveApps' | 'blockedApps' | 'allowedApps'>,
+): ScriptApplicationScope {
+  const body = identifierChars(typeof args.script === 'string' ? args.script : '')
+  const named = (apps: string[]) =>
+    apps.filter(app => appMatchTokens(app).some(token => body.includes(token)))
+  return {
+    blocked: named(config.blockedApps),
+    sensitive: named(config.sensitiveApps),
+    unverifiable: config.allowedApps.length > 0,
+  }
 }
 
 function destructive(tool: string, args: Record<string, unknown>): boolean {
@@ -65,6 +121,8 @@ export function createLegacyPolicyRuntime(options: {
   homeDirectory?: string
 }): LegacyPolicyRuntime {
   const env = options.env ?? process.env
+  const auditKey = randomBytes(32)
+  let auditPermissionsChecked = false
   const defaultSensitiveApps = options.isWindows
     ? ['1Password.exe', 'CredentialUIBroker.exe', 'KeePassXC.exe']
     : ['com.apple.keychainaccess', 'com.apple.Passwords', 'com.1password.1password', 'com.agilebits.onepassword7']
@@ -79,8 +137,9 @@ export function createLegacyPolicyRuntime(options: {
   }
   const auditSetting = env.COMPUTER_USE_AUDIT_LOG
   const auditEnabled = auditSetting === 'false' ? false : auditSetting ? true : !options.nativeInjected
-  const auditLogPath = auditSetting && auditSetting !== 'true' && auditSetting !== 'false'
-    ? auditSetting
+  const explicitAuditPath = Boolean(auditSetting && auditSetting !== 'true' && auditSetting !== 'false')
+  const auditLogPath = explicitAuditPath
+    ? auditSetting!
     : path.join(options.homeDirectory ?? os.homedir(), '.computer-use-mcp', 'audit.jsonl')
   const status = (): Record<string, unknown> => ({
     allowed_apps: policyConfig.allowedApps,
@@ -99,7 +158,10 @@ export function createLegacyPolicyRuntime(options: {
     args: Record<string, unknown>,
     mutates: boolean,
   ): LegacyPolicyDecision => {
-    const targetApp = options.targetApp(args)
+    const targetApp = tool === 'run_script' ? undefined : options.targetApp(args)
+    const scriptScope = tool === 'run_script'
+      ? scriptApplicationScope(args, policyConfig)
+      : undefined
     const isDestructive = destructive(tool, args)
     const reasons: string[] = []
     if (targetApp && policyConfig.blockedApps.includes(targetApp)) {
@@ -107,6 +169,17 @@ export function createLegacyPolicyRuntime(options: {
         allowed: false, approval: 'denied', reasons: [`target_app_blocked:${targetApp}`],
         targetApp, destructive: isDestructive,
         remediation: [`Remove ${targetApp} from COMPUTER_USE_BLOCKED_APPS only if this app should be controllable.`],
+      }
+    }
+    if (scriptScope && scriptScope.blocked.length > 0) {
+      return {
+        allowed: false, approval: 'denied',
+        reasons: scriptScope.blocked.map(app => `script_targets_blocked_app:${app}`),
+        destructive: isDestructive,
+        remediation: [
+          `The script names ${scriptScope.blocked.join(', ')}, which COMPUTER_USE_BLOCKED_APPS forbids.`,
+          'Remove the app from the script, or from COMPUTER_USE_BLOCKED_APPS only if it should be controllable.',
+        ],
       }
     }
     if (mutates && targetApp && policyConfig.allowedApps.length > 0
@@ -117,10 +190,13 @@ export function createLegacyPolicyRuntime(options: {
         remediation: [`Add ${targetApp} to COMPUTER_USE_ALLOWED_APPS if this app should be controllable.`],
       }
     }
+    const scriptSensitive = scriptScope?.sensitive ?? []
     const needsApproval = policyConfig.approvalRequiredForAll
       || policyConfig.requireApprovalFor.includes(tool)
       || (isDestructive && policyConfig.destructiveRequiresApproval)
       || Boolean(targetApp && policyConfig.sensitiveApps.includes(targetApp))
+      || scriptSensitive.length > 0
+      || scriptScope?.unverifiable === true
     if (!needsApproval) {
       return { allowed: true, approval: 'not_required', reasons, targetApp, destructive: isDestructive }
     }
@@ -128,10 +204,15 @@ export function createLegacyPolicyRuntime(options: {
       policyConfig.approvalRequiredForAll ? 'approval_required_for_all'
         : policyConfig.requireApprovalFor.includes(tool) ? `tool_requires_approval:${tool}`
           : isDestructive && policyConfig.destructiveRequiresApproval ? 'destructive_requires_approval'
-            : targetApp ? `sensitive_app:${targetApp}` : 'approval_required',
+            : targetApp ? `sensitive_app:${targetApp}`
+              : scriptSensitive.length > 0 ? `script_targets_sensitive_app:${scriptSensitive[0]}`
+                : scriptScope?.unverifiable ? 'script_scope_unverifiable'
+                  : 'approval_required',
     )
     const expected = env.COMPUTER_USE_APPROVAL_TOKEN
-    if (expected && args.approval_token === expected) {
+    const supplied = typeof args.approval_token === 'string' ? Buffer.from(args.approval_token) : undefined
+    const expectedBytes = expected ? Buffer.from(expected) : undefined
+    if (expectedBytes && supplied && supplied.length === expectedBytes.length && timingSafeEqual(supplied, expectedBytes)) {
       return { allowed: true, approval: 'approved', reasons, targetApp, destructive: isDestructive }
     }
     return {
@@ -146,14 +227,10 @@ export function createLegacyPolicyRuntime(options: {
 
   const redactAuditValue = (key: string, value: unknown): unknown => {
     const lower = key.toLowerCase()
-    if (typeof value === 'string' && (
-      lower.includes('token') || ['text', 'content', 'script', 'value', 'message'].includes(lower)
-    )) {
-      return {
-        redacted: true,
-        length: value.length,
-        sha256: createHash('sha256').update(value).digest('hex'),
-      }
+    if (lower.includes('token') || lower.includes('password') || lower.includes('secret')
+      || /api[_-]?key|authorization|credential|passcode|pin|otp/.test(lower)
+      || ['text', 'content', 'script', 'value', 'message'].includes(lower)) {
+      return { redacted: true }
     }
     if (Array.isArray(value)) return value.map((entry, index) => redactAuditValue(String(index), entry))
     if (value && typeof value === 'object') {
@@ -171,13 +248,24 @@ export function createLegacyPolicyRuntime(options: {
     auditLogPath,
     status,
     evaluate,
-    digestText: value => createHash('sha256').update(value).digest('hex'),
+    digestText: value => createHmac('sha256', auditKey).update(value).digest('hex'),
     redactAuditValue,
     writeAudit(record) {
       if (!auditEnabled) return
       try {
-        fs.mkdirSync(path.dirname(auditLogPath), { recursive: true })
-        fs.appendFileSync(auditLogPath, `${JSON.stringify(record)}\n`, 'utf8')
+        fs.mkdirSync(path.dirname(auditLogPath), { recursive: true, mode: 0o700 })
+        fs.appendFileSync(auditLogPath, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 })
+        // `mode` only applies at creation, so a log written by an older version
+        // keeps its permissive bits. Narrow group/other once per runtime for the
+        // path we own; a caller-specified path stays under the caller's control.
+        // Windows has no POSIX permission bits, so there is nothing to narrow.
+        if (!options.isWindows && !explicitAuditPath && !auditPermissionsChecked) {
+          auditPermissionsChecked = true
+          for (const target of [path.dirname(auditLogPath), auditLogPath]) {
+            const current = fs.statSync(target).mode & 0o777
+            if (current & 0o077) fs.chmodSync(target, current & 0o700)
+          }
+        }
       } catch { /* diagnostics report audit configuration; legacy execution stays available */ }
     },
   }

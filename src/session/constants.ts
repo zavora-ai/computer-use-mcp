@@ -13,6 +13,10 @@ export const PROVIDER_WIDTH: Record<string, number> = {
   qwen:           896,
   nova:          1024,
   'deepseek-vl':  896,
+  // DeepSeek Flash rescales every image to roughly the pixel count of 1300x1300
+  // before inference and caps it at 1024 tokens, so a wider capture costs upload
+  // bytes without buying the model any additional detail.
+  'deepseek-flash': 1280,
   phi:            896,
   auto:          1024,
 }

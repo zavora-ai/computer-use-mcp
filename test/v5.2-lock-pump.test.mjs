@@ -12,7 +12,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createSession } from '../dist/session.js'
-import { createLockPumpController } from '../dist/session/lock.js'
+import { acquireSessionLock, createLockPumpController, readSessionLease, SESSION_LEASE_TTL_MS } from '../dist/session/lock.js'
 
 // Minimal mock native — we only need drainRunloop counter + enough shape to
 // dispatch a mutating + observation tool.
@@ -56,7 +56,7 @@ test('extracted lock controller is refcounted and releases only its final owners
     controller.acquire()
     controller.acquire()
     assert.equal(controller.refcount, 2)
-    assert.equal(fs.readFileSync(lockPath, 'utf8'), String(process.pid))
+    assert.equal(readSessionLease(lockPath).pid, process.pid)
     controller.release()
     assert.equal(controller.refcount, 1)
     assert.equal(fs.existsSync(lockPath), true)
@@ -121,13 +121,13 @@ test('Phase 1: lockfile holder PID is this process', async () => {
   let holder = null
   for (let i = 0; i < 50; i++) {
     if (fs.existsSync(lockPath)) {
-      holder = fs.readFileSync(lockPath, 'utf8').trim()
+      holder = readSessionLease(lockPath)?.pid ?? null
       break
     }
     await new Promise(r => setTimeout(r, 2))
   }
   await p
-  assert.equal(holder, String(process.pid), `expected lockfile to contain our PID ${process.pid}, got ${holder}`)
+  assert.equal(holder, process.pid, `expected lockfile to contain our PID ${process.pid}, got ${holder}`)
 })
 
 // ── Stale PID recovery ──────────────────────────────────────────────────────
@@ -211,4 +211,102 @@ test('Phase 1: disableSessionLock lets two in-process sessions coexist', async (
     b.dispatch('write_clipboard', { text: 'b' }),
   ])
   assert.equal(fs.existsSync(lockPath), false, 'disableSessionLock must not create a lockfile')
+})
+
+// ── Lease staleness: the wedge cases ────────────────────────────────────────
+// A crashed holder whose PID the OS recycles is indistinguishable from a live
+// holder by PID existence alone. Renewal timestamps are what make it decidable.
+
+test('a live PID holding an expired lease is reclaimed (defeats PID reuse)', async () => {
+  const lockPath = newLockPath()
+  // A live foreign PID that never renewed the lease is exactly what PID reuse
+  // looks like: the recorded owner is gone, but its number belongs to something.
+  const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: 'ignore' })
+  sleeper.unref()
+  const foreignPid = sleeper.pid
+  assert.ok(foreignPid > 0 && foreignPid !== process.pid)
+  try {
+    await new Promise(r => setTimeout(r, 50))
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: foreignPid,
+      renewedAt: Date.now() - SESSION_LEASE_TTL_MS - 1_000,
+    }), { mode: 0o600 })
+
+    const handle = acquireSessionLock(lockPath)
+    try {
+      const lease = readSessionLease(lockPath)
+      assert.equal(lease.pid, process.pid, 'lock must transfer to the reclaiming process')
+      assert.ok(Date.now() - lease.renewedAt < SESSION_LEASE_TTL_MS, 'reclaimed lease must be freshly renewed')
+    } finally { handle.release() }
+    assert.equal(fs.existsSync(lockPath), false)
+  } finally {
+    try { process.kill(foreignPid, 'SIGKILL') } catch { /* already gone */ }
+    try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
+  }
+})
+
+test('a live PID with a fresh lease is never reclaimed', () => {
+  const lockPath = newLockPath()
+  try {
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, renewedAt: Date.now() }))
+    assert.throws(() => acquireSessionLock(lockPath), error => {
+      assert.equal(error.name, 'LockError')
+      assert.equal(error.lockingPid, process.pid)
+      return true
+    })
+  } finally {
+    try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
+  }
+})
+
+test('an orphaned reclaim guard expires instead of disabling stale recovery forever', () => {
+  const lockPath = newLockPath()
+  const guardPath = lockPath + '.reclaim'
+  try {
+    // Dead holder: PID 1 is never a plausible owner of this lock, and a very old
+    // renewal timestamp makes the lease stale under either rule.
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 2 ** 31 - 1, renewedAt: 0 }))
+    // Simulate a reclaimer that crashed after creating the guard.
+    fs.writeFileSync(guardPath, '')
+    const stale = new Date(Date.now() - 60_000)
+    fs.utimesSync(guardPath, stale, stale)
+
+    const handle = acquireSessionLock(lockPath)
+    try {
+      assert.equal(readSessionLease(lockPath).pid, process.pid)
+      assert.equal(fs.existsSync(guardPath), false, 'expired guard must be cleaned up')
+    } finally { handle.release() }
+  } finally {
+    for (const target of [lockPath, guardPath]) {
+      try { fs.unlinkSync(target) } catch { /* already removed */ }
+    }
+  }
+})
+
+test('a fresh reclaim guard still serializes concurrent reclaimers', () => {
+  const lockPath = newLockPath()
+  const guardPath = lockPath + '.reclaim'
+  try {
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 2 ** 31 - 1, renewedAt: 0 }))
+    fs.writeFileSync(guardPath, '')
+    assert.throws(() => acquireSessionLock(lockPath), /locked by PID/)
+  } finally {
+    for (const target of [lockPath, guardPath]) {
+      try { fs.unlinkSync(target) } catch { /* already removed */ }
+    }
+  }
+})
+
+test('a legacy bare-PID lease from an older process is still honored', () => {
+  const lockPath = newLockPath()
+  try {
+    fs.writeFileSync(lockPath, String(process.pid))
+    const lease = readSessionLease(lockPath)
+    assert.equal(lease.pid, process.pid)
+    assert.equal(lease.renewedAt, undefined)
+    // No renewal timestamp means expiry cannot be judged, so liveness alone decides.
+    assert.throws(() => acquireSessionLock(lockPath), /locked by PID/)
+  } finally {
+    try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
+  }
 })

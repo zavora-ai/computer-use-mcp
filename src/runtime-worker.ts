@@ -11,12 +11,19 @@ const context = createContext({ state: {},
   emit: (value: unknown) => send({ type: 'output', value }),
 })
 let running = false
-createInterface({ input: process.stdin }).on('line', async line => {
+createInterface({ input: process.stdin }).on('line', line => {
+  // The listener is void-returning, so the async body is contained here and every
+  // failure is reported over the protocol instead of becoming a rejection.
+  void (async () => {
   try {
     const message = JSON.parse(line)
     if (message.type === 'result') {
       const operation = pending.get(message.id)
-      if (operation) { pending.delete(message.id); message.error ? operation.reject(new Error(message.error)) : operation.resolve(message.value) }
+      if (operation) {
+        pending.delete(message.id)
+        if (message.error) operation.reject(new Error(message.error))
+        else operation.resolve(message.value)
+      }
     } else if (message.type === 'run') {
       if (running) throw new Error('Runtime is busy')
       running = true
@@ -29,4 +36,5 @@ createInterface({ input: process.stdin }).on('line', async line => {
       finally { running = false }
     }
   } catch (error) { send({ type: 'failed', error: String(error) }) }
+  })()
 })

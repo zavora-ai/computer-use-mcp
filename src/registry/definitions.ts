@@ -22,10 +22,10 @@ const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
   focus_strategy: focusStrategyParam,
 })
 
-const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'phi', 'auto'] as const
+const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'deepseek-flash', 'phi', 'auto'] as const
 
 /** Complete v7 compatibility surface, defined independently of MCP transport setup. */
-export function defineV7Tools(registry: ToolRegistry): void {
+export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>): void {
   const openAiActionSchema = z.object({
     type: z.string().optional().describe('OpenAI computer action type, e.g. click, double_click, scroll, type, wait, keypress, drag, move, screenshot'),
     action: z.string().optional().describe('Alias for type'),
@@ -91,7 +91,7 @@ export function defineV7Tools(registry: ToolRegistry): void {
       .describe('Bundle ID of app to capture (window only). Omit for full screen.'),
     target_window_id: targetWindowIdParam,
     provider: z.enum(PROVIDERS).optional()
-      .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
+      .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, deepseek-flash=1280px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
     show_agent_pointer: z.boolean().optional()
       .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
   }, NONE_READ)
@@ -236,6 +236,7 @@ export function defineV7Tools(registry: ToolRegistry): void {
     menu: z.string().describe('Top-level menu title (e.g. "File")'),
     item: z.string().describe('Menu item title (e.g. "New")'),
     submenu: z.string().optional().describe('Submenu title when the item is nested'),
+    focus_strategy: focusStrategyParam,
   }, AX_MUT)
   tool('fill_form', 'Set multiple UI element values in a single call — collapses click+type loops into one tool call. Partial failures are reported per field without aborting the batch.', {
     window_id: z.number().int().describe('CGWindowID of the form window'),
@@ -253,13 +254,13 @@ export function defineV7Tools(registry: ToolRegistry): void {
     script: z.string().describe('Script body to execute'),
     timeout_ms: z.number().int().positive().max(120_000).optional().describe('Hard timeout in ms (default 30000, max 120000)'),
   }, SCRIPTING)
-  tool('get_app_dictionary', 'Get a scriptable app\'s dictionary (suites, commands, classes). Returns summarized names by default; pass `suite` for full details of one suite.', {
+  tool('get_app_dictionary', 'macOS only. Get a scriptable app\'s dictionary (suites, commands, classes). Returns summarized names by default; pass `suite` for full details of one suite.', {
     bundle_id: z.string().describe('Bundle ID of the scriptable app'),
     suite: z.string().optional().describe('Limit to a specific suite; omit for a summary'),
   }, SCRIPT_READ)
 
   // ── v5.1: Menu bar introspection ────────────────────────────────────────
-  tool('list_menu_bar', 'List an app\'s full menu bar structure with keyboard shortcuts. Use this BEFORE select_menu_item to see what menus / items / shortcuts exist — agents can then press the shortcut directly (faster than walking the menu) or pass the exact item title to select_menu_item.', {
+  tool('list_menu_bar', 'macOS only. List an app\'s full menu bar structure with keyboard shortcuts. Use this BEFORE select_menu_item to see what menus / items / shortcuts exist — agents can then press the shortcut directly (faster than walking the menu) or pass the exact item title to select_menu_item.', {
     bundle_id: z.string().describe('Bundle ID of the app whose menu bar to read'),
   }, AX_READ)
 
@@ -286,8 +287,9 @@ export function defineV7Tools(registry: ToolRegistry): void {
     window_id: z.number().int().describe('Window ID to remove'),
     space_id: z.number().int().describe('Space/desktop ID to remove the window from'),
   }, AX_MUT)
-  tool('destroy_space', 'Close a virtual desktop/Space. On macOS, prefers yabai and falls back to private CGS APIs. On Windows uses Ctrl+Win+F4.', {
-    space_id: z.number().int().optional().describe('Space ID to destroy (ignored on Windows — always closes current)'),
+  tool('destroy_space', 'Close a virtual desktop/Space. On macOS, prefers yabai and falls back to private CGS APIs (pass the numeric space_id). On Windows uses Ctrl+Win+F4 and always closes the current desktop, so the space_id reported by create_agent_space (a GUID string) is accepted and ignored.', {
+    space_id: z.union([z.number().int(), z.string()]).optional()
+      .describe('Numeric Space ID on macOS. Accepted and ignored on Windows, where the current desktop is always closed.'),
   }, AX_MUT)
 
   // ── v5.2: Tool metadata introspection (server-local; K20) ───────────────
@@ -388,4 +390,25 @@ export function defineV7Tools(registry: ToolRegistry): void {
       query: z.string().optional().describe('Focus extraction on specific information'),
       use_dom: z.boolean().optional().default(false).describe('Extract from active browser tab DOM instead of HTTP'),
     }, NONE_READ)
+}
+
+// Share advertised defaults with direct session calls and nested compatibility actions.
+let defaultsByTool: Map<string, Record<string, unknown>> | undefined
+export function withToolDefaults(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  if (!defaultsByTool) {
+    defaultsByTool = new Map()
+    defineV7Tools({ getMeta: getToolMeta, define(definition) {
+      const values: Record<string, unknown> = {}
+      for (const [key, schema] of Object.entries(definition.inputSchema)) {
+        const parsed = schema.safeParse(undefined)
+        if (parsed.success && parsed.data !== undefined) values[key] = parsed.data
+      }
+      defaultsByTool!.set(definition.name, values)
+    } })
+  }
+  const result = { ...args }
+  for (const [key, value] of Object.entries(defaultsByTool.get(name) ?? {})) {
+    if (result[key] === undefined) result[key] = structuredClone(value)
+  }
+  return result
 }

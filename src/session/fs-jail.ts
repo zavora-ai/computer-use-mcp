@@ -93,3 +93,30 @@ export function fsRootsViolation(target: string, clientRoots?: readonly string[]
     ],
   }
 }
+
+export type FsRootDecision =
+  | { violation: FsRootViolation }
+  | { violation: null; path: string }
+
+/** True when either a configured or a negotiated boundary is in force. */
+export function fsBoundaryEnforced(clientRoots?: readonly string[]): boolean {
+  return fsRoots().length > 0 || clientRoots !== undefined
+}
+
+/**
+ * Check `target` and return the path the caller should actually operate on.
+ *
+ * When a boundary is in force the returned path is the canonicalized one that
+ * was just checked, so the syscall cannot be redirected outside the roots by a
+ * symlink swapped in after the check (the check-then-use race). With no boundary
+ * configured there is nothing to bypass, so the caller's path is returned
+ * unchanged and deliberate symlinks keep behaving as the caller expects.
+ */
+export function enforceFsRoots(target: string, clientRoots?: readonly string[]): FsRootDecision {
+  const violation = fsRootsViolation(target, clientRoots)
+  if (violation) return { violation }
+  return {
+    violation: null,
+    path: fsBoundaryEnforced(clientRoots) ? resolveForJail(target) : target,
+  }
+}
