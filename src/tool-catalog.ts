@@ -130,6 +130,7 @@ export const TOOL_CATALOG: Record<string, ToolMeta> = {
   triple_click: CG_MUT('ax'),
   mouse_move: CG_MUT('core'),
   left_click_drag: CG_MUT('ax'),
+  mouse_drag: CG_MUT('ax'),
   cursor_position: NONE_READ('core'),
   left_mouse_down: CG_MUT('ax'),
   left_mouse_up: CG_MUT('ax'),

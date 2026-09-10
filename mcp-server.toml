@@ -104,6 +104,13 @@ requires_approval = false
 credential_bindings = []
 
 [[tools]]
+name = "mouse_drag"
+description = "Mouse Drag"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
 name = "cursor_position"
 description = "Cursor Position"
 risk_class = "read_only"

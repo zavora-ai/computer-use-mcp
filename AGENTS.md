@@ -347,6 +347,46 @@ await client.runScript('powershell', 'Get-ChildItem C:\\Users\\Me\\Desktop | Sor
 3. **Accessibility (`click_element`, `set_value`, `fill_form`)** — UI Automation for GUI apps.
 4. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works.
 
+### Applications with no accessible controls
+
+Some applications draw their entire interface themselves and expose nothing to the
+accessibility tree. Blender is the clearest example: `get_ui_tree` returns six
+nodes — the window, its three title-bar buttons, a group and the title text — and
+`find_element` for `File`, `Add` or `Render` finds nothing, because those menus are
+painted in OpenGL. Its native macOS menu bar carries only Apple, Blender and
+Window. `discover_applications` reports `scriptable: false, accessible: false`.
+
+For these, every action is a coordinate or a keystroke read from pixels:
+
+- `screenshot` and `zoom` to see. Capture the window, not the desktop, and read
+  `get_window` bounds plus the returned image size to map image pixels back to
+  logical desktop coordinates — the capture is scaled.
+- `mouse_drag` for navigation. A 3D viewport orbits on a middle-button drag, pans
+  on shift+middle and zooms on ctrl+middle; none of that is expressible with the
+  single-button `left_click_drag`. Motion is interpolated because these
+  applications integrate incremental movement and ignore a jump to the endpoint.
+- `mouse_move` before `key`. Blender routes hotkeys to whichever editor the
+  pointer is over, so position the pointer first, then press.
+- `scroll` for wheel zoom.
+
+```typescript
+// Orbit a 3D viewport: middle-button drag across the centre of the window.
+await client.callTool('mouse_drag', {
+  path: [[cx, cy], [cx + 260, cy - 120]],
+  button: 'middle',
+  steps: 16,
+  target_window_id: windowId,
+  focus_strategy: 'strict',
+})
+// Pan instead, by holding shift for the whole gesture.
+await client.callTool('mouse_drag', {
+  path: [[cx, cy], [cx + 150, cy]], button: 'middle', modifiers: ['shift'], target_window_id: windowId,
+})
+```
+
+Expect to verify visually after each step rather than trusting that an action
+landed: there is no accessible state to read back.
+
 ### When `find_element` / `click_element` fails
 
 Accessibility observations mark sensitive controls with value-free
@@ -677,6 +717,7 @@ usable controls.
 | scrape | ✅ | ✅ | ✅ |
 | resize_window | ✅ AppleScript | ✅ | ❌ use `wmctrl`/`xdotool` via run_script |
 | multi_select, multi_edit | ✅ | ✅ | ✅ X11 only |
+| mouse_drag (button + modifiers) | ✅ | ✅ | ✅ X11 only |
 | doctor, discover_applications, get_tool_guide, get_tool_metadata | ✅ | ✅ | ✅ |
 
 Tools that exist in the catalog but have no implementation on the running platform

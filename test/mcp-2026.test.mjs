@@ -70,7 +70,7 @@ test('2026 discover is stateless and advertises only implemented extensions', as
     assert.equal(discover.body.result._meta['io.modelcontextprotocol/serverInfo'].version, '7.2.0')
 
     const listed = await modernRequest(handler, 'tools/list')
-    assert.equal(listed.body.result.tools.length, 65)
+    assert.equal(listed.body.result.tools.length, 66)
     for (const tool of listed.body.result.tools) {
       assert.equal(typeof tool.title, 'string')
       for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {

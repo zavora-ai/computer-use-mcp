@@ -8,7 +8,7 @@ type ExecFile = typeof defaultExecFileSync
 
 const INPUT_TOOLS = new Set([
   'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
-  'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up',
+  'mouse_move', 'left_click_drag', 'mouse_drag', 'left_mouse_down', 'left_mouse_up',
   'cursor_position', 'scroll', 'type', 'key', 'hold_key',
   'read_clipboard', 'write_clipboard', 'multi_select', 'multi_edit',
 ])
@@ -196,6 +196,59 @@ export class InputHandler {
       if (this.#platform !== 'darwin' && this.#native.writeClipboard) this.#native.writeClipboard(text)
       else this.#execFile('pbcopy', [], { input: text })
       return ok('Written')
+    }
+
+    if (tool === 'mouse_drag') {
+      const resolved = target()
+      await focus(resolved)
+      const path = (Array.isArray(args.path) ? args.path : []) as [number, number][]
+      if (path.length < 2) return this.#noCoordinates()
+      const button = typeof args.button === 'string' ? args.button : 'left'
+      const modifiers = Array.isArray(args.modifiers) ? args.modifiers as string[] : []
+      const steps = typeof args.steps === 'number' ? args.steps : 8
+      if (!this.#native.mousePress || !this.#native.mouseDragTo || !this.#native.mouseRelease) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({
+            error: 'native_capability_missing',
+            capability: 'mousePress/mouseDragTo/mouseRelease',
+            remediation: [
+              'Button-aware drags need a native module built from this release; rebuild it (npm run build:native) or reinstall the package.',
+              'For a plain left-button drag between two points, left_click_drag works with any version.',
+            ],
+          }) }],
+          isError: true,
+        }
+      }
+      for (const [x, y] of path) this.#validateCoordinates(x, y)
+
+      const [startX, startY] = path[0]!
+      this.#native.mouseMove(startX, startY)
+      await this.#sleep(15)
+      this.#native.mousePress(startX, startY, button, modifiers)
+      try {
+        // Interpolate: applications that integrate incremental motion — 3D
+        // viewport orbit, canvas painting — ignore a single jump to the endpoint.
+        for (let segment = 1; segment < path.length; segment++) {
+          const [fromX, fromY] = path[segment - 1]!
+          const [toX, toY] = path[segment]!
+          for (let step = 1; step <= steps; step++) {
+            this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
+            const ratio = step / steps
+            this.#native.mouseDragTo(
+              Math.round(fromX + (toX - fromX) * ratio),
+              Math.round(fromY + (toY - fromY) * ratio),
+              button, modifiers,
+            )
+            await this.#sleep(8)
+          }
+        }
+      } finally {
+        // Never leave a button or modifier stuck down, even on abort.
+        const [endX, endY] = path[path.length - 1]!
+        this.#native.mouseRelease(endX, endY, button, modifiers)
+      }
+      if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
+      return ok(`Dragged ${button}${modifiers.length ? ' with ' + modifiers.join('+') : ''} through ${path.length} waypoints`)
     }
 
     if (tool === 'multi_select') {

@@ -108,6 +108,44 @@ mod linux {
             }
         }
 
+        /// Press, drag or release a chosen button, optionally holding modifiers.
+        ///
+        /// `which` is 0 press, 1 drag, 2 release. Modifiers are pressed before the
+        /// button event and released after it; a caller holding them across a whole
+        /// path passes them on every call, which X11 coalesces harmlessly.
+        pub fn pointer_event(x: i32, y: i32, btn: u32, keysyms: &[u64], which: u8) {
+            unsafe {
+                let dpy = open_display();
+                if dpy.is_null() {
+                    return;
+                }
+                let codes: Vec<u32> = keysyms
+                    .iter()
+                    .map(|sym| XKeysymToKeycode(dpy, *sym) as u32)
+                    .filter(|code| *code != 0)
+                    .collect();
+                XWarpPointer(dpy, 0, XDefaultRootWindow(dpy), 0, 0, 0, 0, x, y);
+                if which != 1 {
+                    for code in &codes {
+                        XTestFakeKeyEvent(dpy, *code, 1, 0);
+                    }
+                }
+                match which {
+                    0 => { XTestFakeButtonEvent(dpy, btn, 1, 0); }
+                    2 => { XTestFakeButtonEvent(dpy, btn, 0, 0); }
+                    // A drag is motion only: the button is already held.
+                    _ => {}
+                }
+                if which != 1 {
+                    for code in codes.iter().rev() {
+                        XTestFakeKeyEvent(dpy, *code, 0, 0);
+                    }
+                }
+                XFlush(dpy);
+                XCloseDisplay(dpy);
+            }
+        }
+
         pub fn cursor_position() -> (i32, i32) {
             unsafe {
                 let dpy = open_display();
@@ -248,6 +286,70 @@ mod linux {
         mouse_click_impl(x, y, button, count, true)
     }
 
+
+    #[napi]
+    pub fn mouse_press(x: f64, y: f64, button: String, modifiers: Vec<String>) -> napi::Result<()> {
+        pointer_event(x, y, &button, &modifiers, 0)
+    }
+
+    #[napi]
+    pub fn mouse_drag_to(x: f64, y: f64, button: String, modifiers: Vec<String>) -> napi::Result<()> {
+        pointer_event(x, y, &button, &modifiers, 1)
+    }
+
+    #[napi]
+    pub fn mouse_release(x: f64, y: f64, button: String, modifiers: Vec<String>) -> napi::Result<()> {
+        pointer_event(x, y, &button, &modifiers, 2)
+    }
+
+    fn x11_button(button: &str) -> napi::Result<u32> {
+        match button {
+            "left" => Ok(1),
+            "middle" => Ok(2),
+            "right" => Ok(3),
+            other => Err(napi::Error::from_reason(format!(
+                "Invalid button: {other}, expected 'left', 'middle' or 'right'"
+            ))),
+        }
+    }
+
+    /// X11 keysyms for the modifiers a pointer gesture can hold.
+    fn x11_modifier_keysym(modifier: &str) -> napi::Result<u64> {
+        match modifier {
+            "shift" => Ok(0xffe1),
+            "ctrl" | "control" => Ok(0xffe3),
+            "alt" | "option" => Ok(0xffe9),
+            "cmd" | "command" | "meta" => Ok(0xffeb),
+            other => Err(napi::Error::from_reason(format!(
+                "Invalid modifier: {other}, expected shift, ctrl, alt or cmd"
+            ))),
+        }
+    }
+
+    fn pointer_event(
+        x: f64,
+        y: f64,
+        button: &str,
+        modifiers: &[String],
+        which: u8,
+    ) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        let btn = x11_button(button)?;
+        let keysyms = modifiers
+            .iter()
+            .map(|modifier| x11_modifier_keysym(modifier))
+            .collect::<napi::Result<Vec<_>>>()?;
+        if is_wayland() {
+            // ydotool cannot express a held-button path, so say so rather than
+            // emitting a gesture that silently does the wrong thing.
+            return Err(napi::Error::from_reason(
+                "Button-aware drags are unavailable on Wayland; use X11 or the accessibility tools",
+            ));
+        }
+        x11_impl::pointer_event(x as i32, y as i32, btn, &keysyms, which);
+        Ok(())
+    }
+
     fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, additive: bool) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
         let btn = match button.as_str() {
@@ -362,6 +464,118 @@ mod macos {
         )
         .unwrap();
         post(event);
+    }
+
+    /// Resolve a button name to its CGEvent down/up/dragged triple.
+    fn button_events(
+        button: &str,
+    ) -> napi::Result<(CGMouseButton, CGEventType, CGEventType, CGEventType)> {
+        match button {
+            "left" => Ok((
+                CGMouseButton::Left,
+                CGEventType::LeftMouseDown,
+                CGEventType::LeftMouseUp,
+                CGEventType::LeftMouseDragged,
+            )),
+            "right" => Ok((
+                CGMouseButton::Right,
+                CGEventType::RightMouseDown,
+                CGEventType::RightMouseUp,
+                CGEventType::RightMouseDragged,
+            )),
+            "middle" => Ok((
+                CGMouseButton::Center,
+                CGEventType::OtherMouseDown,
+                CGEventType::OtherMouseUp,
+                CGEventType::OtherMouseDragged,
+            )),
+            other => Err(napi::Error::from_reason(format!(
+                "Invalid button: {other}, expected 'left', 'middle' or 'right'"
+            ))),
+        }
+    }
+
+    /// Translate modifier names into CGEvent flags.
+    ///
+    /// macOS carries modifiers on the mouse event itself, so a modifier-held drag
+    /// needs no synthetic key events at all — unlike Windows and X11, which have
+    /// to press and release the real keys around the sequence.
+    fn modifier_flags(modifiers: &[String]) -> napi::Result<CGEventFlags> {
+        let mut flags = CGEventFlags::CGEventFlagNull;
+        for modifier in modifiers {
+            flags |= match modifier.as_str() {
+                "shift" => CGEventFlags::CGEventFlagShift,
+                "ctrl" | "control" => CGEventFlags::CGEventFlagControl,
+                "alt" | "option" => CGEventFlags::CGEventFlagAlternate,
+                "cmd" | "command" | "meta" => CGEventFlags::CGEventFlagCommand,
+                other => {
+                    return Err(napi::Error::from_reason(format!(
+                        "Invalid modifier: {other}, expected shift, ctrl, alt or cmd"
+                    )))
+                }
+            };
+        }
+        Ok(flags)
+    }
+
+    fn post_button_event(
+        x: f64,
+        y: f64,
+        button: &str,
+        modifiers: &[String],
+        which: u8,
+    ) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        let (mouse_button, down, up, dragged) = button_events(button)?;
+        let flags = modifier_flags(modifiers)?;
+        let event_type = match which {
+            0 => down,
+            1 => dragged,
+            _ => up,
+        };
+        let event = CGEvent::new_mouse_event(source(), event_type, CGPoint::new(x, y), mouse_button)
+            .map_err(|_| napi::Error::from_reason("Could not create mouse event"))?;
+        if flags != CGEventFlags::CGEventFlagNull {
+            event.set_flags(flags);
+        }
+        post(event);
+        if button == "left" {
+            AGENT_LEFT_HELD.store(which == 0, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    /// Press a mouse button, with optional modifiers held for the event.
+    #[napi]
+    pub fn mouse_press(
+        x: f64,
+        y: f64,
+        button: String,
+        modifiers: Vec<String>,
+    ) -> napi::Result<()> {
+        post_button_event(x, y, &button, &modifiers, 0)
+    }
+
+    /// Move while a button is held. Emit these between press and release.
+    #[napi]
+    pub fn mouse_drag_to(
+        x: f64,
+        y: f64,
+        button: String,
+        modifiers: Vec<String>,
+    ) -> napi::Result<()> {
+        post_button_event(x, y, &button, &modifiers, 1)
+    }
+
+    /// Release a mouse button.
+    #[napi]
+    pub fn mouse_release(
+        x: f64,
+        y: f64,
+        button: String,
+        modifiers: Vec<String>,
+    ) -> napi::Result<()> {
+        post_button_event(x, y, &button, &modifiers, 2)
     }
 
     #[napi]
@@ -550,6 +764,117 @@ mod win {
         unsafe {
             SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
         }
+    }
+
+    fn button_flags(button: &str) -> napi::Result<(MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS)> {
+        match button {
+            "left" => Ok((MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)),
+            "right" => Ok((MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)),
+            "middle" => Ok((MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)),
+            other => Err(napi::Error::from_reason(format!(
+                "Invalid button: {other}, expected 'left', 'middle' or 'right'"
+            ))),
+        }
+    }
+
+    fn modifier_key(modifier: &str) -> napi::Result<VIRTUAL_KEY> {
+        match modifier {
+            "shift" => Ok(VK_SHIFT),
+            "ctrl" | "control" => Ok(VK_CONTROL),
+            "alt" | "option" => Ok(VK_MENU),
+            "cmd" | "command" | "meta" => Ok(VK_LWIN),
+            other => Err(napi::Error::from_reason(format!(
+                "Invalid modifier: {other}, expected shift, ctrl, alt or cmd"
+            ))),
+        }
+    }
+
+    /// Windows mouse events carry no modifier state, so the real keys have to be
+    /// held around the sequence. This guard releases them even on an early return.
+    struct ModifierGuard(Vec<VIRTUAL_KEY>);
+    fn modifier_event(key: VIRTUAL_KEY, up: bool) {
+        let input = INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: key,
+                    wScan: 0,
+                    dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        unsafe {
+            SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+        }
+    }
+    impl ModifierGuard {
+        fn hold(modifiers: &[String]) -> napi::Result<Self> {
+            let keys = modifiers
+                .iter()
+                .map(|modifier| modifier_key(modifier))
+                .collect::<napi::Result<Vec<_>>>()?;
+            for key in &keys {
+                modifier_event(*key, false);
+            }
+            Ok(Self(keys))
+        }
+    }
+    impl Drop for ModifierGuard {
+        fn drop(&mut self) {
+            for key in self.0.iter().rev() {
+                modifier_event(*key, true);
+            }
+        }
+    }
+
+    fn post_button_event(
+        x: f64,
+        y: f64,
+        button: &str,
+        modifiers: &[String],
+        which: u8,
+    ) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        let (down, up) = button_flags(button)?;
+        let (ax, ay) = to_absolute(x, y);
+        match which {
+            // Press and release hold the modifiers only for their own event; a
+            // drag holds them across the whole path from the caller's side.
+            0 => {
+                let _guard = ModifierGuard::hold(modifiers)?;
+                send_mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0);
+                send_mouse(ax, ay, down | MOUSEEVENTF_ABSOLUTE, 0);
+            }
+            1 => send_mouse(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0),
+            _ => {
+                let _guard = ModifierGuard::hold(modifiers)?;
+                send_mouse(ax, ay, up | MOUSEEVENTF_ABSOLUTE, 0);
+            }
+        }
+        if button == "left" {
+            AGENT_LEFT_HELD.store(which == 0, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    /// Press a mouse button, with optional modifiers held for the event.
+    #[napi]
+    pub fn mouse_press(x: f64, y: f64, button: String, modifiers: Vec<String>) -> napi::Result<()> {
+        post_button_event(x, y, &button, &modifiers, 0)
+    }
+
+    /// Move while a button is held. Emit these between press and release.
+    #[napi]
+    pub fn mouse_drag_to(x: f64, y: f64, button: String, modifiers: Vec<String>) -> napi::Result<()> {
+        post_button_event(x, y, &button, &modifiers, 1)
+    }
+
+    /// Release a mouse button.
+    #[napi]
+    pub fn mouse_release(x: f64, y: f64, button: String, modifiers: Vec<String>) -> napi::Result<()> {
+        post_button_event(x, y, &button, &modifiers, 2)
     }
 
     #[napi]

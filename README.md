@@ -96,7 +96,7 @@ Downloads is not guaranteed to bypass those prompts.
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
 
-The default profile exposes **65 tools**. Set `COMPUTER_USE_PROFILE=core` for a
+The default profile exposes **66 tools**. Set `COMPUTER_USE_PROFILE=core` for a
 smaller starting set; `ax`, `scripting`, `windows-admin` and `full` are also
 available. Optional host services add their own tools.
 
