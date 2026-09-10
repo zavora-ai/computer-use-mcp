@@ -258,7 +258,8 @@ export function createLegacyPolicyRuntime(options: {
         // `mode` only applies at creation, so a log written by an older version
         // keeps its permissive bits. Narrow group/other once per runtime for the
         // path we own; a caller-specified path stays under the caller's control.
-        if (!explicitAuditPath && !auditPermissionsChecked) {
+        // Windows has no POSIX permission bits, so there is nothing to narrow.
+        if (!options.isWindows && !explicitAuditPath && !auditPermissionsChecked) {
           auditPermissionsChecked = true
           for (const target of [path.dirname(auditLogPath), auditLogPath]) {
             const current = fs.statSync(target).mode & 0o777

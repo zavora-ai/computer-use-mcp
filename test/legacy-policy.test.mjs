@@ -118,7 +118,12 @@ test('an explicitly empty COMPUTER_USE_CREDENTIAL_APPS clears the built-in sensi
   }, true).approval, 'not_required')
 })
 
-test('the default audit log is narrowed to owner-only even when an older version left it readable', async () => {
+// Windows has no POSIX permission bits: fs.chmod there only toggles read-only, and
+// stat reports 0o666 regardless. The narrowing is a POSIX behaviour, so only its
+// mode assertions are skipped — the append itself is checked everywhere.
+const posixOnly = { skip: process.platform === 'win32' && 'POSIX permission bits' }
+
+test('the default audit log is narrowed to owner-only even when an older version left it readable', posixOnly, async () => {
   const home = await mkdtemp(join(tmpdir(), 'computer-use-audit-perms-'))
   try {
     const directory = join(home, '.computer-use-mcp')
@@ -140,7 +145,20 @@ test('the default audit log is narrowed to owner-only even when an older version
   }
 })
 
-test('an explicitly configured audit path keeps the permissions the operator chose', async () => {
+test('the default audit log is appended to on every platform', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'computer-use-audit-append-'))
+  try {
+    const auditLog = join(home, '.computer-use-mcp', 'audit.jsonl')
+    const policy = runtime({ homeDirectory: home, nativeInjected: false })
+    policy.writeAudit({ tool: 'first' })
+    policy.writeAudit({ tool: 'second' })
+    assert.match(await readFile(auditLog, 'utf8'), /"tool":"first"[\s\S]*"tool":"second"/)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('an explicitly configured audit path keeps the permissions the operator chose', posixOnly, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'computer-use-audit-explicit-'))
   const auditLog = join(directory, 'audit.jsonl')
   try {
