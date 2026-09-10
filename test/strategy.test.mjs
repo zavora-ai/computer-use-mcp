@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createComputerUseServer, createComputerUseHttpHandler } from '../dist/server.js'
@@ -66,13 +66,14 @@ test('modern filesystem resources request roots before reading data', async () =
 
 test('same-process locks exclude independent owners and do not release replacement files', () => {
   const directory = mkdtempSync(join(tmpdir(), 'cu-lock-')); const path = join(directory, 'lock')
+  const first = acquireSessionLock(path)
   try {
-    const first = acquireSessionLock(path)
     assert.throws(() => acquireSessionLock(path), /locked/)
-    rmSync(path); writeFileSync(path, 'replacement')
+    // Rename the held inode: Windows cannot recreate a delete-pending open file.
+    renameSync(path, join(directory, 'original')); writeFileSync(path, 'replacement')
     first.release()
     assert.equal(existsSync(path), true)
-  } finally { rmSync(directory, { recursive: true, force: true }) }
+  } finally { first.release(); rmSync(directory, { recursive: true, force: true }) }
 })
 
 test('desktop queue serializes independent writers and permits nested operations', async () => {

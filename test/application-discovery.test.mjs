@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, basename, dirname } from 'node:path'
 import { discoverApplications } from '../dist/session/application-discovery.js'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
@@ -14,7 +14,7 @@ test('installed discovery searches Office, merges running IDs, bounds probes and
     for (const name of ['Microsoft Word','Microsoft Excel','Unrelated']) await mkdir(join(root,name+'.app'))
     await symlink(root,join(root,'cycle'))
     const options={platform:'darwin',roots:[root],running:[{bundleId:'com.test.microsoftword',displayName:'Word'}],
-      spawn:async(cmd,args)=>{calls.push(cmd);const name=args.at(-1).split('/').at(-3).slice(0,-4);return {code:0,stdout:JSON.stringify({CFBundleName:name,CFBundleIdentifier:'com.test.'+name.replaceAll(' ','').toLowerCase()})}},
+      spawn:async(cmd,args)=>{calls.push(cmd);const name=basename(dirname(dirname(args.at(-1)))).slice(0,-4);return {code:0,stdout:JSON.stringify({CFBundleName:name,CFBundleIdentifier:'com.test.'+name.replaceAll(' ','').toLowerCase()})}},
       capabilities:async id=>({id,scriptable:true})}
     const found=await discoverApplications({query:'office',include_capabilities:true},options)
     assert.equal(found.applications.length,2)
