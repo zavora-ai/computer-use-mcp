@@ -27,6 +27,10 @@ export DEEPSEEK_API_KEY=your-key
 
 ## The ledger showcase
 
+![DeepSeek Flash reading a scanned invoice and typing it into the form beside it](../../docs/assets/deepseek-ledger-run.gif)
+
+*Sped up 3x from a 38-second run. [Full-resolution capture](../../docs/assets/deepseek-ledger-run.mp4).*
+
 ```sh
 node agents/deepseek-agent/showcase.mjs                       # synthetic, scored
 node agents/deepseek-agent/showcase.mjs --receipt random      # a real receipt from the web
@@ -34,13 +38,21 @@ node agents/deepseek-agent/showcase.mjs --seed 42 --turns 40
 node agents/deepseek-agent/showcase.mjs --prompt "Read only the totals block and fill subtotal, tax and total."
 ```
 
-A recorded run, `--seed 7`:
+The recorded run, `--seed 7`:
 
 ```
-status: completed · 10 of 10 fields correct · accuracy 1.0
-12 model calls · 23 tool calls · 10 images
-113,629 prompt tokens — 104,832 cache hits (92.3%)
+status: completed · 10 of 10 fields correct · accuracy 1.0 · Verify passed first try
+12 model calls · 23 tool calls · 10 images · 38 seconds
+97,300 prompt tokens — 91,520 cache hits (94.1%)
 trustedEntry: true · untrustedEvents: 0 · unobservedFields: []
+```
+
+`record.mjs` reproduces the capture. It records the real screen but crops to the
+ledger window, so nothing else on the desktop is written to the file, and it crops
+the browser toolbar away because the app URL carries the one-shot host token.
+
+```sh
+node agents/deepseek-agent/record.mjs --seed 7 --turns 30
 ```
 
 It is prompt-driven: nothing in the runner knows the answers, the field order, or

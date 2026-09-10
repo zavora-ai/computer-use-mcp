@@ -27,6 +27,30 @@ node agents/openai-agent/showcase.mjs paint --studio --turns 24 --tokens 200000
 This makes paid API calls. The recorded run used 191,734 input and 3,274 output
 tokens. [Run the demos and read their limits](agents/openai-agent/README.md).
 
+## See it read
+
+![DeepSeek Flash reading a scanned invoice and typing it into a form](docs/assets/deepseek-ledger-run.gif)
+
+**Thirty-eight seconds, ten fields, no answer key.** The invoice on the left is
+drawn on a canvas, so its text never reaches the accessibility tree — the only way
+to read it is to look. DeepSeek Flash reads it from screenshots, types each value
+through the accessibility API, and presses Verify; the local host scores the
+entries and tells it only which ones are wrong. This run scored 10 of 10 on the
+first Verify, over 12 model calls and 23 tool calls, at a 94% prompt-cache hit
+rate. Every entry is recorded with its `isTrusted` flag, so a submission that was
+not typed through the UI is refused.
+
+```sh
+npm install --prefix agents/deepseek-agent
+npx playwright install chromium
+export DEEPSEEK_API_KEY=your-key
+node agents/deepseek-agent/showcase.mjs --seed 7             # the run above
+node agents/deepseek-agent/showcase.mjs --receipt random     # a real receipt from the web
+```
+
+[Full-resolution capture](docs/assets/deepseek-ledger-run.mp4) ·
+[how it works, and what it cannot fake](agents/deepseek-agent/README.md)
+
 ## Set up your agent
 
 Requires **Node.js 20+** and an interactive desktop. The published package bundles

@@ -186,7 +186,9 @@
     "workers",
     "docs/releases/v7.2.0.md",
     "docs/assets/architecture.svg",
-    "docs/assets/astra-painting.png"
+    "docs/assets/astra-painting.png",
+    "docs/assets/deepseek-ledger-run.gif",
+    "docs/assets/deepseek-ledger-run.mp4"
   ],
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",

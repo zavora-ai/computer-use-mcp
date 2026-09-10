@@ -15,6 +15,11 @@ cleanup. See [the release notes](docs/releases/v7.2.0.md).
   messages only, so tool screenshots are moved out of the `tool` message into a
   following user message; the per-image, per-request and dimension limits are
   checked locally rather than surfaced as a 400.
+- Long-running DeepSeek Flash ledger showcase (`agents/deepseek-agent/showcase.mjs`):
+  a receipt whose text exists only as canvas pixels, transcribed into a form and
+  scored by a local host that never reveals the answers. Prompt-driven, with
+  `--receipt random` pulling a real receipt from Wikimedia Commons. `record.mjs`
+  captures a run, cropped to the app window.
 - `deepseek-flash` screenshot provider preset at 1280px. The model rescales every
   image to roughly the pixel count of 1300x1300 and caps it at 1024 tokens, so a
   wider capture costs upload bytes without adding detail.
