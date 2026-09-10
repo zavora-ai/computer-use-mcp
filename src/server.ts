@@ -53,7 +53,7 @@ const FIXED_RESOURCES = new Set([
 
 const DESKTOP_STATE_MUTATIONS = new Set([
   'openai_computer', 'left_click', 'right_click', 'middle_click', 'double_click',
-  'triple_click', 'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up',
+  'triple_click', 'mouse_move', 'left_click_drag', 'mouse_drag', 'left_mouse_down', 'left_mouse_up',
   'scroll', 'type', 'key', 'hold_key', 'open_application', 'hide_app', 'unhide_app',
   'activate_app', 'activate_window', 'resize_window', 'click_element', 'set_value',
   'press_button', 'select_menu_item', 'fill_form', 'run_script', 'create_agent_space',

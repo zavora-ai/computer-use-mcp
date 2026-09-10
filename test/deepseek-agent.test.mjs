@@ -185,6 +185,21 @@ test('a pinned image is uploaded once and referenced by file_id in the stable pr
     'the pinned prefix must not change between turns')
 })
 
+test('thinking is uncapped by default, so max_tokens is omitted from the request', async () => {
+  // Reasoning is billed against max_tokens, and how much a dense screenshot needs
+  // is not predictable — a Blender window took 6,959 reasoning tokens. Capping it
+  // truncates the answer and still bills in full, so the run budget is the control.
+  const deepseek = fakeDeepSeek([{ role: 'assistant', content: 'ok' }])
+  await runAgent({ deepseek, client: fakeMcp([], () => ({ content: [] })), task: 'x' })
+  assert.ok(!('max_tokens' in deepseek.requests[0]), 'max_tokens must be absent when uncapped')
+
+  const capped = fakeDeepSeek([{ role: 'assistant', content: 'ok' }])
+  await runAgent({ deepseek: capped, client: fakeMcp([], () => ({ content: [] })), task: 'x', maxTokens: 2048 })
+  assert.equal(capped.requests[0].max_tokens, 2048, 'an explicit cap is still honoured')
+
+  await assert.rejects(runAgent({ deepseek, client: fakeMcp([], () => ({ content: [] })), task: 'x', maxTokens: 8 }),
+    /null \(uncapped\) or an integer of at least 64/)
+})
 test('an exhausted reasoning budget is reported, not returned as an empty answer', async () => {
   // deepseek-flash reasons before answering and that reasoning is billed against
   // max_tokens. A truncated turn arrives as finish_reason=length with empty

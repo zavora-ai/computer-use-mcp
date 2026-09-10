@@ -107,6 +107,84 @@ test('drag always emits a terminal release at the requested endpoint', async () 
   assert.equal(f.native.calls.some(call => call[0] === 'drag'), true)
 })
 
+// mouse_drag exists for applications that draw their own UI and expose no
+// accessible controls — Blender, game engines, CAD. Their navigation is
+// button-and-modifier gestures, which no other tool could express.
+
+test('mouse_drag presses, interpolates and releases with the requested button', async () => {
+  const f = fixture()
+  f.native.mousePress = (...a) => f.native.calls.push(['press', ...a])
+  f.native.mouseDragTo = (...a) => f.native.calls.push(['dragTo', ...a])
+  f.native.mouseRelease = (...a) => f.native.calls.push(['release', ...a])
+
+  await f.handler.handle('mouse_drag', { path: [[10, 10], [50, 30]], button: 'middle', steps: 4 })
+
+  const calls = f.native.calls.filter(c => ['press', 'dragTo', 'release'].includes(c[0]))
+  assert.equal(calls[0][0], 'press')
+  assert.deepEqual(calls[0].slice(1), [10, 10, 'middle', []])
+  assert.equal(calls.at(-1)[0], 'release')
+  assert.deepEqual(calls.at(-1).slice(1), [50, 30, 'middle', []])
+  // Interpolated motion is the point: a viewport that integrates incremental
+  // movement ignores a single jump to the endpoint.
+  const drags = calls.filter(c => c[0] === 'dragTo')
+  assert.equal(drags.length, 4)
+  assert.deepEqual(drags.map(c => [c[1], c[2]]), [[20, 15], [30, 20], [40, 25], [50, 30]])
+  assert.ok(f.native.calls.some(c => c[0] === 'move' && c[1] === 10 && c[2] === 10),
+    'the pointer must be positioned before the button goes down')
+})
+
+test('mouse_drag holds modifiers for the whole gesture', async () => {
+  const f = fixture()
+  for (const name of ['mousePress', 'mouseDragTo', 'mouseRelease']) {
+    f.native[name] = (...a) => f.native.calls.push([name, ...a])
+  }
+  await f.handler.handle('mouse_drag', {
+    path: [[0, 0], [10, 0], [10, 10]], button: 'middle', modifiers: ['shift'], steps: 1,
+  })
+  const gesture = f.native.calls.filter(c => c[0].startsWith('mouse'))
+  assert.ok(gesture.every(c => Array.isArray(c[4]) && c[4][0] === 'shift'),
+    'every event in the gesture carries the modifier')
+  assert.deepEqual(gesture.map(c => c[0]),
+    ['mousePress', 'mouseDragTo', 'mouseDragTo', 'mouseRelease'], 'one drag per waypoint at steps=1')
+})
+
+test('mouse_drag releases the button even when aborted mid-gesture', async () => {
+  const f = fixture()
+  const controller = new AbortController()
+  f.native.mousePress = (...a) => f.native.calls.push(['press', ...a])
+  f.native.mouseDragTo = (...a) => { f.native.calls.push(['dragTo', ...a]); controller.abort(new Error('stopped')) }
+  f.native.mouseRelease = (...a) => f.native.calls.push(['release', ...a])
+
+  await assert.rejects(
+    f.handler.handle('mouse_drag', { path: [[0, 0], [40, 0]], button: 'left', steps: 8 }, controller.signal),
+    /stopped|aborted/,
+  )
+  // A stuck mouse button would leave the desktop unusable.
+  assert.equal(f.native.calls.at(-1)[0], 'release')
+})
+
+test('mouse_drag needs at least two waypoints and validates every one', async () => {
+  const f = fixture()
+  for (const name of ['mousePress', 'mouseDragTo', 'mouseRelease']) f.native[name] = () => {}
+  const short = await f.handler.handle('mouse_drag', { path: [[1, 1]] })
+  assert.equal(short.isError, true)
+  await assert.rejects(
+    f.handler.handle('mouse_drag', { path: [[1, 1], [9999, 1]] }),
+    /outside display bounds/,
+  )
+})
+
+test('mouse_drag reports a missing native capability instead of failing obscurely', async () => {
+  const f = fixture()
+  assert.equal(f.native.mousePress, undefined)
+  const result = await f.handler.handle('mouse_drag', { path: [[1, 1], [2, 2]], button: 'middle' })
+  assert.equal(result.isError, true)
+  const payload = JSON.parse(result.content[0].text)
+  assert.equal(payload.error, 'native_capability_missing')
+  assert.match(payload.remediation.join(' '), /left_click_drag/, 'point at the tool that still works')
+})
+
+
 // multi_select advertises press_ctrl default true. Additive selection needs the
 // modifier held for the duration of each click, so it routes through a dedicated
 // native entry point; tapping the key separately selects nothing.

@@ -112,6 +112,18 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     coordinate: numArray(2),
     start_coordinate: numArray(2).optional(),
   }), CG_MUT)
+  tool('mouse_drag',
+    'Drag with a chosen button while holding modifiers, through a path of waypoints. Needed by applications that draw their own UI and have no accessible controls: middle-button drag orbits a 3D viewport, shift+middle pans, ctrl+middle zooms. Motion is interpolated so applications that track incremental movement respond correctly.',
+    withTargeting({
+      path: z.array(numArray(2)).min(2).max(64)
+        .describe('Waypoints in logical pixels, starting at the press point and ending at the release point'),
+      button: z.enum(['left', 'middle', 'right']).optional().default('left')
+        .describe('Mouse button to hold for the drag'),
+      modifiers: z.array(z.enum(['shift', 'ctrl', 'alt', 'cmd'])).optional().default([])
+        .describe('Modifier keys held for the whole gesture'),
+      steps: z.number().int().min(1).max(64).optional().default(8)
+        .describe('Interpolated motion events between consecutive waypoints'),
+    }), CG_MUT)
   tool('cursor_position', 'Get current cursor position', {}, NONE_READ)
   tool('left_mouse_down', 'Press left mouse button', withTargeting(coord), CG_MUT)
   tool('left_mouse_up', 'Release left mouse button', withTargeting(coord), CG_MUT)

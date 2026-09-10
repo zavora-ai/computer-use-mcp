@@ -8,6 +8,14 @@ cleanup. See [the release notes](docs/releases/v7.2.0.md).
 
 ### Added
 
+- `mouse_drag` tool: press a chosen button, move through interpolated waypoints and
+  release, optionally holding modifiers for the whole gesture. Applications that
+  draw their own interface expose no accessible controls and navigate by
+  button-and-modifier gestures — a 3D viewport orbits on middle-drag, pans on
+  shift+middle, zooms on ctrl+middle — none of which the single-button
+  `left_click_drag` could express. Verified against Blender, whose accessibility
+  tree contains six nodes and no controls.
+
 - DeepSeek Flash vision example under `agents/deepseek-agent`: `vision.mjs` asks a
   single question about a capture (describe a screen, transcribe a window, read a
   chart, diff two captures, or use an externally hosted image) and `agent.mjs` runs
