@@ -6,7 +6,7 @@ import { createComputerUseServer } from '../../dist/server.js'
 import { connectInProcess } from '../../dist/client.js'
 import { MUTATING_TOOLS } from '../../dist/tool-catalog.js'
 import { runAgent } from './agent.mjs'
-import { RECIPES } from './recipes.mjs'
+import { RECIPES, officePlatformInstructions } from './recipes.mjs'
 import { startStudio } from './studio.mjs'
 
 export function parseOptions(argv) {
@@ -14,10 +14,12 @@ export function parseOptions(argv) {
   if(!RECIPES[scenario])throw Error('Choose paint, office, or inspect')
   const result={scenario,studio:false,turns:60,tokens:400000,minutes:15,reasoning:'low'}
   while(argv.length){const key=argv.shift();if(key==='--studio'){result.studio=true;continue}
+    if(key==='--office-preflight'){result.officePreflight=true;continue}
     const field={'--app':'app','--output':'output','--turns':'turns','--tokens':'tokens','--minutes':'minutes','--reasoning':'reasoning'}[key]
     if(!field||!argv.length)throw Error('Unknown or missing option: '+key)
     result[field]=['turns','tokens','minutes'].includes(field)?Number(argv.shift()):argv.shift()
   }
+  if(result.officePreflight&&scenario!=='office')throw Error('--office-preflight is only for office')
   if(result.studio&&scenario!=='paint')throw Error('--studio is only for paint')
   for(const [key,min,max] of [['turns',1,200],['tokens',1000,2000000],['minutes',1,60]])if(!Number.isInteger(result[key])||result[key]<min||result[key]>max)throw Error('Invalid '+key)
   if(!['low','medium','high','xhigh','max'].includes(result.reasoning))throw Error('Invalid reasoning effort')
@@ -38,12 +40,13 @@ export function artifactEvidence(directory,scenario) {
 export function defaultOutputForScenario(scenario) {
   return scenario==='office'?join(homedir(),'Downloads','computer-use-showcases'):'showcase-output'
 }
-export async function detectOwnedOfficeAccessPrompt(client,directory) {
-  const listed=await client.callTool('list_windows',{})
+export async function detectOwnedOfficeAccessPrompt(client,directory,{signal}={}) {
+  signal?.throwIfAborted()
+  const listed=await client.callTool('list_windows',{},{signal})
   if(listed.isError)return null
   const windows=listed.structuredContent?.windows??JSON.parse(listed.content.find(c=>c.type==='text')?.text??'{}').windows??[]
   for(const window of windows.filter(w=>w.title?.toLowerCase().includes('grant file access'))){
-    const observed=await client.callTool('get_ui_tree',{window_id:window.windowId})
+    const observed=await client.callTool('get_ui_tree',{window_id:window.windowId},{signal})
     const details=observed.isError?'':observed.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')
     if(details.includes(directory))return {windowId:window.windowId,title:window.title,details:details.slice(0,2000)}
   }
@@ -63,7 +66,7 @@ end tell`
   signal?.throwIfAborted()
   const result=await client.callTool('run_script',{language:'applescript',script,timeout_ms:timeoutMs},{signal})
   if(result.isError){
-    const prompt=await detectOwnedOfficeAccessPrompt(client,directory)
+    const prompt=await detectOwnedOfficeAccessPrompt(client,directory,{signal})
     return prompt?{ok:false,reason:'access_dialog',path,prompt}:{ok:false,reason:'script_failed',path,error:result.content.find(c=>c.type==='text')?.text??'Office preflight failed'}
   }
   const valid=existsSync(path)&&lstatSync(path).isFile()&&readFileSync(path).subarray(0,4).toString('hex')==='504b0304'
@@ -72,6 +75,8 @@ end tell`
 }
 export async function main(argv=process.argv.slice(2)) {
   const options=parseOptions([...argv])
+  if(options.scenario==='office')officePlatformInstructions()
+  if(options.officePreflight&&process.platform!=='darwin')throw Error('--office-preflight is a macOS-only optional save check')
   if(!process.env.OPENAI_API_KEY)throw Error('Set OPENAI_API_KEY in your shell before running a showcase')
   const {default:OpenAI}=await import('openai')
   const defaultOutput=defaultOutputForScenario(options.scenario)
@@ -108,7 +113,7 @@ export async function main(argv=process.argv.slice(2)) {
       }
       if(!windowId)throw Error('Could not identify the isolated studio window uniquely')
     }
-    if(options.scenario==='office'){
+    if(options.officePreflight){
       if(process.platform!=='darwin'){report.status='blocked';report.preflight={ok:false,reason:'platform_unsupported'};throw Error('Office output preflight currently requires macOS AppleScript')}
       const preflight=await preflightOfficeOutput(client,directory,{signal:controller.signal})
       report.preflight=preflight

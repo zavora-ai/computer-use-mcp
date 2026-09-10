@@ -7,6 +7,30 @@ Enabling a desktop broker adds six tools; enabling a browser backend adds ten.
 This is unreleased source work, not a claim of benchmark superiority or a new
 npm release.
 
+## Implementation scope and deployment prerequisites
+
+The strategy services below, application discovery, lazy Responses tool loading,
+scoped observation helpers, local waits, usage accounting, bounded tool text,
+and the paint studio's batched native strokes/export are implemented. The
+Responses Office recipe selects AppleScript on macOS and PowerShell/COM on
+Windows. Its optional save preflight is macOS-specific; the default workflow
+does not depend on that probe. See the [showcase setup guide](../agents/openai-agent/README.md)
+for commands and evidence.
+
+Desktop permissions, Office activation and app-owned folder grants are user or
+deployment setup requirements. In particular, Downloads is not universally
+exempt from Office folder prompts. A missing grant is not a missing MCP feature;
+the examples do not disable permissions or grant broad filesystem access.
+The Microsoft Office recipe does not implement LibreOffice on Linux.
+
+Remaining validation includes a successful complete model-driven Office run,
+installed native paint apps, Windows/Linux desktop environments, shipping MCP
+App hosts and matched efficiency benchmarks. These are distinct from missing
+implementations. The Windows Office recipe has platform-selection regression
+coverage, not a verified live COM workflow. Browser restrictions and platform
+limitations described below remain explicit product limits; this implementation
+does not claim every capability of other computer-use systems.
+
 ## Enable sessions, supervision and persistent Tasks
 
 ```ts

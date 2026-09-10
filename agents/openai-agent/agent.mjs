@@ -29,13 +29,33 @@ const BOOTSTRAP = [
   }, ['window_id']),
 ]
 
+/** Bound model-visible text while preserving images and making omitted evidence explicit. */
+export function boundToolText(result, maxChars) {
+  let remaining = maxChars
+  let omittedChars = 0
+  const content = []
+  for (const block of result.content) {
+    if (block.type !== 'text') { content.push(block); continue }
+    const kept = block.text.slice(0, remaining)
+    remaining -= kept.length
+    omittedChars += block.text.length - kept.length
+    if (kept) content.push({ ...block, text: kept })
+  }
+  if (omittedChars) content.push({ type: 'text', text: JSON.stringify({
+    toolOutputTruncated: true, omittedChars,
+    instruction: 'Only an excerpt was returned. It may contain incomplete JSON. Narrow the query before relying on missing information; truncation is not proof of absence or success.',
+  }) })
+  return { ...result, content }
+}
+
 /** Exported for offline integration tests; no API request or native module is created here. */
 export async function runAgent({
   openai, client, task, model = 'gpt-6-astra', maxTurns = 40,
   signal, onProgress = () => {}, reuseImages = false,
   extraInstructions = '', allowedTools, onToolResult = () => {}, onResponse = () => {},
-  maxTokens = 200000, maxOutputTokens = 8000, reasoningEffort = 'low', customTools = [], finalizeToolName,
+  maxToolTextChars = 24000, maxTokens = 200000, maxOutputTokens = 8000, reasoningEffort = 'low', customTools = [], finalizeToolName,
 }) {
+  if (!Number.isSafeInteger(maxToolTextChars) || maxToolTextChars < 256 || maxToolTextChars > 1000000) throw new Error('maxToolTextChars must be 256..1000000')
   if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 200) throw new Error('maxTurns must be 1..200')
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) throw new Error('maxTokens must be positive')
   if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 64 || maxOutputTokens > 32000) throw new Error('maxOutputTokens must be 64..32000')
@@ -43,6 +63,18 @@ export async function runAgent({
   const custom = new Map(customTools.map(t => [t.schema.name, t]))
   if(custom.size !== customTools.length || customTools.some(t => BOOTSTRAP.some(b => b.name === t.schema.name))) throw new Error('Duplicate custom tool')
   const allowed = allowedTools ? new Set(allowedTools) : null
+  const permits = name => !allowed || allowed.has(name)
+  // Convenience tools must enforce the same policy as discovered MCP tools.
+  const scopedClient = {
+    callTool: async (name, args, options) => {
+      signal?.throwIfAborted()
+      if (!permits(name)) throw new Error('Tool excluded from this agent: ' + name)
+      return client.callTool(name, args, options)
+    },
+  }
+  const bootstrap = BOOTSTRAP.filter(tool => tool.name === 'discover_tools'
+    || (tool.name === 'observe_window' && permits('get_ui_tree'))
+    || (tool.name === 'wait_for_element' && permits('find_element')))
   const discovery = createToolDiscovery({ ...client, listTools: async () => (await client.listTools()).filter(t => !allowed || allowed.has(t.name)) })
   if(finalizeToolName&&!custom.has(finalizeToolName))throw new Error('Finalization tool must be registered')
   let finalized=false
@@ -75,13 +107,15 @@ ${extraInstructions}`
       }) }] }
     }
     if (name === 'wait_for_element') {
-      return waitForElement(client, {
+      if (!permits('find_element')) throw new Error('Tool excluded from this agent: find_element')
+      return waitForElement(scopedClient, {
         windowId: args.window_id, role: args.role, label: args.label,
         state: args.state, timeoutMs: args.timeout_ms, signal,
       })
     }
     if (name === 'observe_window') {
-      const observed = await client.callTool('get_ui_tree', { window_id: args.window_id }, { signal })
+      if (args.include_screenshot === true && !permits('screenshot')) throw new Error('Tool excluded from this agent: screenshot')
+      const observed = await scopedClient.callTool('get_ui_tree', { window_id: args.window_id }, { signal })
       if (observed.isError) return observed
       const text = observed.content.find(block => block.type === 'text')?.text
       const tree = compactAccessibilityTree(JSON.parse(text ?? 'null'), {
@@ -89,14 +123,14 @@ ${extraInstructions}`
       })
       const content = [{ type: 'text', text: JSON.stringify(tree) }]
       if (args.include_screenshot === true) {
-        const shot = await client.callTool('screenshot', { target_window_id: args.window_id }, { signal })
+        const shot = await scopedClient.callTool('screenshot', { target_window_id: args.window_id }, { signal })
         if (shot.isError) return shot
         content.push(...shot.content)
       }
       return { content }
     }
     if (!loaded.some(tool => tool.name === name)) throw new Error('Tool is not loaded; use discover_tools first')
-    return client.callTool(name, args, { signal })
+    return scopedClient.callTool(name, args, { signal })
   }
 
   for (let turn = 0; turn < maxTurns; turn++) {
@@ -107,7 +141,7 @@ ${extraInstructions}`
       reasoning: { effort: reasoningEffort }, max_output_tokens: maxOutputTokens,
       parallel_tool_calls: false,
       ...(finalized?{tool_choice:'none'}:finalizeToolName&&(turn>=maxTurns-4||usage.inputTokens+usage.outputTokens>maxTokens*.6)?{tool_choice:{type:'function',name:finalizeToolName}}:{}),
-      tools: [...BOOTSTRAP, ...customTools.map(t => t.schema), ...loaded.filter(t => !custom.has(t.name)).map(tool => ({
+      tools: [...bootstrap, ...customTools.map(t => t.schema), ...loaded.filter(t => !custom.has(t.name)).map(tool => ({
         type: 'function', name: tool.name, description: tool.description,
         parameters: tool.inputSchema, strict: false,
       }))],
@@ -139,9 +173,10 @@ ${extraInstructions}`
       }
       if(call.name===finalizeToolName&&!result.isError)finalized=true
       await onToolResult({ tool: call.name, args, result })
-      const content = toModelContent(result, reuseImages ? {
+      const projected = toModelContent(result, reuseImages ? {
         imageScope: JSON.stringify([call.name, args]), knownImageIds: [...knownImageIds],
       } : {})
+      const { content } = boundToolText({ content: projected }, maxToolTextChars)
       // Derive retained IDs only from actual images, never untrusted result text.
       if (reuseImages) for (const block of result.content) {
         if (block.type !== 'image') continue

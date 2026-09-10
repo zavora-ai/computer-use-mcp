@@ -69,8 +69,10 @@ node agents/openai-agent/showcase.mjs office --reasoning low
 The agent discovers Excel, Word and PowerPoint and produces a workbook with
 formulas and a chart, an executive memo, and a three-slide briefing from a shared
 four-region dataset. Outputs are `quarterly-review.xlsx`, `.docx` and `.pptx`.
-The Office recipe uses compact, tested AppleScript patterns and avoids loading
-large application dictionaries. With no `--output`, Office runs use a unique
+The Office recipe selects compact AppleScript guidance on macOS and
+PowerShell/COM guidance on Windows, avoiding large application dictionaries.
+It requires installed desktop Microsoft Office; this recipe does not implement
+LibreOffice automation on Linux and exits before calling the API there. With no `--output`, Office runs use a unique
 subdirectory of `~/Downloads/computer-use-showcases`; pass `--output` to choose a
 different root. The recipe instructs the model to read back totals and visually
 review files.
@@ -78,6 +80,23 @@ The runner checks file signatures; it does **not** claim those checks prove
 correct formulas, good layout, or consistent figures. Review the saved files and
 model observations. `scripts/test-office.mjs` separately exercises deterministic
 Office scripts and independently checks their OOXML contents on macOS.
+
+### Office setup and folder access
+
+Install and activate desktop Word, Excel and PowerPoint before running this
+recipe. On macOS, allow the host Accessibility, Screen Recording and Automation
+access as needed. Office may separately request access to the output folder,
+including a folder under Downloads. Complete that app-owned dialog for the
+intended folder; changing the output root does not guarantee permission.
+On Windows, use an interactive signed-in desktop with Office COM available.
+These are deployment prerequisites, not permissions the agent grants itself.
+
+The optional macOS `--office-preflight` performs a bounded disposable Excel save.
+It cannot prove Word/PowerPoint access. A timeout can leave its workbook or
+permission dialog open: inspect and close that scratch document before retrying.
+Every run gets a new directory, so a grant for a previous run may not apply to the
+next one. Inspect partial artifacts before retrying; never assume a timed-out
+application action was rolled back. Native Office automation is not sandboxed.
 
 ### Inspect desktop capabilities
 
@@ -90,8 +109,8 @@ app launch, screenshots, document reads and mutations.
 
 ## Evidence and limits
 
-Each run creates a unique directory under `showcase-output/` (override with
-`--output /path`). It contains:
+Each run creates a unique directory under `showcase-output/` (Office uses
+`~/Downloads/computer-use-showcases`; override the root with `--output /path`). It contains:
 
 - `report.json`: model, status, actual API usage and artifact checks.
 - `events.jsonl`: response IDs, tool names, errors and timestamps; no API keys or
@@ -113,9 +132,10 @@ The first bounded Office attempt on 2026-09-09 used 24 turns, a 200,000-token
 budget, 10 minutes and low reasoning. It stopped after 12 model calls at 222,340
 input tokens and 1,432 output tokens while an Excel `Grant File Access` dialog
 blocked the disposable output folder; no requested Office artifact was produced.
-The runner now performs a real bounded save preflight, detects a matching owned
-access dialog before model execution, and reports the exact blocked folder instead
-of burning model turns. It does not grant folders automatically. The recipe also
+An optional macOS save preflight (`--office-preflight`) detects a matching
+access dialog before model execution and reports the blocked folder. The default
+run does not create an extra workbook to probe permissions. It does not grant
+folders automatically. The recipe also
 specifies explicit USD number formatting to avoid locale-dependent currency and
 requires exactly three PowerPoint slides. This run remains an unsuccessful
 validation and is not counted as Office artifact evidence.
@@ -137,7 +157,12 @@ saved work before retrying an operation with an unknown outcome.
 
 The shared loop uses lazy MCP schemas, compact accessibility observations,
 multimodal function outputs, `previous_response_id`, serialized desktop writes,
-local waits, retained-image references and actual usage reporting. These HTTP
+local waits, retained-image references and actual usage reporting. The runner
+enforces the MCP allowlist for convenience observation/wait tools as well as
+discovered tools. Model-visible tool text is bounded to 24,000 characters per
+result (configurable with `runAgent({maxToolTextChars})`); omitted text is marked
+explicitly, and image blocks are preserved. Host hooks receive the original
+result for verification. This text bound is not a total context or billing cap. These HTTP
 examples do not implement Astra's optional WebSocket steering or async tools.
 Local desktop access and Office scripting are not sandboxed. Run native-app
 showcases in a disposable desktop when isolation is required. Studio calls are

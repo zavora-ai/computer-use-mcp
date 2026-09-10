@@ -4,7 +4,57 @@ import {mkdtempSync,writeFileSync,rmSync,symlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {parseOptions,artifactEvidence,defaultOutputForScenario,detectOwnedOfficeAccessPrompt,preflightOfficeOutput} from '../agents/openai-agent/showcase.mjs'
-import {runAgent} from '../agents/openai-agent/agent.mjs'
+import {runAgent,boundToolText} from '../agents/openai-agent/agent.mjs'
+import {RECIPES,officePlatformInstructions} from '../agents/openai-agent/recipes.mjs'
+
+test('Office recipe selects platform automation and makes save probing optional',()=>{
+ assert.match(RECIPES.office.task({output:'C:/output',platform:'win32'}),/PowerShell/)
+ assert.doesNotMatch(RECIPES.office.task({output:'C:/output',platform:'win32'}),/AppleScript/)
+ assert.match(officePlatformInstructions('darwin'),/AppleScript/)
+ assert.throws(()=>officePlatformInstructions('linux'),/does not implement LibreOffice/)
+ assert.equal(parseOptions(['office']).officePreflight,undefined)
+ assert.equal(parseOptions(['office','--office-preflight']).officePreflight,true)
+ assert.throws(()=>parseOptions(['inspect','--office-preflight']),/only for office/)
+})
+
+test('model text budgets span all blocks, retain images and disclose omitted evidence',()=>{
+ const picture={type:'image',data:'fixture',mimeType:'image/png'}
+ const result=boundToolText({isError:true,content:[{type:'text',text:'abcdef'},picture,{type:'text',text:'ghijkl'}]},8)
+ assert.equal(result.isError,true)
+ assert.equal(result.content[0].text,'abcdef')
+ assert.equal(result.content[1],picture)
+ assert.equal(result.content[2].text,'gh')
+ assert.equal(JSON.parse(result.content[3].text).omittedChars,4)
+})
+
+test('structured MCP results cannot bypass the model text budget',async()=>{
+ let turn=0;const requests=[]
+ await runAgent({task:'read',maxToolTextChars:256,
+  client:{listTools:async()=>[]},
+  customTools:[{schema:{type:'function',name:'read'},execute:async()=>({content:[],structuredContent:{large:'x'.repeat(20000)}})}],
+  openai:{responses:{create:async request=>{requests.push(request);return {id:'r'+turn,status:'completed',output:turn++===0?[{type:'function_call',name:'read',arguments:'{}',call_id:'c'}]:[{type:'message'}],output_text:'done'}}}},
+ })
+ const output=requests[1].input.find(i=>i.type==='function_call_output').output
+ assert.equal(output[0].text.length,256)
+ assert.equal(JSON.parse(output[1].text).toolOutputTruncated,true)
+})
+
+test('convenience tools cannot bypass the runner allowlist even with an unguarded MCP client',async()=>{
+ for(const call of [
+  {name:'observe_window',arguments:JSON.stringify({window_id:1})},
+  {name:'wait_for_element',arguments:JSON.stringify({window_id:1})},
+  {name:'observe_window',arguments:JSON.stringify({window_id:1,include_screenshot:true}),allowed:['get_ui_tree']},
+ ]) {
+  let turn=0;const dispatched=[];const requests=[]
+  await runAgent({task:'inspect',allowedTools:call.allowed??['list_windows'],
+   client:{listTools:async()=>[],callTool:async name=>{dispatched.push(name);return {content:[]}}},
+   openai:{responses:{create:async request=>{requests.push(request);return {id:'r'+turn,status:'completed',output:turn++===0?[{type:'function_call',name:call.name,arguments:call.arguments,call_id:'c'}]:[{type:'message'}],output_text:'done'}}}},
+  })
+  assert.deepEqual(dispatched,[])
+  assert.match(JSON.stringify(requests[1].input),/Tool excluded/)
+  if(!call.allowed)assert.ok(!requests[0].tools.some(t=>t.name===call.name))
+ }
+})
 import {mapLegacyOpenAiAction} from '../dist/session/openai-compat.js'
 import {OpenAiCompatibilityHandler} from '../dist/session/openai-handler.js'
 
