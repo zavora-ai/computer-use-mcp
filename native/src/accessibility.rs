@@ -11,22 +11,12 @@ mod platform {
         _window_id: u32,
         _max_depth: Option<u32>,
     ) -> napi::Result<serde_json::Value> {
-        Ok(serde_json::json!({
-            "role": "AXWindow",
-            "label": null,
-            "value": null,
-            "sensitive": false,
-            "sensitivitySignals": [],
-            "bounds": { "x": 0, "y": 0, "width": 0, "height": 0 },
-            "actions": [],
-            "children": [],
-            "truncated": true,
-        }))
+        Err(napi::Error::from_reason("Linux accessibility requires the MCP AT-SPI bridge (python3-gi + gir1.2-atspi-2.0)"))
     }
 
     #[napi]
     pub fn get_focused_element() -> napi::Result<serde_json::Value> {
-        Ok(serde_json::json!(null))
+        Err(napi::Error::from_reason("Focused accessibility lookup is unavailable on this Linux backend"))
     }
 
     #[napi]
@@ -37,7 +27,7 @@ mod platform {
         _value: Option<String>,
         _max_results: Option<u32>,
     ) -> napi::Result<serde_json::Value> {
-        Ok(serde_json::json!([]))
+        Err(napi::Error::from_reason("Linux accessibility requires the MCP AT-SPI bridge"))
     }
 
     #[napi]

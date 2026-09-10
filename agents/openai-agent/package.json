@@ -1,0 +1,11 @@
+{
+  "name": "computer-use-responses-showcase",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "paint": "node showcase.mjs paint --studio",
+    "office": "node showcase.mjs office",
+    "inspect": "node showcase.mjs inspect"
+  },
+  "dependencies": { "openai": "^6.0.0" }
+}

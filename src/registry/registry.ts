@@ -1,3 +1,4 @@
+import { issueApproval, useApproval } from '../approval-ledger.js'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import {
@@ -79,6 +80,7 @@ interface McpRequestState {
   argsHash: string
   clientRoots?: string[]
   approval?: true
+  approvalId?: string
 }
 
 class McpInputRequiredSignal extends Error {
@@ -152,6 +154,8 @@ export class ToolRegistry {
   readonly #registeredMeta = new Map<string, ToolMeta>()
   readonly #registeredTools = new Map<string, RegisteredTool>()
   readonly #options: ToolRegistryOptions
+  readonly #sessions = new WeakMap<ServerContext, Session>()
+  readonly #preflights = new WeakSet<ServerContext>()
   #activeProfile: ProfileName
 
   constructor(options: ToolRegistryOptions) {
@@ -219,6 +223,34 @@ export class ToolRegistry {
       throw new Error(`Unknown or disabled tool: ${name}`)
     }
     return registered.executor(args, context)
+  }
+
+  retainSession(): () => void { return this.#options.session.retain?.() ?? (() => {}) }
+
+  async resumeReadOnly(name: string, args: unknown, context: ServerContext, pending: InputRequiredResult, responses: Record<string, unknown>) {
+    if (this.getMeta(name)?.mutates !== false || !pending.requestState || !this.#options.requestStateCodec) throw new Error('No safe read-only continuation')
+    const state = await this.#options.requestStateCodec.verify(pending.requestState, context)
+    const resumed = { ...context, mcpReq: { ...context.mcpReq, inputResponses: responses as any,
+      requestState: <T>() => state as T } }
+    return this.executeRegistered(name, args, resumed)
+  }
+
+  async authorizeExtension(name: string, args: Record<string, unknown>, context: ServerContext): Promise<void> {
+    await this.#options.authorizeToolCall?.({ definition: { name, description: name, inputSchema: {}, meta: TOOL_CATALOG.openai_computer },
+      args, ...(context.http?.authInfo ? { authInfo: context.http.authInfo } : {}) })
+  }
+
+  async executeInSession(name: string, args: unknown, context: ServerContext, session: Session, preflight = false) {
+    this.#sessions.set(context, session)
+    try { return await (preflight ? this.preflight(name, args, context) : this.executeRegistered(name, args, context)) }
+    finally { this.#sessions.delete(context) }
+  }
+
+  /** Validate schema, host authority, roots and policy without executing the operation. */
+  async preflight(name: string, args: unknown, context: ServerContext): Promise<CallToolResult | InputRequiredResult> {
+    this.#preflights.add(context)
+    try { return await this.executeRegistered(name, args, context) }
+    finally { this.#preflights.delete(context) }
   }
 
   assertComplete(): void {
@@ -295,7 +327,8 @@ export class ToolRegistry {
             }
           }
 
-          const requestContext: SessionRequestContext = {}
+          const preflight = this.#preflights.has(extra)
+          const requestContext: SessionRequestContext = { preflight }
           if (capabilities && definition.name === 'filesystem'
             && capabilities.roots && typeof capabilities.roots === 'object') {
             let clientRoots = validState?.clientRoots
@@ -332,6 +365,7 @@ export class ToolRegistry {
                 return response.action === 'accept'
                   && response.content?.approve === true
                   && validState?.approval === true
+                  && useApproval(validState.approvalId, preflight)
               }
               const elicitation = capabilities.elicitation
               const supportsForm = elicitation && typeof elicitation === 'object'
@@ -344,6 +378,7 @@ export class ToolRegistry {
                 argsHash: hash,
                 ...(requestContext.clientRoots ? { clientRoots: [...requestContext.clientRoots] } : {}),
                 approval: true,
+                approvalId: issueApproval(),
               }, extra)
               throw new McpInputRequiredSignal(inputRequired({
                 inputRequests: {
@@ -401,9 +436,15 @@ export class ToolRegistry {
           const startedAt = Date.now()
           let result: ToolResult
           try {
+            if (preflight) {
+              const selected = this.#sessions.get(extra) ?? this.#options.session
+              return selected.preflight
+                ? toMcpToolResult(await selected.preflight(definition.name, args, extra.mcpReq.signal, requestContext), false)
+                : { content: [{ type: 'text', text: JSON.stringify({ authorized: true, clientRoots: requestContext.clientRoots }) }] }
+            }
             result = definition.handler
               ? await definition.handler(args, extra.mcpReq.signal, onProgress)
-              : await this.#options.session.dispatch(
+              : await (this.#sessions.get(extra) ?? this.#options.session).dispatch(
                   definition.name,
                   args,
                   extra.mcpReq.signal,

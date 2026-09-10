@@ -218,8 +218,8 @@ export interface NativeModule {
   hideApp(bundleId: string): boolean
   unhideApp(bundleId: string): boolean
   // Display
-  getDisplaySize(displayId?: number): { width: number; height: number; pixelWidth: number; pixelHeight: number; scaleFactor: number; displayId: number }
-  listDisplays(): Array<{ width: number; height: number; scaleFactor: number; displayId: number }>
+  getDisplaySize(displayId?: number): { x?: number; y?: number; width: number; height: number; pixelWidth: number; pixelHeight: number; scaleFactor: number; displayId: number }
+  listDisplays(): Array<{ x?: number; y?: number; width: number; height: number; scaleFactor: number; displayId: number }>
   // Screenshot
   takeScreenshot(width?: number, targetApp?: string, quality?: number, previousHash?: string, windowId?: number): {
     base64?: string

@@ -16,7 +16,7 @@ export interface LegacyOpenAiMappedAction {
 function numberFrom(action: Record<string, unknown>, keys: string[]): number | undefined {
   for (const key of keys) {
     const value = action[key]
-    if (typeof value === 'number') return value
+    if (typeof value === 'number') { if (!Number.isFinite(value)) throw new Error('Action numbers must be finite'); return value }
   }
   return undefined
 }
@@ -24,7 +24,7 @@ function numberFrom(action: Record<string, unknown>, keys: string[]): number | u
 function coordinateFrom(action: Record<string, unknown>): [number, number] {
   const value = action.coordinate ?? action.coordinates ?? action.pos ?? action.position
   if (Array.isArray(value) && value.length >= 2
-    && typeof value[0] === 'number' && typeof value[1] === 'number') {
+    && Number.isFinite(value[0]) && Number.isFinite(value[1])) {
     return [value[0], value[1]]
   }
   const x = numberFrom(action, ['x'])
@@ -53,6 +53,9 @@ export function mapLegacyOpenAiAction(
 ): LegacyOpenAiMappedAction {
   const actionType = String(action.type ?? action.action ?? '').toLowerCase()
   const common = options.common
+  if (!['key', 'keypress'].includes(actionType) && action.keys !== undefined) {
+    if (!Array.isArray(action.keys) || action.keys.length) throw new Error('Modifier mouse actions are unsupported by this native adapter; use the browser backend')
+  }
   switch (actionType) {
     case 'screenshot':
       return {
@@ -62,12 +65,18 @@ export function mapLegacyOpenAiAction(
           ...(options.width === undefined ? {} : { width: options.width }),
           ...(options.quality === undefined ? {} : { quality: options.quality }),
           ...(options.provider === undefined ? {} : { provider: options.provider }),
+          ...(common.target_app === undefined ? {} : { target_app: common.target_app }),
+          ...(common.target_window_id === undefined ? {} : { target_window_id: common.target_window_id }),
           show_agent_pointer: action.show_agent_pointer === true || options.useVirtualPointer,
         },
       }
     case 'click':
-    case 'left_click':
-      return { actionType, tool: 'left_click', args: { coordinate: coordinateFrom(action), ...common } }
+    case 'left_click': {
+      const button = action.button ?? 'left'
+      const tool = ({ left: 'left_click', right: 'right_click', wheel: 'middle_click', middle: 'middle_click' } as Record<string, string>)[String(button)]
+      if (!tool) throw new Error(`Unsupported mouse button: ${button}`)
+      return { actionType, tool, args: { coordinate: coordinateFrom(action), ...common } }
+    }
     case 'double_click':
       return { actionType, tool: 'double_click', args: { coordinate: coordinateFrom(action), ...common } }
     case 'right_click':
@@ -89,31 +98,12 @@ export function mapLegacyOpenAiAction(
       }
     }
     case 'drag': {
-      const path = action.path
-      if (Array.isArray(path) && path.length >= 2) {
-        const first = path[0]
-        const last = path[path.length - 1]
-        if (!Array.isArray(first) || !Array.isArray(last)
-          || typeof first[0] !== 'number' || typeof first[1] !== 'number'
-          || typeof last[0] !== 'number' || typeof last[1] !== 'number') {
-          throw new Error('drag path must contain [x,y] points')
-        }
-        return {
-          actionType, tool: 'left_click_drag',
-          args: { start_coordinate: [first[0], first[1]], coordinate: [last[0], last[1]], ...common },
-        }
-      }
-      const start = action.start_coordinate ?? action.start
-      const end = action.coordinate ?? action.end
-      if (!Array.isArray(start) || !Array.isArray(end)
-        || typeof start[0] !== 'number' || typeof start[1] !== 'number'
-        || typeof end[0] !== 'number' || typeof end[1] !== 'number') {
-        throw new Error('drag requires path[] or start/end coordinates')
-      }
-      return {
-        actionType, tool: 'left_click_drag',
-        args: { start_coordinate: [start[0], start[1]], coordinate: [end[0], end[1]], ...common },
-      }
+      const raw = action.path ?? [action.start_coordinate ?? action.start, action.coordinate ?? action.end]
+      if (!Array.isArray(raw) || raw.length < 2 || raw.length > 1000) throw new Error('drag requires 2..1000 points')
+      const path = raw.map(point => coordinateFrom(Array.isArray(point) ? { coordinate: point } : point ?? {}))
+      return { actionType, tool: 'left_click_drag', args: {
+        start_coordinate: path[0], coordinate: path.at(-1), path, ...common,
+      } }
     }
     case 'scroll': {
       const [x, y] = coordinateFrom(action)
@@ -124,18 +114,30 @@ export function mapLegacyOpenAiAction(
         : Math.abs(dx ?? 0) > Math.abs(dy ?? 0)
           ? ((dx ?? 0) > 0 ? 'right' : 'left')
           : ((dy ?? 0) > 0 ? 'down' : 'up')
-      const amount = Math.max(1, Math.round(Math.abs(dx ?? dy ?? numberFrom(action, ['amount']) ?? 3)))
-      return { actionType, tool: 'scroll', args: { coordinate: [x, y], direction, amount, ...common } }
+      // Native scrolling is line-based: API pixel deltas use 100 pixels per line.
+      const lines = (delta: number) => delta === 0 ? 0 : Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / 100))
+      const amount = numberFrom(action, ['amount']) ?? 3
+      if (amount < 0 || amount > 10000) throw new Error('scroll amount out of range')
+      if (!['left', 'right', 'up', 'down'].includes(direction)) throw new Error('invalid scroll direction')
+      return { actionType, tool: 'scroll', args: { coordinate: [x, y], direction, amount,
+        ...(dx !== undefined || dy !== undefined ? { delta_x: lines(dx ?? 0), delta_y: lines(dy ?? 0) } : {}), ...common } }
     }
     case 'type':
+      if (typeof action.text !== 'string') throw new Error('type requires text')
       return {
         actionType, tool: 'type',
-        args: { text: typeof action.text === 'string' ? action.text : '', ...common },
+        args: {
+          text: action.text,
+          ...(action.clear === true ? { clear: true } : {}),
+          ...(action.press_enter === true ? { press_enter: true } : {}),
+          ...common,
+        },
       }
     case 'keypress':
     case 'key':
       return { actionType, tool: 'key', args: { text: keypressText(action), ...common } }
     case 'wait':
+      if ((numberFrom(action, ['duration', 'seconds', 'time']) ?? 1) < 0 || (numberFrom(action, ['duration', 'seconds', 'time']) ?? 1) > 120) throw new Error('wait duration must be 0..120 seconds')
       return {
         actionType, tool: 'wait',
         args: { duration: numberFrom(action, ['duration', 'seconds', 'time']) ?? 1 },

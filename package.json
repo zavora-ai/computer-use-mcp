@@ -1,7 +1,7 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "7.1.0",
-  "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) — screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
+  "version": "7.2.0",
+  "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) \u2014 screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
   "homepage": "https://github.com/zavora-ai/computer-use-mcp#readme",
@@ -57,6 +57,46 @@
     "./host-native": {
       "import": "./dist/native.js",
       "types": "./dist/native.d.ts"
+    },
+    "./task-store": {
+      "import": "./dist/task-store.js",
+      "types": "./dist/task-store.d.ts"
+    },
+    "./desktop-broker": {
+      "import": "./dist/desktop-broker.js",
+      "types": "./dist/desktop-broker.d.ts"
+    },
+    "./browser": {
+      "import": "./dist/browser.js",
+      "types": "./dist/browser.d.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime.js",
+      "types": "./dist/runtime.d.ts"
+    },
+    "./supervisor": {
+      "import": "./dist/supervisor.js",
+      "types": "./dist/supervisor.d.ts"
+    },
+    "./evaluation": {
+      "import": "./dist/evaluation.js",
+      "types": "./dist/evaluation.d.ts"
+    },
+    "./mcp-tasks": {
+      "import": "./dist/mcp-tasks.js",
+      "types": "./dist/mcp-tasks.d.ts"
+    },
+    "./isolated-worker": {
+      "import": "./dist/isolated-worker.js",
+      "types": "./dist/isolated-worker.d.ts"
+    },
+    "./task-client": {
+      "import": "./dist/task-client.js",
+      "types": "./dist/task-client.d.ts"
+    },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
     }
   },
   "files": [
@@ -110,7 +150,43 @@
     "scripts/verify-input-attribution.mjs",
     "dist/tool-catalog.d.ts",
     "dist/tool-catalog.js",
-    "skills"
+    "skills",
+    "dist/authority.js",
+    "dist/authority.d.ts",
+    "dist/approval-ledger.js",
+    "dist/approval-ledger.d.ts",
+    "dist/task-store.js",
+    "dist/task-store.d.ts",
+    "dist/desktop-broker.js",
+    "dist/desktop-broker.d.ts",
+    "dist/strategy.js",
+    "dist/strategy.d.ts",
+    "dist/session-console.js",
+    "dist/session-console.d.ts",
+    "dist/browser.js",
+    "dist/browser.d.ts",
+    "dist/browser-tools.js",
+    "dist/browser-tools.d.ts",
+    "dist/runtime.js",
+    "dist/runtime.d.ts",
+    "dist/runtime-worker.js",
+    "dist/runtime-worker.d.ts",
+    "dist/supervisor.js",
+    "dist/supervisor.d.ts",
+    "dist/supervisor-worker.js",
+    "dist/supervisor-worker.d.ts",
+    "dist/evaluation.js",
+    "dist/evaluation.d.ts",
+    "libexec",
+    "docs/STRATEGY.md",
+    "dist/isolated-worker.js",
+    "dist/isolated-worker.d.ts",
+    "dist/task-client.js",
+    "dist/task-client.d.ts",
+    "workers",
+    "docs/releases/v7.2.0.md",
+    "docs/assets/architecture.svg",
+    "docs/assets/astra-painting.png"
   ],
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",
@@ -123,10 +199,12 @@
     "test": "npm run build:ts && node --test test/*.test.mjs",
     "test:input-attribution": "node scripts/verify-input-attribution.mjs",
     "measure:efficiency": "npm run build:ts && node scripts/measure-efficiency.mjs",
-    "smoke": "npm run build && node scripts/test-v5-smoke.mjs",
+    "smoke": "npm run build:ts && node scripts/smoke.mjs",
     "prepublishOnly": "npm run build",
     "server": "tsx src/server.ts",
-    "demo": "tsx examples/demo.ts"
+    "test:strategy": "npm run build:ts && node --test test/strategy*.test.mjs test/runtime.test.mjs test/session-console.test.mjs",
+    "test:browser": "npm run build:ts && node scripts/test-browser.mjs",
+    "evaluate:strategy": "npm run build:ts && node scripts/evaluate-strategy.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
@@ -140,5 +218,8 @@
     "fast-check": "^4.7.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.63.0"
   }
 }

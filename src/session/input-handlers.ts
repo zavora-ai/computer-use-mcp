@@ -95,25 +95,20 @@ export class InputHandler {
       const resolved = target()
       await focus(resolved)
       const to = coordinate()
-      const from = args.start_coordinate ? coordinate('start_coordinate') : undefined
-      if (from) { this.#native.mouseMove(from[0], from[1]); await this.#sleep(50) }
-      this.#native.mouseButton('press', from?.[0] ?? to[0], from?.[1] ?? to[1])
+      const from = args.start_coordinate ? coordinate('start_coordinate') : to
+      const path = Array.isArray(args.path) ? args.path as [number, number][] : [from, to]
+      for (const [x, y] of path) this.#validateCoordinates(x, y)
+      this.#native.mouseMove(from[0], from[1])
       await this.#sleep(50)
-      const startX = from?.[0] ?? to[0]
-      const startY = from?.[1] ?? to[1]
-      const distance = Math.hypot(to[0] - startX, to[1] - startY)
-      const frames = Math.max(Math.floor(Math.min(distance / 2, 500) / 16), 1)
-      for (let index = 1; index <= frames; index++) {
-        const progress = index / frames
-        const eased = 1 - Math.pow(1 - progress, 3)
-        this.#native.mouseDrag(
-          Math.round(startX + (to[0] - startX) * eased),
-          Math.round(startY + (to[1] - startY) * eased),
-        )
-        if (index < frames) await this.#sleep(16)
-      }
-      await this.#sleep(50)
-      this.#native.mouseButton('release', to[0], to[1])
+      signal?.throwIfAborted()
+      this.#native.mouseButton('press', from[0], from[1])
+      try {
+        for (const [x, y] of path.slice(1)) {
+          signal?.throwIfAborted()
+          this.#native.mouseDrag(x, y)
+          await this.#sleep(16)
+        }
+      } finally { this.#native.mouseButton('release', to[0], to[1]) }
       this.#targets.trackClick(resolved)
       return ok(`Dragged to (${to[0]}, ${to[1]})`)
     }
@@ -140,8 +135,8 @@ export class InputHandler {
       const amount = number('amount', 3)
       this.#native.mouseMove(x, y)
       await this.#sleep(15)
-      const deltaX = direction === 'left' ? -amount : direction === 'right' ? amount : 0
-      const deltaY = direction === 'up' ? -amount : direction === 'down' ? amount : 0
+      const deltaX = typeof args.delta_x === 'number' ? args.delta_x : direction === 'left' ? -amount : direction === 'right' ? amount : 0
+      const deltaY = typeof args.delta_y === 'number' ? args.delta_y : direction === 'up' ? -amount : direction === 'down' ? amount : 0
       this.#native.mouseScroll(deltaY, deltaX)
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
       return ok(`Scrolled ${direction} ${amount}`)
@@ -253,13 +248,13 @@ export class InputHandler {
   }
 
   #validateCoordinates(x: number, y: number): void {
-    const display = this.#native.getDisplaySize()
-    if (x < 0 || y < 0 || x >= display.width || y >= display.height) {
-      throw new Error(
-        `Coordinates (${x}, ${y}) are outside display bounds (${display.width}x${display.height}). `
-        + `Valid range: x=[0, ${display.width - 1}], y=[0, ${display.height - 1}].`,
-      )
-    }
+    const available = this.#native.listDisplays?.()
+    const displays = available?.length ? available : [this.#native.getDisplaySize()]
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !displays.some(display => {
+      const originX = display.x ?? 0, originY = display.y ?? 0
+      return x >= originX && y >= originY && x < originX + display.width && y < originY + display.height
+    })) throw new Error(`Coordinates (${x}, ${y}) are outside display bounds`)
+
   }
 
   async #pasteText(text: string): Promise<void> {

@@ -1,3 +1,7 @@
+import { principalKey } from './authority.js'
+import { getToolMeta } from './tool-catalog.js'
+import type { ToolRegistryOptions } from './registry/registry.js'
+import type { TaskStore } from './task-store.js'
 import { randomBytes } from 'node:crypto'
 import {
   CLIENT_CAPABILITIES_META_KEY,
@@ -26,6 +30,8 @@ type TaskStatus = 'working' | 'input_required' | 'completed' | 'cancelled' | 'fa
 interface TaskRecord {
   taskId: string
   tool: string
+  args?: Record<string, unknown>
+  scopes?: string[]
   status: TaskStatus
   statusMessage?: string
   createdAt: string
@@ -37,10 +43,13 @@ interface TaskRecord {
   rateOwner: string
   authenticatedOwner?: string
   controller: AbortController
+  releaseSession?: () => void
   result?: CallToolResult
   error?: { code: number; message: string; data?: unknown }
   inputRequests?: Record<string, unknown>
   answeredKeys: Set<string>
+  responses?: Record<string, unknown>
+  resume?: (responses: Record<string, unknown>, client: TaskClientIdentity) => void
 }
 
 const GetTaskParams = z.object({ taskId: z.string().min(16) })
@@ -53,7 +62,7 @@ const TASK_METHODS = new Set(['tasks/get', 'tasks/update', 'tasks/cancel'])
 
 interface TaskClientIdentity {
   envelope?: Record<string, unknown>
-  authInfo?: { clientId: string }
+  authInfo?: Parameters<typeof principalKey>[0]
 }
 
 function clientIdentity(ctx: ServerContext): TaskClientIdentity {
@@ -80,8 +89,7 @@ function hasTasksCapability(client: TaskClientIdentity): boolean {
 }
 
 function authenticatedOwner(client: TaskClientIdentity): string | undefined {
-  if (client.authInfo?.clientId) return `oauth:${client.authInfo.clientId}`
-  return undefined
+  return principalKey(client.authInfo)
 }
 
 function displayClient(client: TaskClientIdentity): string {
@@ -111,19 +119,58 @@ export class McpTaskManager {
   readonly #maxConcurrentPerOwner: number
   readonly #ttlMs: number
   readonly #pollIntervalMs: number
+  readonly #store?: TaskStore
+  readonly #maxTasks: number
+  readonly #maxResultBytes: number
+  readonly #expiry: NodeJS.Timeout
+  #closed = false
 
-  constructor(options: { maxConcurrentPerOwner?: number; ttlMs?: number; pollIntervalMs?: number } = {}) {
+  constructor(options: { maxConcurrentPerOwner?: number; ttlMs?: number; pollIntervalMs?: number; store?: TaskStore; maxTasks?: number; maxResultBytes?: number } = {}) {
     this.#maxConcurrentPerOwner = options.maxConcurrentPerOwner ?? 16
     this.#ttlMs = options.ttlMs ?? 60 * 60 * 1_000
     this.#pollIntervalMs = options.pollIntervalMs ?? 1_000
+    this.#store = options.store
+    this.#maxTasks = options.maxTasks ?? 256
+    this.#maxResultBytes = options.maxResultBytes ?? 4_194_304
+    for (const value of [this.#maxConcurrentPerOwner, this.#ttlMs, this.#pollIntervalMs, this.#maxTasks, this.#maxResultBytes]) {
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error('Task limits must be positive integers')
+    }
+    for (const saved of this.#store?.load() ?? []) {
+      if (this.#tasks.size >= this.#maxTasks) throw new Error('Persisted task count exceeds limit')
+      const task = { ...saved, controller: new AbortController(), answeredKeys: new Set<string>() } as unknown as TaskRecord
+      if (!['completed', 'cancelled', 'failed'].includes(task.status)) {
+        task.status = 'failed'
+        task.error = { code: ProtocolErrorCode.InternalError, message: 'Worker restarted; operation was interrupted. Verify state before retrying.' }
+      }
+      this.#tasks.set(task.taskId, task)
+      this.#persist(task)
+    }
+    this.#purgeExpired()
+    this.#expiry = setInterval(() => this.#purgeExpired(), Math.min(this.#ttlMs, 30_000))
+    this.#expiry.unref()
   }
 
-  install(server: McpServer, registry: ToolRegistry): void {
+  close(): void {
+    this.#closed = true
+    clearInterval(this.#expiry)
+    for (const task of this.#tasks.values()) this.#cancel(task)
+  }
+
+  #persist(task: TaskRecord): void {
+    const { controller, answeredKeys, resume, releaseSession, ...record } = task
+    this.#store?.save(task.taskId, record)
+
+  }
+
+  install(server: McpServer, registry: ToolRegistry, extensions = new Map<string, (args: unknown, ctx: ServerContext) => Promise<any>>()): void {
     server.server.setRequestHandler('tools/call', async (request, ctx) => {
       const args = (request.params.arguments ?? {}) as Record<string, unknown>
+      if (extensions.has(request.params.name)) return extensions.get(request.params.name)!(args, ctx)
       if (!hasTasksCapability(clientIdentity(ctx)) || !shouldCreateTask(request.params.name, args)) {
         return registry.executeRegistered(request.params.name, args, ctx)
       }
+      const prepared = await registry.preflight(request.params.name, args, ctx)
+      if (isInputRequiredResult(prepared) || prepared.isError) return prepared
       return this.#create(request.params.name, args, ctx, registry)
     })
   }
@@ -133,8 +180,16 @@ export class McpTaskManager {
    * core codec intentionally has no Tasks extension runtime yet, so serving
    * entries invoke this narrow bridge before core dispatch.
    */
-  handleProtocolRequest(method: string, params: unknown, client: TaskClientIdentity): Record<string, unknown> {
+  async handleProtocolRequest(method: string, params: unknown, client: TaskClientIdentity,
+    authorize?: ToolRegistryOptions['authorizeToolCall']): Promise<Record<string, unknown>> {
     this.#requireCapability(client)
+    const selected = GetTaskParams.parse(params).taskId
+    const record = this.#get(selected, client)
+    if (method !== 'tasks/cancel') {
+      if (record.scopes?.some(scope => !client.authInfo?.scopes?.includes(scope))) throw new Error('Task authority revoked')
+      await authorize?.({ definition: { name: record.tool, description: record.tool, inputSchema: {}, meta: getToolMeta(record.tool)! },
+        args: record.args ?? {}, ...(client.authInfo ? { authInfo: client.authInfo as any } : {}) })
+    }
     if (method === 'tasks/get') {
       const { taskId: selected } = GetTaskParams.parse(params)
       return { resultType: 'complete', ...this.#view(this.#get(selected, client)) }
@@ -142,7 +197,7 @@ export class McpTaskManager {
     if (method === 'tasks/update') {
       const { taskId: selected, inputResponses } = UpdateTaskParams.parse(params)
       const task = this.#get(selected, client)
-      this.#applyInputResponses(task, inputResponses)
+      this.#applyInputResponses(task, inputResponses, client)
       return { resultType: 'complete' }
     }
     if (method === 'tasks/cancel') {
@@ -154,10 +209,12 @@ export class McpTaskManager {
   }
 
   #create(tool: string, args: Record<string, unknown>, ctx: ServerContext, registry: ToolRegistry) {
+    if (this.#closed) throw new Error('Task manager closed')
     this.#purgeExpired()
+    if (this.#tasks.size >= this.#maxTasks) throw new Error('Task retention limit reached')
     const client = clientIdentity(ctx)
     const owner = authenticatedOwner(client)
-    const ownerLabel = owner ?? `client:${displayClient(client)}`
+    const ownerLabel = owner ?? 'anonymous'
     const concurrent = [...this.#tasks.values()].filter(task =>
       task.rateOwner === ownerLabel
       && (task.status === 'working' || task.status === 'input_required'),
@@ -170,6 +227,8 @@ export class McpTaskManager {
     const record: TaskRecord = {
       taskId: taskId(),
       tool,
+      args: structuredClone(args),
+      scopes: client.authInfo?.scopes ?? [],
       status: 'working',
       statusMessage: `Running ${tool}`,
       createdAt,
@@ -180,8 +239,10 @@ export class McpTaskManager {
       rateOwner: ownerLabel,
       ...(owner ? { authenticatedOwner: owner } : {}),
       controller: new AbortController(),
+      releaseSession: registry.retainSession(),
       answeredKeys: new Set(),
     }
+    try { this.#persist(record) } catch (error) { record.releaseSession?.(); throw error }
     this.#tasks.set(record.taskId, record)
 
     const taskContext: ServerContext = {
@@ -189,28 +250,37 @@ export class McpTaskManager {
       mcpReq: {
         ...ctx.mcpReq,
         _meta: undefined,
-        inputResponses: undefined,
+        inputResponses: ctx.mcpReq.inputResponses,
         droppedInputResponseKeys: undefined,
-        requestState: () => undefined,
+        requestState: ctx.mcpReq.requestState.bind(ctx.mcpReq),
         signal: record.controller.signal,
         notify: async () => {},
         log: async () => {},
       },
     }
-    void registry.executeRegistered(tool, args, taskContext).then(result => {
-      if (record.status === 'cancelled') return
+    const run = (pending: Promise<CallToolResult | InputRequiredResult>) => { void pending.then(result => {
+      if (record.status === 'cancelled' || this.#closed) return
       if (isInputRequiredResult(result)) {
         record.status = 'input_required'
         record.statusMessage = 'Additional client input is required.'
         record.inputRequests = result.inputRequests as Record<string, unknown>
+        record.responses = {}; record.answeredKeys.clear()
+        record.resume = (responses, identity) => {
+          const context = { ...taskContext, ...(identity.authInfo && taskContext.http ? { http: { ...taskContext.http, authInfo: identity.authInfo as any } } : {}) }
+          run(registry.resumeReadOnly(tool, args, context, result, responses))
+        }
       } else {
         record.status = 'completed'
         record.statusMessage = result.isError ? `${tool} completed with a tool error.` : `${tool} completed.`
+        if (Buffer.byteLength(JSON.stringify(result)) > this.#maxResultBytes) throw new Error('Task result exceeds configured byte limit')
         record.result = result
+        record.releaseSession?.(); record.releaseSession = undefined
       }
       record.lastUpdatedAt = nowIso()
+      this.#persist(record)
     }).catch(error => {
-      if (record.status === 'cancelled') return
+      if (record.status === 'cancelled' || this.#closed) return
+      record.releaseSession?.(); record.releaseSession = undefined
       record.status = 'failed'
       record.statusMessage = error instanceof Error ? error.message : String(error)
       record.error = {
@@ -218,7 +288,11 @@ export class McpTaskManager {
         message: record.statusMessage,
       }
       record.lastUpdatedAt = nowIso()
+      this.#persist(record)
     })
+
+    }
+    run(registry.executeRegistered(tool, args, taskContext))
 
     // `content` is an allowed extension member needed by the current SDK's
     // tools/call validator; `resultType: task` remains the wire discriminator.
@@ -263,29 +337,45 @@ export class McpTaskManager {
   #purgeExpired(): void {
     const now = Date.now()
     for (const [id, task] of this.#tasks) {
-      if (task.expiresAt <= now) this.#tasks.delete(id)
+      if (task.expiresAt <= now) { task.controller.abort(new Error('Task expired')); task.releaseSession?.(); task.releaseSession = undefined; task.status = 'cancelled'; this.#tasks.delete(id); this.#store?.delete(id) }
     }
   }
 
-  #applyInputResponses(task: TaskRecord, inputResponses: Record<string, unknown>): void {
+  #applyInputResponses(task: TaskRecord, inputResponses: Record<string, unknown>, client: TaskClientIdentity): void {
     if (task.status !== 'input_required' || !task.inputRequests) return
-    for (const key of Object.keys(inputResponses)) {
-      if (key in task.inputRequests) task.answeredKeys.add(key)
+    for (const [key, value] of Object.entries(inputResponses)) {
+      if (!(key in task.inputRequests)) throw new Error('Unknown task input key')
+      if (!value || typeof value !== 'object') throw new Error('Invalid task input')
+      const response = value as Record<string, unknown>
+      const request = task.inputRequests[key] as { method?: string }
+      if (request.method === 'elicitation/create') {
+        if (!['accept', 'decline', 'cancel'].includes(String(response.action))) throw new Error('Invalid elicitation action')
+        if (response.action === 'accept' && (typeof response.content !== 'object' || typeof (response.content as any)?.approve !== 'boolean')) throw new Error('Approval requires a boolean decision')
+      } else if (request.method === 'roots/list') {
+        if (!Array.isArray(response.roots) || response.roots.some(root => !root || typeof root.uri !== 'string')) throw new Error('Invalid roots response')
+      } else throw new Error('Unsupported continuation input')
+      if (task.answeredKeys.has(key) && JSON.stringify(task.responses?.[key]) !== JSON.stringify(value)) throw new Error('Conflicting duplicate response')
+      task.answeredKeys.add(key)
+      ;(task.responses ??= {})[key] = value
     }
+    this.#persist(task)
     if (Object.keys(task.inputRequests).every(key => task.answeredKeys.has(key))) {
-      task.status = 'failed'
-      task.statusMessage = 'This computer-use task cannot resume embedded input; approval is resolved before task creation.'
-      task.error = { code: ProtocolErrorCode.InternalError, message: task.statusMessage }
-      task.lastUpdatedAt = nowIso()
+      const resume = task.resume
+      if (!resume) throw new Error('Continuation unavailable; verify state before starting a fresh task')
+      task.resume = undefined; task.status = 'working'; task.lastUpdatedAt = nowIso()
+      this.#persist(task)
+      resume(task.responses ?? {}, client)
     }
   }
 
   #cancel(task: TaskRecord): void {
     if (['completed', 'failed', 'cancelled'].includes(task.status)) return
     task.controller.abort(new Error('Task cancelled by MCP client'))
+    task.releaseSession?.(); task.releaseSession = undefined
     task.status = 'cancelled'
     task.statusMessage = 'Cancellation requested by client.'
     task.lastUpdatedAt = nowIso()
+    this.#persist(task)
   }
 }
 
@@ -337,7 +427,7 @@ export class TasksExtensionTransport implements Transport {
             ...result,
             _meta: {
               'io.modelcontextprotocol/serverInfo': {
-                name: 'computer-use', title: 'Computer Use MCP', version: '7.1.0',
+                name: 'computer-use', title: 'Computer Use MCP', version: '7.2.0',
                 description: 'Cross-platform desktop control with policy-aware automation.',
                 websiteUrl: 'https://github.com/zavora-ai/computer-use-mcp',
               },

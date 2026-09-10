@@ -7,6 +7,8 @@
  * All runs in-process via NAPI — no child processes, no focus stealing.
  */
 
+import { discoverApplications } from './session/application-discovery.js'
+import { okJson } from './result.js'
 import { loadNative, type NativeModule } from './native.js'
 import { MUTATING_TOOLS } from './tool-catalog.js'
 import { sleep, sleepAbortable, defaultSpawnBounded } from './session/spawn.js'
@@ -15,6 +17,7 @@ import { FocusError, WindowNotFoundError } from './session/errors.js'
 import type { FocusFailure } from './session/errors.js'
 import {
   createLockPumpController,
+  coordinateDesktop,
   DEFAULT_SESSION_LOCK_PATH,
   LockError,
 } from './session/lock.js'
@@ -25,6 +28,7 @@ import { VirtualPointerController } from './session/virtual-pointer.js'
 import { runDoctor as runDoctorService } from './session/doctor.js'
 import { handleAdminTool } from './session/admin-handlers.js'
 import { handleWindowTool } from './session/window-handlers.js'
+import { handleLinuxAccessibility } from './session/linux-atspi.js'
 import { handleAccessibilityTool } from './session/accessibility-handlers.js'
 import { SpacesHandler } from './session/spaces-handlers.js'
 import { ScreenshotHandler } from './session/screenshot-handlers.js'
@@ -57,6 +61,10 @@ export type {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Session {
+  close?(): void
+  retain?(): () => void
+  preflight?(tool: string, args: Record<string, unknown>, signal?: AbortSignal, context?: SessionRequestContext): Promise<ToolResult>
+
   dispatch(
     tool: string,
     args: Record<string, unknown>,
@@ -65,7 +73,7 @@ export interface Session {
     requestContext?: SessionRequestContext,
   ): Promise<ToolResult>
   /** Last screenshot from this session, if any (for cache-only resource; K15). */
-  getLastScreenshot?(): { mimeType: string; data: string; capturedAt: number } | undefined
+  getLastScreenshot?(): { mimeType: string; data: string; capturedAt: number; targetArgs?: Record<string, unknown> } | undefined
 }
 
 export type ElicitApproval = (ctx: {
@@ -78,6 +86,9 @@ export type ElicitApproval = (ctx: {
 
 /** Per-call authority supplied by the negotiated MCP request context. */
 export interface SessionRequestContext {
+  /** Host-only authorization probe; never accepted from tool arguments. */
+  preflight?: boolean
+
   clientRoots?: readonly string[]
   elicitApproval?: ElicitApproval
 }
@@ -168,22 +179,14 @@ export function createSession(opts: SessionOptions = {}): Session {
       : {}),
   })
 
-  // Best-effort cleanup if Node exits while a lock is held (SIGINT, SIGTERM,
-  // uncaughtException). We force-release to drop the lockfile; a new session
-  // started afterwards will see EEXIST and fall into the stale-PID recovery
-  // path anyway, so this is belt + suspenders.
-  //
-  // Skipped when the cross-process lock is disabled (tests, in-process
-  // multiple-sessions). Property-based tests create many sessions, which
-  // would otherwise blow past the default MaxListeners on `process`.
-  if (!(opts.disableSessionLock ?? lockDisabledByDefault)) {
-    const forceRelease = () => {
-      try { while (lockPump.refcount > 0) lockPump.release() } catch { /* ignore */ }
-    }
-    process.once('exit', forceRelease)
-    process.once('SIGINT', () => { forceRelease(); process.exit(130) })
-    process.once('SIGTERM', () => { forceRelease(); process.exit(143) })
+  const forceRelease = () => {
+    try { while (lockPump.refcount > 0) lockPump.release() } catch { /* best effort */ }
   }
+  if (!(opts.disableSessionLock ?? lockDisabledByDefault)) process.once('exit', forceRelease)
+  let closed = false
+  let closeRequested = false
+  let references = 0
+  const dispose = () => { if (closeRequested && references === 0) { closed = true; process.removeListener('exit', forceRelease) } }
   const defaultProvider = opts.provider ?? process.env.COMPUTER_USE_PROVIDER ?? 'auto'
 
   const virtualPointer = new VirtualPointerController(n)
@@ -330,6 +333,8 @@ export function createSession(opts: SessionOptions = {}): Session {
       return result
     }
 
+    if (requestContext?.preflight) return { content: [{ type: 'text', text: JSON.stringify({ authorized: true, clientRoots: requestContext.clientRoots ?? opts.getClientRoots?.() }) }] }
+
     let acquired = false
     if (mutates) {
       try {
@@ -375,7 +380,7 @@ export function createSession(opts: SessionOptions = {}): Session {
         ...(signal ? { signal } : {}),
       })
       if (windowResult) return windowResult
-      const accessibilityResult = await handleAccessibilityTool(tool, args, {
+      const accessibilityContext = {
         native: n,
         targets: targetController,
         focus,
@@ -384,7 +389,18 @@ export function createSession(opts: SessionOptions = {}): Session {
         runScript: runScriptHelper,
         getAppDictionary,
         ...(signal ? { signal } : {}),
-      })
+      }
+      const linuxResult = process.platform === 'linux' && !opts.native
+        ? await handleLinuxAccessibility(tool, args, accessibilityContext, spawnBounded) : undefined
+      if (linuxResult) return linuxResult
+      if (tool === 'discover_applications') return okJson(await discoverApplications(args, {
+        platform: process.platform, spawn: spawnBounded, signal, running: n.listRunningApps(),
+        capabilities: async id => {
+          const result = await handleAccessibilityTool('get_app_capabilities', { bundle_id: id }, accessibilityContext)
+          return result?.structuredContent ?? JSON.parse(result?.content.find(c => c.type === 'text')?.text ?? 'null')
+        },
+      }))
+      const accessibilityResult = await handleAccessibilityTool(tool, args, accessibilityContext)
       if (accessibilityResult) return accessibilityResult
       const spacesResult = await spacesHandler.handle(tool, args)
       if (spacesResult) return spacesResult
@@ -458,8 +474,17 @@ export function createSession(opts: SessionOptions = {}): Session {
     return result
   }
 
+  const coordinated: Session['dispatch'] = (tool, args, signal, progress, context) => {
+    if (closed) return Promise.reject(new Error('Session is closed'))
+    return MUTATING_TOOLS.has(tool) && !context?.preflight
+      ? coordinateDesktop(opts.lockPath ?? DEFAULT_SESSION_LOCK_PATH, () => dispatch(tool, args, signal, progress, context), signal)
+      : dispatch(tool, args, signal, progress, context)
+  }
   return {
-    dispatch,
+    dispatch: coordinated,
+    preflight: (tool, args, signal, context) => dispatch(tool, args, signal, undefined, { ...context, preflight: true }),
+    close: () => { closeRequested = true; dispose() },
+    retain: () => { references++; let released = false; return () => { if (!released) { released = true; references--; dispose() } } },
     getLastScreenshot: () => screenshotHandler.lastScreenshot(),
   }
 }

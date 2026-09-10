@@ -5,7 +5,8 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { ResourceTemplate, type McpServer } from '@modelcontextprotocol/server'
+import { ResourceTemplate, isInputRequiredResult, type ServerContext, type McpServer } from '@modelcontextprotocol/server'
+import type { ToolRegistry } from './registry/registry.js'
 import type { Session } from './session.js'
 import { fsRoots, fsRootsViolation } from './session/fs-jail.js'
 import type { ProfileName } from './tool-catalog.js'
@@ -14,10 +15,11 @@ import { FILESYSTEM_RESOURCE_PREFIX } from './resource-links.js'
 
 export interface ResourceContext {
   session: Session
+  registry: ToolRegistry
   profile: ProfileName
   getActiveProfile?: () => ProfileName
   /** Last screenshot structured metadata (optional; never auto-captures). */
-  getLastScreenshot?: () => { mimeType: string; data: string; capturedAt: number } | undefined
+  getLastScreenshot?: () => { mimeType: string; data: string; capturedAt: number; targetArgs?: Record<string, unknown> } | undefined
   getPolicyStatus?: () => Promise<Record<string, unknown>> | Record<string, unknown>
   getClientRoots?: () => readonly string[] | undefined
 }
@@ -40,8 +42,10 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/json',
       annotations: ASSISTANT_RESOURCE,
     },
-    async (uri) => {
-      const r = await ctx.session.dispatch('get_display_size', {})
+    async (uri, extra) => {
+      const r = await ctx.registry.executeRegistered('get_display_size', {}, extra)
+      if (isInputRequiredResult(r)) return r
+      if (r.isError) throw new Error(JSON.stringify(r.content))
       const text = r.content.find(c => c.type === 'text')?.text ?? '{}'
       return textResource(uri.href, 'display-main', text)
     },
@@ -56,8 +60,10 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/json',
       annotations: ASSISTANT_RESOURCE,
     },
-    async (uri) => {
-      const r = await ctx.session.dispatch('list_windows', {})
+    async (uri, extra) => {
+      const r = await ctx.registry.executeRegistered('list_windows', {}, extra)
+      if (isInputRequiredResult(r)) return r
+      if (r.isError) throw new Error(JSON.stringify(r.content))
       const text = r.content.find(c => c.type === 'text')?.text ?? '{"windows":[]}'
       return textResource(uri.href, 'windows', text)
     },
@@ -72,8 +78,10 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/json',
       annotations: ASSISTANT_RESOURCE,
     },
-    async (uri) => {
-      const r = await ctx.session.dispatch('get_frontmost_app', {})
+    async (uri, extra) => {
+      const r = await ctx.registry.executeRegistered('get_frontmost_app', {}, extra)
+      if (isInputRequiredResult(r)) return r
+      if (r.isError) throw new Error(JSON.stringify(r.content))
       const text = r.content.find(c => c.type === 'text')?.text ?? '{"app":null}'
       return textResource(uri.href, 'frontmost', text)
     },
@@ -88,12 +96,17 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/json',
       annotations: ASSISTANT_RESOURCE,
     },
-    async (uri) => {
+    async (uri, extra) => {
       if (ctx.getPolicyStatus) {
+        const prepared = await ctx.registry.preflight('policy_status', {}, extra)
+        if (isInputRequiredResult(prepared)) return prepared
+        if (prepared.isError) throw new Error(JSON.stringify(prepared.content))
         const status = await ctx.getPolicyStatus()
         return textResource(uri.href, 'policy', JSON.stringify(status))
       }
-      const r = await ctx.session.dispatch('policy_status', {})
+      const r = await ctx.registry.executeRegistered('policy_status', {}, extra)
+      if (isInputRequiredResult(r)) return r
+      if (r.isError) throw new Error(JSON.stringify(r.content))
       const text = r.content.find(c => c.type === 'text')?.text ?? '{}'
       return textResource(uri.href, 'policy', text)
     },
@@ -108,7 +121,10 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/json',
       annotations: ASSISTANT_RESOURCE,
     },
-    async (uri) => {
+    async (uri, extra) => {
+      const authorization = await ctx.registry.preflight('get_tool_metadata', { tool_name: 'get_tool_metadata' }, extra)
+      if (isInputRequiredResult(authorization)) return authorization
+      if (authorization.isError) throw new Error('Resource access denied')
       const activeProfile = ctx.getActiveProfile?.() ?? ctx.profile
       const tools = Object.entries(TOOL_CATALOG)
         .filter(([, meta]) => toolInProfile(meta, ctx.profile) && toolInProfile(meta, activeProfile))
@@ -130,7 +146,10 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/json',
       annotations: { audience: ['assistant'], priority: 1 },
     },
-    async (uri) => {
+    async (uri, extra) => {
+      const authorization = await ctx.registry.preflight('screenshot', ctx.getLastScreenshot?.()?.targetArgs ?? {}, extra)
+      if (isInputRequiredResult(authorization)) return authorization
+      if (authorization.isError) throw new Error('Resource access denied')
       const cached = ctx.getLastScreenshot?.()
       if (!cached) {
         return textResource(uri.href, 'screenshot-latest', JSON.stringify({
@@ -157,7 +176,9 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
     new ResourceTemplate(`${FILESYSTEM_RESOURCE_PREFIX}{path}`, {
       list: undefined,
       complete: {
-        path: async value => completeFilesystemPath(value, ctx.getClientRoots?.()),
+        // The SDK's completion callback has no authenticated request context.
+        // Do not expose filesystem names through this unauthorizable surface.
+        path: async () => [],
       },
     }),
     {
@@ -166,9 +187,13 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       mimeType: 'application/octet-stream',
       annotations: ASSISTANT_RESOURCE,
     },
-    async (uri, variables) => {
+    async (uri, variables, extra) => {
       const selected = decodeURIComponent(String(variables.path))
-      const violation = fsRootsViolation(selected, ctx.getClientRoots?.())
+      const authorization = await ctx.registry.preflight('filesystem', { mode: 'read', path: selected }, extra)
+      if (isInputRequiredResult(authorization)) return authorization
+      if (authorization.isError) throw new Error('Filesystem resource denied')
+      const roots = JSON.parse(authorization.content.find(c => c.type === 'text')?.text ?? '{}').clientRoots ?? ctx.getClientRoots?.()
+      const violation = fsRootsViolation(selected, roots)
       if (violation) throw new Error(violation.remediation[0])
       const stat = fs.statSync(selected)
       if (stat.isDirectory()) {
@@ -190,6 +215,29 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       return textResource(uri.href, path.basename(selected), data.toString('utf8'), 'text/plain')
     },
   )
+  // Request-level completion has identity and MRTR state, unlike template callbacks.
+  server.server.setRequestHandler('completion/complete', async (request, extra) => {
+    const { ref, argument } = request.params
+    if (ref.type === 'ref/prompt' && argument.name === 'app') {
+      const result = await ctx.registry.executeRegistered('list_running_apps', {}, extra)
+      if (isInputRequiredResult(result)) throw new Error('Completion requires negotiated authority; use tools/call')
+      if (result.isError) throw new Error('Application completion denied')
+      const parsed = JSON.parse(result.content.find(c => c.type === 'text')?.text ?? '[]')
+      const apps = Array.isArray(parsed) ? parsed : parsed.apps ?? []
+      return { completion: { values: apps.map((app: any) => String(app.bundleId ?? app.bundle_id ?? app.name ?? ''))
+        .filter((name: string) => name.toLowerCase().startsWith(argument.value.toLowerCase())).slice(0, 100) } }
+    }
+    if (ref.type === 'ref/resource' && ref.uri.startsWith(FILESYSTEM_RESOURCE_PREFIX)) {
+      const value = decodeURIComponent(argument.value)
+      const authorization = await ctx.registry.preflight('filesystem', { mode: 'list', path: value || '.' }, extra)
+      if (isInputRequiredResult(authorization)) throw new Error('Completion requires negotiated roots; use filesystem tool')
+      if (authorization.isError) throw new Error('Filesystem completion denied')
+      const roots = JSON.parse(authorization.content.find(c => c.type === 'text')?.text ?? '{}').clientRoots ?? ctx.getClientRoots?.()
+      return { completion: { values: completeFilesystemPath(value, roots) } }
+    }
+    return { completion: { values: [] } }
+  })
+
 }
 
 function completeFilesystemPath(value: string, clientRoots?: readonly string[]): string[] {
@@ -197,6 +245,7 @@ function completeFilesystemPath(value: string, clientRoots?: readonly string[]):
   const candidates = value ? [value] : roots
   const suggestions = new Set<string>()
   for (const candidate of candidates) {
+    if (fsRootsViolation(candidate, clientRoots)) continue
     const directory = fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()
       ? candidate
       : path.dirname(candidate)
@@ -211,4 +260,18 @@ function completeFilesystemPath(value: string, clientRoots?: readonly string[]):
     } catch { /* unreadable candidate */ }
   }
   return [...suggestions]
+}
+
+export async function authorizeResourceAccess(registry: ToolRegistry, uri: string, context: ServerContext): Promise<void> {
+  const tools: Record<string, string> = {
+    'computer://windows': 'list_windows', 'computer://frontmost': 'get_frontmost_app',
+    'computer://display/main': 'get_display_size', 'computer://screenshot/latest': 'screenshot',
+    'computer://policy': 'policy_status', 'computer://profile/tools': 'get_tool_metadata',
+  }
+  const tool = tools[uri] ?? (uri.startsWith(FILESYSTEM_RESOURCE_PREFIX) ? 'filesystem' : undefined)
+  if (!tool) throw new Error('Unknown resource')
+  const args = tool === 'filesystem' ? { mode: 'read', path: decodeURIComponent(uri.slice(FILESYSTEM_RESOURCE_PREFIX.length)) }
+    : tool === 'get_tool_metadata' ? { tool_name: tool } : {}
+  const result = await registry.preflight(tool, args, context)
+  if (isInputRequiredResult(result) || result.isError) throw new Error('Resource subscription requires current authorization')
 }

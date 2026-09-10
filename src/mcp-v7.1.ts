@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import type { LoggingLevel, McpServer } from '@modelcontextprotocol/server'
+import type { LoggingLevel, McpServer, ServerContext } from '@modelcontextprotocol/server'
 import {
   ProtocolError,
   ProtocolErrorCode,
@@ -7,6 +7,7 @@ import {
 
 export interface McpV71Options {
   isSubscribable(uri: string): boolean
+  authorizeSubscription?(uri: string, context: ServerContext): Promise<void>
   onRootsChanged?(roots: readonly string[] | undefined): void
 }
 
@@ -14,18 +15,19 @@ export interface McpV71Options {
 export class McpV71Controller {
   readonly #server: McpServer
   readonly #options: McpV71Options
-  readonly #subscriptions = new Set<string>()
+  readonly #subscriptions = new Map<string, ServerContext>()
   #clientRoots: string[] | undefined
 
   constructor(server: McpServer, options: McpV71Options) {
     this.#server = server
     this.#options = options
 
-    server.server.setRequestHandler('resources/subscribe', async request => {
+    server.server.setRequestHandler('resources/subscribe', async (request, context) => {
+      await options.authorizeSubscription?.(request.params.uri, context)
       if (!options.isSubscribable(request.params.uri)) {
         throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Resource is not subscribable: ${request.params.uri}`)
       }
-      this.#subscriptions.add(request.params.uri)
+      this.#subscriptions.set(request.params.uri, context)
       return {}
     })
     server.server.setRequestHandler('resources/unsubscribe', async request => {
@@ -90,6 +92,8 @@ export class McpV71Controller {
     const modern = this.#server.server.getNegotiatedProtocolVersion() === '2026-07-28'
     if (!modern && !this.#subscriptions.has(uri)) return
     try {
+      const context = this.#subscriptions.get(uri)
+      if (context) await this.#options.authorizeSubscription?.(uri, context)
       await this.#server.server.sendResourceUpdated({ uri })
     } catch {
       // Update notifications are advisory and must never fail a tool call.

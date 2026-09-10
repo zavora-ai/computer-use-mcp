@@ -1,8 +1,8 @@
-# computer-use-mcp 7.1 architecture
+# computer-use-mcp 7.2 architecture
 
 ## Compatibility boundary
 
-Version 7.1 preserves all 64 v7 tool names and input schemas. Protocol negotiation is independent of that tool API:
+Version 7.2 preserves all 64 v7 tool names and input schemas and adds application discovery as the 65th tool. Protocol negotiation is independent of that tool API:
 
 - MCP 2026-07-28 uses stateless requests, `server/discover`, per-request client identity/capabilities, in-band multi-round-trip input, and `subscriptions/listen`.
 - MCP 2025-11-25 and earlier continue through the SDK's legacy initialization path.
@@ -12,10 +12,10 @@ Version 7.1 preserves all 64 v7 tool names and input schemas. Protocol negotiati
 flowchart LR
   Modern["2026-07-28 client"] -->|"per-request envelope"| Entry["SDK v2 serving entry"]
   Legacy["2025 client"] -->|"initialize"| Entry
-  Entry -->|"modern: one instance per HTTP request"| Server["Computer Use MCP 7.1"]
+  Entry -->|"modern: one instance per HTTP request"| Server["Computer Use MCP 7.2"]
   Entry -->|"legacy HTTP: stateless fallback"| Server
   Entry -->|"stdio: instance pinned to connection era"| Server
-  Server --> Registry["Validated 64-tool registry"]
+  Server --> Registry["Validated 65-tool registry"]
   Registry --> Policy["Policy, approval, authorization"]
   Policy --> Session["Targeting, lock, cancellation"]
   Session --> Native["Rust N-API and bounded scripts"]
@@ -134,3 +134,7 @@ Logging is retained for legacy clients even though it is deprecated in 2026. Eve
 - `ToolRegistry.afterToolCall` centralizes safe logging, resource updates, and result decoration.
 
 None of these hooks grants model-callable authority by itself.
+
+## Component diagram
+
+![Computer Use MCP components](assets/architecture.svg)

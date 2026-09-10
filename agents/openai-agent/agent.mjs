@@ -29,13 +29,55 @@ const BOOTSTRAP = [
   }, ['window_id']),
 ]
 
+/** Bound model-visible text while preserving images and making omitted evidence explicit. */
+export function boundToolText(result, maxChars) {
+  let remaining = maxChars
+  let omittedChars = 0
+  const content = []
+  for (const block of result.content) {
+    if (block.type !== 'text') { content.push(block); continue }
+    const kept = block.text.slice(0, remaining)
+    remaining -= kept.length
+    omittedChars += block.text.length - kept.length
+    if (kept) content.push({ ...block, text: kept })
+  }
+  if (omittedChars) content.push({ type: 'text', text: JSON.stringify({
+    toolOutputTruncated: true, omittedChars,
+    instruction: 'Only an excerpt was returned. It may contain incomplete JSON. Narrow the query before relying on missing information; truncation is not proof of absence or success.',
+  }) })
+  return { ...result, content }
+}
+
 /** Exported for offline integration tests; no API request or native module is created here. */
 export async function runAgent({
   openai, client, task, model = 'gpt-6-astra', maxTurns = 40,
   signal, onProgress = () => {}, reuseImages = false,
+  extraInstructions = '', allowedTools, onToolResult = () => {}, onResponse = () => {},
+  maxToolTextChars = 24000, maxTokens = 200000, maxOutputTokens = 8000, reasoningEffort = 'low', customTools = [], finalizeToolName,
 }) {
+  if (!Number.isSafeInteger(maxToolTextChars) || maxToolTextChars < 256 || maxToolTextChars > 1000000) throw new Error('maxToolTextChars must be 256..1000000')
   if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 200) throw new Error('maxTurns must be 1..200')
-  const discovery = createToolDiscovery(client)
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) throw new Error('maxTokens must be positive')
+  if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 64 || maxOutputTokens > 32000) throw new Error('maxOutputTokens must be 64..32000')
+  if (!['low','medium','high','xhigh','max'].includes(reasoningEffort)) throw new Error('Unsupported reasoning effort')
+  const custom = new Map(customTools.map(t => [t.schema.name, t]))
+  if(custom.size !== customTools.length || customTools.some(t => BOOTSTRAP.some(b => b.name === t.schema.name))) throw new Error('Duplicate custom tool')
+  const allowed = allowedTools ? new Set(allowedTools) : null
+  const permits = name => !allowed || allowed.has(name)
+  // Convenience tools must enforce the same policy as discovered MCP tools.
+  const scopedClient = {
+    callTool: async (name, args, options) => {
+      signal?.throwIfAborted()
+      if (!permits(name)) throw new Error('Tool excluded from this agent: ' + name)
+      return client.callTool(name, args, options)
+    },
+  }
+  const bootstrap = BOOTSTRAP.filter(tool => tool.name === 'discover_tools'
+    || (tool.name === 'observe_window' && permits('get_ui_tree'))
+    || (tool.name === 'wait_for_element' && permits('find_element')))
+  const discovery = createToolDiscovery({ ...client, listTools: async () => (await client.listTools()).filter(t => !allowed || allowed.has(t.name)) })
+  if(finalizeToolName&&!custom.has(finalizeToolName))throw new Error('Finalization tool must be registered')
+  let finalized=false
   let loaded = []
   let previousResponseId
   let input = [{ role: 'user', content: task }]
@@ -51,9 +93,13 @@ with an unknown outcome before checking whether it already succeeded.
 An unchanged image ID references identical pixels already returned in this conversation;
 it does not establish unchanged window position or permission. Coordinates use logical
 desktop pixels: account for screenshot scaling/window origin using display/window tools.
-Do not claim completion on a tool error, partial result, or unverified final state.`
+Do not claim completion on a tool error, partial result, or unverified final state.
+Begin unknown-app tasks with discover_applications, then use its targetApp IDs.
+Complete the task within the supplied scope; make routine artistic and implementation choices yourself.
+${extraInstructions}`
 
   const execute = async (name, args) => {
+    if (custom.has(name)) return custom.get(name).execute(args, signal)
     if (name === 'discover_tools') {
       loaded = await discovery.search(args.query)
       return { content: [{ type: 'text', text: JSON.stringify({
@@ -61,13 +107,15 @@ Do not claim completion on a tool error, partial result, or unverified final sta
       }) }] }
     }
     if (name === 'wait_for_element') {
-      return waitForElement(client, {
+      if (!permits('find_element')) throw new Error('Tool excluded from this agent: find_element')
+      return waitForElement(scopedClient, {
         windowId: args.window_id, role: args.role, label: args.label,
         state: args.state, timeoutMs: args.timeout_ms, signal,
       })
     }
     if (name === 'observe_window') {
-      const observed = await client.callTool('get_ui_tree', { window_id: args.window_id }, { signal })
+      if (args.include_screenshot === true && !permits('screenshot')) throw new Error('Tool excluded from this agent: screenshot')
+      const observed = await scopedClient.callTool('get_ui_tree', { window_id: args.window_id }, { signal })
       if (observed.isError) return observed
       const text = observed.content.find(block => block.type === 'text')?.text
       const tree = compactAccessibilityTree(JSON.parse(text ?? 'null'), {
@@ -75,22 +123,25 @@ Do not claim completion on a tool error, partial result, or unverified final sta
       })
       const content = [{ type: 'text', text: JSON.stringify(tree) }]
       if (args.include_screenshot === true) {
-        const shot = await client.callTool('screenshot', { target_window_id: args.window_id }, { signal })
+        const shot = await scopedClient.callTool('screenshot', { target_window_id: args.window_id }, { signal })
         if (shot.isError) return shot
         content.push(...shot.content)
       }
       return { content }
     }
     if (!loaded.some(tool => tool.name === name)) throw new Error('Tool is not loaded; use discover_tools first')
-    return client.callTool(name, args, { signal })
+    return scopedClient.callTool(name, args, { signal })
   }
 
   for (let turn = 0; turn < maxTurns; turn++) {
     signal?.throwIfAborted()
+    input.push({ role: 'developer', content: `Runtime budget: ${maxTurns-turn} responses and approximately ${Math.max(0,maxTokens-usage.inputTokens-usage.outputTokens)} total input/output tokens remain. ${turn>=maxTurns-4 || usage.inputTokens+usage.outputTokens>maxTokens*.7 ? 'Finish the current composition, export/save now, verify it, and give a final report.' : 'Batch useful work and reserve budget to save and verify.'}` })
     const response = await openai.responses.create({
       model, instructions, input, previous_response_id: previousResponseId,
+      reasoning: { effort: reasoningEffort }, max_output_tokens: maxOutputTokens,
       parallel_tool_calls: false,
-      tools: [...BOOTSTRAP, ...loaded.map(tool => ({
+      ...(finalized?{tool_choice:'none'}:finalizeToolName&&(turn>=maxTurns-4||usage.inputTokens+usage.outputTokens>maxTokens*.6)?{tool_choice:{type:'function',name:finalizeToolName}}:{}),
+      tools: [...bootstrap, ...customTools.map(t => t.schema), ...loaded.filter(t => !custom.has(t.name)).map(tool => ({
         type: 'function', name: tool.name, description: tool.description,
         parameters: tool.inputSchema, strict: false,
       }))],
@@ -99,6 +150,8 @@ Do not claim completion on a tool error, partial result, or unverified final sta
     usage.inputTokens += response.usage?.input_tokens ?? 0
     usage.cachedInputTokens += response.usage?.input_tokens_details?.cached_tokens ?? 0
     usage.outputTokens += response.usage?.output_tokens ?? 0
+    await onResponse({ response, usage: { ...usage } })
+    if (usage.inputTokens + usage.outputTokens > maxTokens) throw new Error('Agent token budget exceeded; inspect completed work before retry')
     if (response.status !== 'completed') throw new Error(`Response stopped: ${response.status}`)
     const calls = response.output.filter(item => item.type === 'function_call')
     if (!calls.length && response.output.some(item => item.type === 'message' && item.phase !== 'commentary')) {
@@ -118,9 +171,12 @@ Do not claim completion on a tool error, partial result, or unverified final sta
         signal?.throwIfAborted()
         result = { isError: true, content: [{ type: 'text', text: error.message }] }
       }
-      const content = toModelContent(result, reuseImages ? {
+      if(call.name===finalizeToolName&&!result.isError)finalized=true
+      await onToolResult({ tool: call.name, args, result })
+      const projected = toModelContent(result, reuseImages ? {
         imageScope: JSON.stringify([call.name, args]), knownImageIds: [...knownImageIds],
       } : {})
+      const { content } = boundToolText({ content: projected }, maxToolTextChars)
       // Derive retained IDs only from actual images, never untrusted result text.
       if (reuseImages) for (const block of result.content) {
         if (block.type !== 'image') continue

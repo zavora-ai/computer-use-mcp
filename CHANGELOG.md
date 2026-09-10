@@ -1,5 +1,11 @@
 # Changelog
 
+## v7.2.0 (2026-09-10)
+
+Application discovery, optional desktop/browser/runtime services, persistent Tasks,
+Responses showcases, efficiency and authorization improvements, and documentation
+cleanup. See [the release notes](docs/releases/v7.2.0.md).
+
 ## v7.1.0 (2026-08-23)
 
 Additive MCP capability release. All 64 v7 tool names and input schemas remain stable.

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -41,7 +42,7 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-/** Acquire the cross-process writer lock, reclaiming stale or self-owned files. */
+/** Acquire the cross-process writer lock, reclaiming only files with a confirmed dead owner. */
 export function acquireSessionLock(lockPath: string): LockHandle {
   try {
     const descriptor = fs.openSync(
@@ -50,10 +51,17 @@ export function acquireSessionLock(lockPath: string): LockHandle {
       0o600,
     )
     fs.writeSync(descriptor, String(process.pid))
+    const identity = fs.fstatSync(descriptor)
+    let released = false
     return {
       release() {
+        if (released) return
+        released = true
+        try {
+          const current = fs.lstatSync(lockPath)
+          if (current.dev === identity.dev && current.ino === identity.ino) fs.unlinkSync(lockPath)
+        } catch { /* no longer owned */ }
         try { fs.closeSync(descriptor) } catch { /* already closed */ }
-        try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
       },
     }
   } catch (error) {
@@ -64,9 +72,17 @@ export function acquireSessionLock(lockPath: string): LockHandle {
       if (Number.isFinite(parsed) && parsed > 0) holder = parsed
     } catch { /* raced with another cleanup */ }
 
-    if (holder === null || holder === process.pid || !pidIsAlive(holder)) {
-      try { fs.unlinkSync(lockPath) } catch { /* another process reclaimed it */ }
-      return acquireSessionLock(lockPath)
+    if (holder !== null && holder !== process.pid && !pidIsAlive(holder)) {
+      // Serialize stale recovery so two reclaimers cannot remove a new lease.
+      const guardPath = lockPath + '.reclaim'
+      let guard: number
+      try { guard = fs.openSync(guardPath, 'wx', 0o600) } catch { throw new LockError(holder) }
+      try {
+        const current = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10)
+        if (current !== holder || pidIsAlive(current)) throw new LockError(current)
+        fs.unlinkSync(lockPath)
+        return acquireSessionLock(lockPath)
+      } finally { fs.closeSync(guard); fs.unlinkSync(guardPath) }
     }
     throw new LockError(holder)
   }
@@ -124,5 +140,29 @@ export function createLockPumpController(options: {
       acquired?.release()
     },
     get refcount() { return refcount },
+  }
+}
+
+/** One in-process queue per physical desktop; only an active logical lease is reentrant. */
+const operations = new AsyncLocalStorage<{ desktop: string; active: boolean }>()
+const queues = new Map<string, Promise<void>>()
+export async function coordinateDesktop<T>(desktop: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted()
+  const inherited = operations.getStore()
+  if (inherited?.active && inherited.desktop === desktop) return operation()
+  const previous = queues.get(desktop) ?? Promise.resolve()
+  let release!: () => void
+  const next = new Promise<void>(resolve => { release = resolve })
+  const queued = previous.then(() => next)
+  queues.set(desktop, queued)
+  await previous
+  const lease = { desktop, active: true }
+  try {
+    signal?.throwIfAborted()
+    return await operations.run(lease, operation)
+  } finally {
+    lease.active = false
+    release()
+    if (queues.get(desktop) === queued) queues.delete(desktop)
   }
 }

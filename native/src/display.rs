@@ -70,8 +70,9 @@ mod macos {
     pub fn get_display_size(display_id: Option<u32>) -> napi::Result<serde_json::Value> {
         let did = display_id.unwrap_or_else(|| unsafe { CGMainDisplayID() });
         let display = CGDisplay::new(did);
-        let w = display.pixels_wide();
-        let h = display.pixels_high();
+        let bounds = display.bounds();
+        let w = bounds.size.width as u64;
+        let h = bounds.size.height as u64;
         let (pw, ph, scale) = match display.display_mode() {
             Some(mode) => {
                 let pw = mode.pixel_width();
@@ -81,7 +82,7 @@ mod macos {
             None => (w as u64, h as u64, 1.0),
         };
         Ok(serde_json::json!({
-            "width": w, "height": h,
+            "width": w, "height": h, "x": bounds.origin.x, "y": bounds.origin.y,
             "pixelWidth": pw, "pixelHeight": ph,
             "scaleFactor": scale,
             "displayId": did,
@@ -102,8 +103,9 @@ mod macos {
         for i in 0..count as usize {
             let did = displays[i];
             let display = CGDisplay::new(did);
-            let w = display.pixels_wide();
-            let h = display.pixels_high();
+            let bounds = display.bounds();
+        let w = bounds.size.width as u64;
+            let h = bounds.size.height as u64;
             let (pw, ph, scale) = match display.display_mode() {
                 Some(mode) => {
                     let pw = mode.pixel_width();
@@ -113,7 +115,7 @@ mod macos {
                 None => (w as u64, h as u64, 1.0),
             };
             result.push(serde_json::json!({
-                "width": w, "height": h,
+                "width": w, "height": h, "x": bounds.origin.x, "y": bounds.origin.y,
                 "pixelWidth": pw, "pixelHeight": ph,
                 "scaleFactor": scale,
                 "displayId": did,
@@ -192,7 +194,7 @@ mod win {
         let pw = (w as f64 * scale) as u64;
         let ph = (h as f64 * scale) as u64;
         Ok(serde_json::json!({
-            "width": w, "height": h,
+            "width": w, "height": h, "x": m.rect.left, "y": m.rect.top,
             "pixelWidth": pw, "pixelHeight": ph,
             "scaleFactor": scale,
             "displayId": m.handle,
@@ -210,7 +212,7 @@ mod win {
             let pw = (w as f64 * scale) as u64;
             let ph = (h as f64 * scale) as u64;
             result.push(serde_json::json!({
-                "width": w, "height": h,
+                "width": w, "height": h, "x": m.rect.left, "y": m.rect.top,
                 "pixelWidth": pw, "pixelHeight": ph,
                 "scaleFactor": scale,
                 "displayId": m.handle,

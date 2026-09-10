@@ -35,7 +35,7 @@ test('each platform package manifest is well-formed and version-locked to the ro
 })
 
 test('staged v7.1 release is universal and does not depend on unbootstrapped package names', () => {
-  assert.deepEqual(rootPkg.optionalDependencies ?? {}, {})
+  assert.deepEqual(Object.keys(rootPkg.optionalDependencies ?? {}).filter(name => name.startsWith('@zavora-ai/')), [])
   for (const target of Object.keys(TARGETS)) {
     assert.ok(
       rootPkg.files.includes(`computer-use-napi.${target}.node`),

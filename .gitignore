@@ -12,3 +12,5 @@ install-probe/
 pack.json
 release-sbom.cdx.json
 *.tgz
+
+showcase-output/

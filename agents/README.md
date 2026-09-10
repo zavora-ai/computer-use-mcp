@@ -13,7 +13,7 @@ agents/
 
 These JavaScript agents use the in-process MCP server — no separate process needed.
 
-### Claude Agent (recommended for vision tasks)
+### Claude Agent
 ```bash
 export ANTHROPIC_API_KEY=your-key
 npm install @anthropic-ai/sdk
@@ -77,3 +77,9 @@ node agents/claude-agent/agent.mjs "Open Safari, go to news.ycombinator.com, and
 # Cross-app workflow
 node agents/langchain-agent/agent.mjs "Scrape the weather from weather.com, then create a Calendar event for tomorrow if it will rain"
 ```
+
+## GPT-6 Astra showcases
+
+See [the Responses showcase guide](openai-agent/README.md) for a native paint agent,
+a reproducible paint studio, a coordinated Office report agent, and a read-only
+desktop inspector. Each run records API usage, image feedback and artifact evidence.

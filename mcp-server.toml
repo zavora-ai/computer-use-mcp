@@ -1,6 +1,6 @@
 server_id = "computer_use_mcp"
 display_name = "Computer Use"
-version = "7.1.0"
+version = "7.2.0"
 domain = "desktop-automation"
 sdk_version = "2.0.0"
 risk_level = "high"
@@ -456,6 +456,13 @@ credential_bindings = []
 [[tools]]
 name = "scrape"
 description = "Scrape"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "discover_applications"
+description = "Discover installed and running applications by name with optional capabilities"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []

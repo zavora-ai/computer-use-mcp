@@ -1,11 +1,20 @@
 # Development scripts
 
-These scripts support local platform debugging and release preparation. Only `verify-input-attribution.mjs` is included in the published package.
+Run from the repository root after installing dependencies. Live desktop scripts
+need a native build and OS permissions. They are not unattended unit tests.
 
-- `prepare-platform-packages.mjs` stamps the root version into platform packages and copies native binaries.
-- `clean-dist.mjs` removes only the generated `dist` directory before TypeScript compilation.
-- `verify-input-attribution.mjs` validates the native physical-input observation latency when explicitly run on a supported desktop.
-- `test-v5-smoke.mjs` runs the established read-only desktop smoke sequence.
-- `test-v5-e2e.mjs` and the platform-specific scripts are manual development probes and are not release gates.
+| Command | Purpose |
+|---|---|
+| `npm test` | Build TypeScript and run the automated regression suite. |
+| `npm run smoke` | Check native display/window access and application discovery without injecting input. |
+| `npm run test:browser` | Exercise the isolated browser on a disposable local fixture. |
+| `node scripts/test-office.mjs` | Create and verify scratch Word, Excel and PowerPoint files on macOS. |
+| `npm run test:input-attribution` | Measure physical-input detection on a supported desktop. |
+| `npm run measure:efficiency` | Compare catalog and observation payload sizes. |
+| `npm run evaluate:strategy -- baseline.json candidate.json` | Compare matched, independently verified task traces. |
+| `npm run prepare:packages` | Stamp platform manifests and copy available native binaries. |
 
-All scripts that operate a live desktop require an attended session and the same OS permissions as the MCP server.
+`clean-dist.mjs` only removes generated TypeScript output. `live-windows.mjs` is
+an attended Windows development probe. Legacy Mission Control/Spaces experiments
+and obsolete v3–v5 scripts were removed in v7.2; their history remains in Git.
+Only `verify-input-attribution.mjs` is included as a script in the npm package.
