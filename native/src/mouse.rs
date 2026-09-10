@@ -50,7 +50,9 @@ mod linux {
                 XFlush(dpy);
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 let ctrl = XKeysymToKeycode(dpy, 0xffe3);
-                let mut keymap = [0i8; 32];
+                // c_char is signed on x86_64 Linux and unsigned on aarch64, so the
+                // element type has to come from the platform rather than be assumed.
+                let mut keymap = [0 as std::os::raw::c_char; 32];
                 XQueryKeymap(dpy, keymap.as_mut_ptr());
                 let already_held = (keymap[(ctrl / 8) as usize] as u8 & (1 << (ctrl % 8))) != 0;
                 if additive && !already_held { XTestFakeKeyEvent(dpy, ctrl as u32, 1, 0); }
