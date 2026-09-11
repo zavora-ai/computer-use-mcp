@@ -49,12 +49,15 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { localhostHostValidation, localhostOriginValidation, toNodeHandler } from '@modelcontextprotocol/node'
 import { createComputerUseServer, createComputerUseHttpHandler } from './server.js'
 import { connectInProcess } from './client.js'
 import { createSession } from './session.js'
-import { RunStore } from './agent-run.js'
+import { RunStore, type RunAttachment } from './agent-run.js'
 import { RUN_CONSOLE_HTML } from './run-console.js'
 import { isModuleEntrypoint } from './entrypoint.js'
 
@@ -123,7 +126,8 @@ async function poll() {
       // The screenshot dominates the payload and changes only when a frame lands,
       // so compare on the fields that decide whether the view needs repainting.
       const run = result.structuredContent ?? {}
-      const serialised = JSON.stringify([run.state, run.updatedAt, run.screenshot?.at, run.messages?.length])
+      const serialised = JSON.stringify([run.state, run.updatedAt, run.screenshot?.at,
+        run.messages?.length, run.activity?.length])
       if (serialised !== last) {
         last = serialised
         frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: result }, '*')
@@ -138,6 +142,20 @@ async function poll() {
   setTimeout(poll, 900)
 }
 </script></body></html>`
+
+/**
+ * Image formats accepted from the page, and the ceiling on one upload.
+ *
+ * Restricted to what a model can actually look at, so an unusable file is
+ * refused at the door rather than failing later inside a tool call.
+ */
+const IMAGE_TYPES = new Map([
+  ['image/png', '.png'],
+  ['image/jpeg', '.jpg'],
+  ['image/webp', '.webp'],
+  ['image/gif', '.gif'],
+])
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
 /** Minimal shape of a tool result, which is all this host needs to inspect. */
 interface ToolResult {
@@ -195,6 +213,41 @@ export async function serve({
 
   /** The conversation. Empty until the person, or the demo, says something. */
   let currentRunId = ''
+  /** Where uploads land. One directory per host, created on first use. */
+  let uploadDirectory = ''
+
+  /**
+   * Save an image the person attached, and describe where it went.
+   *
+   * Written to disk rather than held in memory because the point of an attached
+   * reference is that an application can open it: the path is what makes the
+   * image usable to Blender, and it keeps run payloads free of base64.
+   */
+  function saveUpload(image: { name?: unknown; mimeType?: unknown; data?: unknown }): RunAttachment {
+    const mimeType = String(image.mimeType ?? '')
+    const suffix = IMAGE_TYPES.get(mimeType)
+    if (!suffix) {
+      throw new Error(`${mimeType || 'that file type'} cannot be attached; use ${[...IMAGE_TYPES.keys()].join(', ')}`)
+    }
+    if (typeof image.data !== 'string' || !image.data) throw new Error('The attachment had no data')
+    const bytes = Buffer.from(image.data, 'base64')
+    if (!bytes.byteLength) throw new Error('The attachment decoded to nothing')
+    if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+      throw new Error(`The attachment is ${bytes.byteLength} bytes, over the ${MAX_UPLOAD_BYTES}-byte limit`)
+    }
+    if (!uploadDirectory) uploadDirectory = mkdtempSync(join(tmpdir(), 'run-console-'))
+    // Keep the person's filename for readability, but build the path ourselves so
+    // nothing from the page decides where a file is written. The stem allows no
+    // dots or separators, so it stays one path segment and reads cleanly: the
+    // extension comes from the mime type we already validated.
+    const original = typeof image.name === 'string' ? image.name : 'attachment'
+    const stem = (original.replace(/\.[^.]*$/, '').replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 48)) || 'attachment'
+    const path = join(uploadDirectory, `${Date.now()}-${stem}${suffix}`)
+    writeFileSync(path, bytes)
+    onLog(`attachment saved: ${path} (${bytes.byteLength} bytes)`)
+    return { name: original, mimeType, bytes: bytes.byteLength, path, at: new Date().toISOString() }
+  }
 
   const json = (response: ServerResponse, body: unknown, status = 200): void => {
     response.writeHead(status, { 'Content-Type': 'application/json' })
@@ -222,17 +275,36 @@ export async function serve({
   async function callForPage(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
     if (name === 'run_say') {
       const text = typeof args.text === 'string' ? args.text.trim() : ''
-      if (!text) return { isError: true, content: [{ type: 'text', text: 'A message needs text' }] }
+      const image = args.image as Record<string, unknown> | undefined
+      // An attachment on its own is a message: "look at this" needs no sentence.
+      if (!text && !image) return { isError: true, content: [{ type: 'text', text: 'A message needs text' }] }
+      let attachment: RunAttachment | undefined
+      if (image) {
+        try {
+          attachment = saveUpload(image)
+        } catch (error) {
+          return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }
+        }
+      }
+      const said = attachment && !text ? `Attached ${attachment.name}` : text
+      let result: ToolResult
       // The first message opens the conversation, so the run's prompt is the
       // person's own words rather than a placeholder written by this host.
       if (!currentRunId) {
-        const started = await client.callTool('run_start', { prompt: text }) as ToolResult
-        if (!started.isError) currentRunId = String(value(started).runId ?? '')
-        onLog(`run ${currentRunId} opened: ${text.slice(0, 72)}`)
-        return started
+        result = await client.callTool('run_start', { prompt: said }) as ToolResult
+        if (!result.isError) currentRunId = String(value(result).runId ?? '')
+        onLog(`run ${currentRunId} opened: ${said.slice(0, 72)}`)
+      } else {
+        onLog(`ask: ${said.slice(0, 72)}`)
+        result = await client.callTool('run_say', { runId: currentRunId, text: said, role: 'user' }) as ToolResult
       }
-      onLog(`ask: ${text.slice(0, 72)}`)
-      return client.callTool('run_say', { runId: currentRunId, text, role: 'user' }) as Promise<ToolResult>
+      // Attach after the turn exists, so an image can ride along with the very
+      // first sentence instead of dangling off an empty second turn.
+      if (attachment && currentRunId && !result.isError) {
+        store.attach(currentRunId, attachment)
+        return client.callTool('run_console', { runId: currentRunId }) as Promise<ToolResult>
+      }
+      return result
     }
     if (name === 'run_console') {
       if (!currentRunId) return { content: [{ type: 'text', text: '{}' }] }
@@ -256,6 +328,25 @@ export async function serve({
           response.writeHead(200, { 'Content-Type': 'text/plain' })
           return response.end(currentRunId)
         }
+        // The page renders attachments as ordinary images, so it fetches the file
+        // rather than carrying base64 through the run payload.
+        if (url.startsWith('/attachment/')) {
+          if (!currentRunId) return void response.writeHead(404).end('No run')
+          const attachments = store.attachments(currentRunId)
+          const attachment = attachments[Number(url.slice('/attachment/'.length))]
+          if (!attachment) return void response.writeHead(404).end('No such attachment')
+          try {
+            const bytes = readFileSync(attachment.path)
+            response.writeHead(200, {
+              'Content-Type': attachment.mimeType,
+              'Content-Length': bytes.byteLength,
+              'Cache-Control': 'no-store',
+            })
+            return void response.end(bytes)
+          } catch {
+            return void response.writeHead(410).end('Attachment no longer on disk')
+          }
+        }
         if (request.method === 'POST' && url === '/rpc') {
           const body = await readBody(request)
           const result = await callForPage(
@@ -263,6 +354,22 @@ export async function serve({
             (body.arguments ?? {}) as Record<string, unknown>,
           )
           return json(response, result, result.isError && body.name !== 'run_say' ? 403 : 200)
+        }
+        /**
+         * Activity the driver observed: thinking, calls, results.
+         *
+         * Reported by the driver rather than the model because the driver already
+         * sees every streamed token and every tool call, so the feed is complete
+         * and costs nothing extra. A model asked to narrate its own tool use gives
+         * a partial, flattering account. Written straight to the store: this is
+         * observation, not something an agent should be able to shape.
+         */
+        if (request.method === 'POST' && url === '/driver/activity') {
+          const body = await readBody(request)
+          if (!currentRunId) return json(response, { recorded: 0 }, 409)
+          const events = Array.isArray(body.events) ? body.events : []
+          store.record(currentRunId, events as Parameters<RunStore['record']>[1])
+          return json(response, { recorded: events.length })
         }
         // The agent driver reporting a turn that died before the agent could say
         // anything — a model error, a dropped connection. Without this the run

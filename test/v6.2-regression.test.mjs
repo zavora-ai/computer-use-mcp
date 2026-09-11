@@ -41,7 +41,7 @@ test('profile nesting: core ⊆ scripting ⊆ windows-admin ⊆ full and core �
   const winadmin = new Set(toolsIn('windows-admin'))
   const full = new Set(toolsIn('full'))
 
-  assert.equal(full.size, 66, 'full profile exposes all 66 tools')
+  assert.equal(full.size, 67, 'full profile exposes all 67 tools')
 
   for (const t of core) {
     assert.ok(ax.has(t), `core tool ${t} must be in ax`)
@@ -125,7 +125,7 @@ test('all six computer:// resources are listed and readable', async () => {
     const profileTools = await client.readResource('computer://profile/tools')
     const pj = JSON.parse(profileTools.contents[0].text)
     assert.equal(pj.profile, 'full')
-    assert.equal(pj.count, 66)
+    assert.equal(pj.count, 67)
   } finally {
     await client.close()
   }

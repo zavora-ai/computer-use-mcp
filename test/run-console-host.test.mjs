@@ -147,6 +147,90 @@ test('a driver can report a turn that died before the agent could speak', async 
   })
 })
 
+// A 1x1 PNG, which is a real decodable image rather than arbitrary bytes.
+const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAAMBAQAY3Y2wAAAAAElFTkSuQmCC'
+
+test('an attached image is written to disk, served to the page, and given to the agent', async () => {
+  await withHost(async host => {
+    const sent = await post(host, '/rpc', {
+      name: 'run_say',
+      arguments: {
+        text: 'match this reference',
+        image: { name: 'my ref/../shot.png', mimeType: 'image/png', data: TINY_PNG },
+      },
+    })
+    assert.equal(sent.status, 200)
+    const run = parse(sent.body)
+    const attachment = run.messages[0].attachment
+    assert.ok(attachment, 'the image rides along with the opening request')
+    assert.equal(attachment.mimeType, 'image/png')
+    assert.equal(attachment.bytes, Buffer.from(TINY_PNG, 'base64').byteLength)
+    // The page supplied the name, so it must not be able to choose the path.
+    assert.doesNotMatch(attachment.path, /\.\./)
+    assert.match(attachment.path, /shot\.png$/)
+
+    // The page renders it by fetching the file, not from the run payload.
+    const served = await fetch(`${host.url}attachment/0`)
+    assert.equal(served.status, 200)
+    assert.equal(served.headers.get('content-type'), 'image/png')
+    assert.equal(Buffer.from(await served.arrayBuffer()).toString('base64'), TINY_PNG)
+    assert.equal((await fetch(`${host.url}attachment/7`)).status, 404)
+
+    // The agent gets the picture and the path it can hand to an application.
+    const runId = parse(sent.body).runId
+    const looked = await mcp(host, 'tools/call', { name: 'run_attachment', arguments: { runId } }, 3)
+    assert.equal(looked.content.find(block => block.type === 'image').data, TINY_PNG)
+    assert.equal(JSON.parse(looked.content.find(block => block.type === 'text').text).path, attachment.path)
+  })
+})
+
+test('the host refuses an attachment it knows a model cannot read', async () => {
+  await withHost(async host => {
+    const refused = await post(host, '/rpc', {
+      name: 'run_say',
+      arguments: { text: 'here', image: { name: 'notes.pdf', mimeType: 'application/pdf', data: TINY_PNG } },
+    })
+    assert.equal(refused.body.isError, true)
+    assert.match(refused.body.content[0].text, /application\/pdf cannot be attached/)
+
+    // An image with no sentence is still a message worth sending.
+    const alone = await post(host, '/rpc', {
+      name: 'run_say',
+      arguments: { image: { name: 'ref.png', mimeType: 'image/png', data: TINY_PNG } },
+    })
+    assert.equal(alone.status, 200)
+    assert.match(parse(alone.body).messages[0].text, /Attached ref\.png/)
+  })
+})
+
+test('the driver reports activity, and the page sees it while the agent does not', async () => {
+  await withHost(async host => {
+    // Nothing to attribute activity to before a conversation exists.
+    assert.equal((await post(host, '/driver/activity', { events: [{ kind: 'thought', detail: 'x' }] })).status, 409)
+
+    const opened = await post(host, '/rpc', { name: 'run_say', arguments: { text: 'go' } })
+    const runId = parse(opened.body).runId
+    const reported = await post(host, '/driver/activity', {
+      events: [
+        { kind: 'thought', detail: 'I will read the scene before touching it' },
+        { kind: 'tool', name: 'get_objects_summary', detail: '{}' },
+        { kind: 'result', name: 'get_objects_summary', detail: '3 objects', ms: 51 },
+      ],
+    })
+    assert.deepEqual(reported.body, { recorded: 3 })
+
+    const seen = parse((await post(host, '/rpc', { name: 'run_console', arguments: {} })).body)
+    assert.deepEqual(seen.activity.map(event => event.kind), ['thought', 'tool', 'result'])
+    assert.equal(seen.activity[2].ms, 51)
+
+    // The agent is not handed its own activity back.
+    const agentReply = await mcp(host, 'tools/call', { name: 'run_say', arguments: { runId, text: 'working' } }, 4)
+    const text = agentReply.content.find(block => block.type === 'text').text
+    assert.equal('activity' in JSON.parse(text), false)
+    assert.doesNotMatch(text, /read the scene before touching it/)
+  })
+})
+
 test('an unknown path is a 404 rather than a stack trace', async () => {
   await withHost(async host => {
     const missing = await fetch(`${host.url}nope`)
