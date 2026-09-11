@@ -222,3 +222,55 @@ test('multi_select reports a missing native capability as a recoverable result',
   assert.equal(f.native.calls.filter(c => c[0].startsWith('click')).length, 0,
     'no click may be sent when additive selection cannot be honored')
 })
+
+test('key refuses text and names the tool that enters it', async () => {
+  // A live agent tried to open a URL with `key` and then spelled it out one
+  // keystroke at a time — "8", "period", "shift+;". The native layer answered
+  // `Unknown key in combo`, which does not say what to do instead.
+  const f = fixture()
+  for (const text of [
+    'http://localhost:8088/superset/dashboard/3/',
+    '/Users/me/report.txt',
+    'Walk our dashboards and tell me what needs attention',
+  ]) {
+    await assert.rejects(
+      f.handler.handle('key', { text }),
+      error => {
+        assert.match(error.message, /key presses a key combination/)
+        assert.match(error.message, /Use the type tool/)
+        return true
+      },
+      `should refuse ${text}`,
+    )
+  }
+  assert.equal(f.native.calls.length, 0, 'nothing should reach the keyboard')
+})
+
+test('key still accepts every real combination, including awkward ones', async () => {
+  // The guard must not cost a single legitimate combo. `shift+;` is a key plus a
+  // punctuation key, `8` and `period` are single keys, and `ctrl+win+f4` is three.
+  const combos = [
+    'command+l', 'return', 'escape', 'shift+;', 'ctrl+alt+delete',
+    'f11', 'command+shift+4', 'page_down', '8', 'period', 'ctrl+win+f4',
+  ]
+  const f = fixture()
+  for (const text of combos) await f.handler.handle('key', { text })
+  assert.deepEqual(
+    f.native.calls.map(([kind, combo]) => kind === 'key' && combo),
+    combos,
+    'each combo should reach the keyboard unchanged',
+  )
+})
+
+test('a long URL is truncated in the error rather than echoed whole', async () => {
+  const f = fixture()
+  const long = `http://localhost:8088/superset/dashboard/3/?${'filter=value&'.repeat(20)}`
+  await assert.rejects(
+    f.handler.handle('key', { text: long }),
+    error => {
+      assert.ok(error.message.includes('…'), 'should elide the tail')
+      assert.ok(error.message.length < long.length, 'should be shorter than the input')
+      return true
+    },
+  )
+})
