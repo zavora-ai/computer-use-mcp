@@ -53,13 +53,23 @@ node agents/deepseek-agent/showcase.mjs --receipt random     # a real receipt fr
 
 ## See it plan
 
-![The run console: a conversation on the left, the agent's plan and a live frame from Blender on the right](docs/assets/blender-console-live.png)
+![The run console: a request with an attached reference on the left, the agent's activity feed below it, and its plan beside a live frame from Blender](docs/assets/blender-console-live.png)
 
 **Watch the work instead of reading tool calls.** The run console is an MCP App the
-agent reports into: it declares a plan, marks one task active at a time, and
-attaches real screen captures as it goes. You can type to it while it works — the
-message lands in the transcript that every run tool returns, so the agent reads it
-on its next call and can change course mid-task.
+agent reports into. It declares a plan, marks one task active at a time, and attaches
+real screen captures as it goes — the frame above is a live capture of Blender's own
+window.
+
+Underneath the conversation is everything it is doing: each thought, each tool call
+and each result, with timings. That feed is reported by the host driving the run
+rather than by the model, so it is complete — Blender's own calls appear in it too.
+
+You can type while it works. The message lands in the transcript that every run tool
+returns, so the agent reads it on its next call and can change course mid-task. Attach
+an image and it gets both the picture and the path the file was saved at, which is how
+Blender can open your reference as a texture rather than the agent working from its own
+description of it. `web_search` and `scrape` let it check a fact it does not know —
+both run locally, so they work with any model.
 
 Look at it right now, with no API key:
 
@@ -67,10 +77,10 @@ Look at it right now, with no API key:
 npx -y -p @zavora-ai/computer-use-mcp computer-use-mcp-console
 ```
 
-That opens the console and drives a **scripted** walkthrough — the words are
-written into the host, but everything it looks at is real, so the frame on the
-right is a capture of your actual screen. For a live agent instead, start the host
-with `--no-demo` and point one at `http://127.0.0.1:4517/mcp`:
+That opens the console and drives a **scripted** walkthrough — the words are written
+into the host, but everything it looks at is real, so the frame on the right is a
+capture of your actual screen. For a live agent instead, start the host with
+`--no-demo` and point one at `http://127.0.0.1:4517/mcp`:
 
 ```sh
 computer-use-mcp-console --no-demo
@@ -79,7 +89,7 @@ computer-use-mcp-console --no-demo
 That endpoint serves the desktop tools and the run tools from the same server, so
 whatever the agent plans and captures appears in the browser. The screenshot above
 is [an ADK-Rust agent on DeepSeek Flash](https://github.com/zavora-ai/adk-rust/tree/main/examples/blender_console)
-building in Blender across two turns.
+refining a watch it modelled earlier in the same conversation.
 
 The console is loopback-only and unauthenticated: `/mcp` grants desktop control to
 anything that can reach the port. Fine on your own machine, never on a shared host.
