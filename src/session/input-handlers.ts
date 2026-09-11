@@ -221,7 +221,7 @@ export class InputHandler {
       }
       for (const [x, y] of path) this.#validateCoordinates(x, y)
 
-      const [startX, startY] = path[0]!
+      const [startX, startY] = path[0]
       this.#native.mouseMove(startX, startY)
       await this.#sleep(15)
       this.#native.mousePress(startX, startY, button, modifiers)
@@ -229,8 +229,8 @@ export class InputHandler {
         // Interpolate: applications that integrate incremental motion — 3D
         // viewport orbit, canvas painting — ignore a single jump to the endpoint.
         for (let segment = 1; segment < path.length; segment++) {
-          const [fromX, fromY] = path[segment - 1]!
-          const [toX, toY] = path[segment]!
+          const [fromX, fromY] = path[segment - 1]
+          const [toX, toY] = path[segment]
           for (let step = 1; step <= steps; step++) {
             this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
             const ratio = step / steps
@@ -244,7 +244,7 @@ export class InputHandler {
         }
       } finally {
         // Never leave a button or modifier stuck down, even on abort.
-        const [endX, endY] = path[path.length - 1]!
+        const [endX, endY] = path[path.length - 1]
         this.#native.mouseRelease(endX, endY, button, modifiers)
       }
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
