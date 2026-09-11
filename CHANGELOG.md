@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v7.2.0 (2026-09-10)
+
+Application discovery, an agent run console a person can watch and steer, pointer
+gestures for applications with no accessible controls, optional desktop/browser/runtime
+services, persistent Tasks, Responses showcases, efficiency and authorization
+improvements, and documentation cleanup.
+See [the release notes](docs/releases/v7.2.0.md).
 
 ### Added
 
@@ -19,39 +25,6 @@
 - `ServerOptions.runStore`, so a shared run store can be injected. The HTTP handler
   builds a server per request, and without this every request began with an empty
   transcript and no run was findable twice.
-
-### Fixed
-
-- `computer-use-mcp-http` starts when invoked through its installed binary. npm
-  installs a bin as a symlink under `node_modules/.bin`, so `process.argv[1]` was
-  the link while `import.meta.url` was the real file; the entrypoint comparison was
-  false for every packaged invocation and the command exited successfully without
-  serving anything. `isModuleEntrypoint` compares resolved real paths, and both the
-  HTTP runner and the new console host use it.
-
-### Changed
-
-- `ServerOptions.session` is documented as a supported way for a host to share one
-  desktop session across the per-request servers the HTTP handler builds, rather
-  than only a test seam.
-- `run_progress` returns a fresh capture as an image block, so one call both shows
-  the person the frame and lets the agent look at it. Agent-facing run replies now
-  describe the stored frame instead of repeating its base64: a reply that carried
-  ~150 KB of unreadable pixels on every plan, progress and message call is now
-  under 6 KB. `run_console` still returns the bytes, because the page draws them.
-- `run_plan` inherits nothing when the run has already finished. A plan declared
-  after `done` or `failed` is the next thing the person asked for, so reusing an
-  obvious task id like `capture` between requests no longer shows the new step as
-  already complete.
-
-## v7.2.0 (2026-09-10)
-
-Application discovery, optional desktop/browser/runtime services, persistent Tasks,
-Responses showcases, efficiency and authorization improvements, and documentation
-cleanup. See [the release notes](docs/releases/v7.2.0.md).
-
-### Added
-
 - `mouse_drag` tool: press a chosen button, move through interpolated waypoints and
   release, optionally holding modifiers for the whole gesture. Applications that
   draw their own interface expose no accessible controls and navigate by
@@ -78,6 +51,12 @@ cleanup. See [the release notes](docs/releases/v7.2.0.md).
 
 ### Fixed
 
+- `computer-use-mcp-http` starts when invoked through its installed binary. npm
+  installs a bin as a symlink under `node_modules/.bin`, so `process.argv[1]` was
+  the link while `import.meta.url` was the real file; the entrypoint comparison was
+  false for every packaged invocation and the command exited successfully without
+  serving anything. `isModuleEntrypoint` compares resolved real paths, and both the
+  HTTP runner and the new console host use it.
 - Arguments are validated against the advertised input schema at the MCP boundary, and
   schema defaults now reach handlers. Previously a declared `.default()` was advertised
   but never applied, so `snapshot` returned an unrequested UI tree and `multi_select`
@@ -115,6 +94,18 @@ cleanup. See [the release notes](docs/releases/v7.2.0.md).
 
 ### Changed
 
+- `ServerOptions.session` is documented as a supported way for a host to share one
+  desktop session across the per-request servers the HTTP handler builds, rather
+  than only a test seam.
+- `run_progress` returns a fresh capture as an image block, so one call both shows
+  the person the frame and lets the agent look at it. Agent-facing run replies now
+  describe the stored frame instead of repeating its base64: a reply that carried
+  ~150 KB of unreadable pixels on every plan, progress and message call is now
+  under 6 KB. `run_console` still returns the bytes, because the page draws them.
+- `run_plan` inherits nothing when the run has already finished. A plan declared
+  after `done` or `failed` is the next thing the person asked for, so reusing an
+  obvious task id like `capture` between requests no longer shows the new step as
+  already complete.
 - `AGENTS.md` documents the permissive default security posture explicitly and every
   `COMPUTER_USE_*` variable, and its client examples and platform table now match the
   implementation.
