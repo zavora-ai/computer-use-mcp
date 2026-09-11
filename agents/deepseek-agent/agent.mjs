@@ -250,8 +250,17 @@ export async function runAgent({
   model = 'deepseek-flash',
   maxTurns = 20,
   detail = 'auto',
-  // deepseek-flash reasons before answering; leave room for both.
-  maxTokens = 8192,
+  /**
+   * Per-call completion cap. `null` (the default) omits `max_tokens` entirely and
+   * lets the model reason as long as it needs.
+   *
+   * A cap is the wrong place to control cost here: reasoning is billed against it,
+   * and a dense screenshot can take several thousand reasoning tokens before the
+   * first word of the answer — one Blender window took 6,959. Truncating that
+   * yields `finish_reason: "length"` with empty content, which is a failed turn
+   * that still bills in full. Bound the run with `tokenBudget` instead.
+   */
+  maxTokens = null,
   tokenBudget,
   extraInstructions = '',
   customTools = [],
@@ -273,6 +282,9 @@ export async function runAgent({
   }
   if (!Number.isSafeInteger(compactAboveTokens) || compactAboveTokens < 2000) {
     throw new Error('compactAboveTokens must be an integer of at least 2000')
+  }
+  if (maxTokens !== null && (!Number.isSafeInteger(maxTokens) || maxTokens < 64)) {
+    throw new Error('maxTokens must be null (uncapped) or an integer of at least 64')
   }
 
   const custom = new Map(customTools.map(tool => [tool.schema.name, tool]))
@@ -332,7 +344,9 @@ export async function runAgent({
     assertRequestWithinLimits(messages)
 
     const response = await deepseek.chat.completions.create({
-      model, messages, tools, tool_choice: 'auto', max_tokens: maxTokens,
+      model, messages, tools, tool_choice: 'auto',
+      // Omitted entirely when uncapped, so reasoning is never cut mid-answer.
+      ...(maxTokens === null ? {} : { max_tokens: maxTokens }),
     }, signal ? { signal } : undefined)
 
     usage.modelCalls += 1
@@ -351,7 +365,7 @@ export async function runAgent({
     // which is indistinguishable from "the model had nothing to say" unless the
     // finish reason is checked.
     if (choice.finish_reason === 'length' && !message?.tool_calls?.length && !message?.content?.trim()) {
-      throw new Error(`The model exhausted max_tokens (${maxTokens}) on reasoning before producing an answer. Raise maxTokens.`)
+      throw new Error(`The model exhausted max_tokens (${maxTokens}) on reasoning before producing an answer. Raise maxTokens, or pass maxTokens: null to leave it uncapped.`)
     }
     messages.push(message)
 

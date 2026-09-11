@@ -199,6 +199,11 @@ export interface NativeModule {
   mouseButton(action: string, x: number, y: number): void                // throws on invalid action
   mouseScroll(dy: number, dx: number): void
   mouseDrag(x: number, y: number): void
+  // Button- and modifier-aware pointer gestures. Optional: an older native module
+  // predates them, and the handler reports that rather than failing obscurely.
+  mousePress?(x: number, y: number, button: string, modifiers: string[]): void
+  mouseDragTo?(x: number, y: number, button: string, modifiers: string[]): void
+  mouseRelease?(x: number, y: number, button: string, modifiers: string[]): void
   cursorPosition(): { x: number; y: number }
   // Keyboard
   keyPress(combo: string, repeat?: number): void   // throws on unknown key
