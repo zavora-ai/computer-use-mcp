@@ -1,5 +1,51 @@
 # Changelog
 
+## v7.3.0 (2026-09-11)
+
+The run console shows what an agent is thinking and every call it makes, accepts an
+image to work from, and can read the web. See [the release notes](docs/releases/v7.3.0.md).
+
+### Added
+
+- Activity feed on a run: `thought`, `tool` and `result` events with per-call
+  timings, rendered live in the console. Reported by the host driver rather than
+  self-reported by the model — a driver already sees every streamed token and every
+  tool call, so the feed is complete and costs no extra model calls, where a model
+  asked to narrate its own tool use gives a partial account. Bounded at 400 events
+  and deliberately excluded from agent-facing replies, since handing an agent a
+  record of what it just did is both large and circular.
+- Image attachments. A person can attach a PNG, JPEG, WebP or GIF to any message,
+  including the first. The host writes it to disk and records only metadata and a
+  path, so run payloads stay free of base64. `run_attachment` returns the picture to
+  the agent as a real image block **and** the path it is saved at, which is what lets
+  Blender open it as a reference image or a texture rather than the agent modelling
+  from its own description of the picture.
+- `web_search`: ranked results with titles, URLs and snippets, taking the default
+  profile from 66 to 67 tools. Executes locally, so it works with any model rather
+  than only those whose provider offers a server-side search tool. Providers are
+  pluggable through `COMPUTER_USE_SEARCH_PROVIDER` (`brave`, `tavily`, `serper`,
+  `duckduckgo`) with `COMPUTER_USE_SEARCH_API_KEY`; with no key it falls back to
+  DuckDuckGo's HTML endpoint so the tool works out of the box, and says plainly that
+  the page carries no compatibility promise. Pair it with the existing `scrape` to
+  read a result.
+
+### Changed
+
+- The console treats `planning` as a busy state. Every activity affordance — the
+  spinning mark, the pulsing pip, the typing dots, the frame sweep and the LIVE
+  badge — was bound to `working` only, so a run sat visibly dead while the agent
+  composed its first plan. On a long request that is minutes of a console that looks
+  broken while it is in fact thinking.
+- The console's left column now carries the conversation, a collapsible activity
+  feed and the composer; the composer gained an attach button.
+
+### Fixed
+
+- Uploaded filenames are reduced to a single dot-free path segment, so no attachment
+  is ever written under a name containing `..`. It was not exploitable — the name was
+  always joined to a host-chosen directory — but a file called `my-ref-..-shot.png`
+  is a trap for anything that later parses it.
+
 ## v7.2.0 (2026-09-10)
 
 Application discovery, an agent run console a person can watch and steer, pointer

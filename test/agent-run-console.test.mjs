@@ -316,6 +316,94 @@ test('only the console reply carries the frame bytes', async () => {
   }
 })
 
+test('activity is recorded for the person, and kept away from the agent', async () => {
+  const store = new RunStore()
+  store.start('build it', 'run_fixture')
+  const recorded = store.record('run_fixture', [
+    { kind: 'thought', detail: '  I should look at the scene first  ' },
+    { kind: 'tool', name: 'get_objects_summary', detail: '{}' },
+    { kind: 'result', name: 'get_objects_summary', detail: '3 objects', ms: 51.7 },
+    { kind: 'result', name: 'execute_blender_code', detail: 'boom', failed: true },
+    { kind: 'thought', detail: '   ' },
+  ])
+  assert.equal(recorded.activity.length, 4, 'an empty thought with no tool name is not an event')
+  assert.equal(recorded.activity[0].detail, 'I should look at the scene first', 'detail is trimmed')
+  assert.equal(recorded.activity[2].ms, 52, 'durations are rounded to whole milliseconds')
+  assert.equal(recorded.activity[3].failed, true)
+  assert.equal(recorded.activity[1].failed, undefined, 'success carries no failed flag')
+
+  // Bounded, because one turn can be dozens of calls.
+  store.record('run_fixture', Array.from({ length: 500 }, (_, index) => ({ kind: 'tool', name: `t${index}`, detail: '' })))
+  const bounded = store.status('run_fixture')
+  assert.equal(bounded.activity.length, 400)
+  assert.equal(bounded.activity.at(-1).name, 't499', 'the newest activity survives')
+
+  // The agent must not be handed its own activity log back: it is large and circular.
+  const client = await connect({ runStore: store })
+  try {
+    const reply = await client.callTool('run_say', { runId: 'run_fixture', text: 'still going' })
+    const text = reply.content.find(block => block.type === 'text').text
+    assert.equal('activity' in parse(reply), false, 'agent replies omit the activity log')
+    assert.doesNotMatch(text, /I should look at the scene first/)
+    // ...but the console still gets it, because that is who it is for.
+    const shown = parse(await client.callTool('run_console', { runId: 'run_fixture' }))
+    assert.equal(shown.activity.length, 400)
+  } finally {
+    await client.close()
+  }
+})
+
+test('an attached image reaches the agent as a picture and as a path', async () => {
+  const { mkdtemp, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  // The host writes the upload to disk; the store only ever holds where it went.
+  const directory = await mkdtemp(join(tmpdir(), 'run-attach-'))
+  const path = join(directory, 'reference.png')
+  const bytes = Buffer.from('ZmFrZS1pbWFnZQ==', 'base64')
+  await writeFile(path, bytes)
+
+  const store = new RunStore()
+  store.start('match this reference', 'run_fixture')
+  store.attach('run_fixture', { name: 'reference.png', mimeType: 'image/png', bytes: bytes.byteLength, path, at: new Date().toISOString() })
+  assert.equal(store.attachments('run_fixture').length, 1)
+  assert.equal(store.status('run_fixture').messages[0].attachment.name, 'reference.png',
+    'an image can ride along with the opening request rather than a second empty turn')
+
+  const client = await connect({ runStore: store })
+  try {
+    const result = await client.callTool('run_attachment', { runId: 'run_fixture' })
+    const image = result.content.find(block => block.type === 'image')
+    assert.ok(image, 'the agent gets the picture itself')
+    assert.equal(Buffer.from(image.data, 'base64').toString(), 'fake-image')
+    assert.equal(image.mimeType, 'image/png')
+    // The path is the point: it is what lets an application open the file.
+    const meta = parse(result)
+    assert.equal(meta.path, path)
+    assert.equal(meta.index, 0)
+    assert.equal(meta.of, 1)
+
+    const missing = await client.callTool('run_attachment', { runId: 'run_fixture', index: 4 })
+    assert.equal(missing.isError, true)
+    assert.match(parse(missing).message, /No attachment at index 4/)
+  } finally {
+    await client.close()
+  }
+})
+
+test('run_attachment says so when nothing has been attached', async () => {
+  const client = await connect()
+  try {
+    const { runId } = parse(await client.callTool('run_start', { prompt: 'x' }))
+    const empty = await client.callTool('run_attachment', { runId })
+    assert.equal(empty.isError, true)
+    assert.match(parse(empty).message, /Nothing has been attached/)
+  } finally {
+    await client.close()
+  }
+})
+
 test('the console app is self-contained and cannot be made to run agent markup', async () => {
   const client = await connect()
   try {
@@ -349,7 +437,7 @@ test('the console is branded and built from the two panels it promises', () => {
   // Right panel: the frame, with motion bound to run state rather than a timer.
   assert.ok(RUN_CONSOLE_HTML.includes('id="stage"'))
   assert.ok(RUN_CONSOLE_HTML.includes('id="shot"'))
-  assert.ok(RUN_CONSOLE_HTML.includes('body[data-state=working] #scan'))
+  assert.ok(RUN_CONSOLE_HTML.includes('body[data-busy] #scan'))
   // Motion is a courtesy, not a requirement.
   assert.ok(RUN_CONSOLE_HTML.includes('prefers-reduced-motion'))
 })

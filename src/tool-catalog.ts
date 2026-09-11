@@ -183,6 +183,7 @@ export const TOOL_CATALOG: Record<string, ToolMeta> = {
   multi_select: CG_MUT('full'),
   multi_edit: CG_MUT('full'),
   scrape: NONE_READ('full', { openWorldHint: true }),
+  web_search: NONE_READ('full', { openWorldHint: true }),
 }
 
 /** Tools that acquire the session lock (derived from catalog mutates flag). */

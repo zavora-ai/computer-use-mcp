@@ -11,6 +11,7 @@
  * one the desktop actually produced, not one the model described.
  */
 
+import { readFileSync } from 'node:fs'
 import { z, type ZodIssue, type ZodTypeAny } from 'zod'
 import type { McpServer, ServerContext } from '@modelcontextprotocol/server'
 import { RUN_CONSOLE_HTML } from './run-console.js'
@@ -38,9 +39,52 @@ export interface RunShot {
 
 export type MessageRole = 'user' | 'agent'
 
+/**
+ * An image a person attached to the conversation.
+ *
+ * Only metadata and a path live here: the bytes stay on disk. That keeps every
+ * run payload small, lets the page fetch the file instead of carrying base64,
+ * and — the reason it is a path rather than a blob — means Blender can load it
+ * directly as a reference image or a texture without anything decoding it first.
+ */
+export interface RunAttachment {
+  name: string
+  mimeType: string
+  bytes: number
+  /** Absolute path the host wrote it to. Never supplied by a model. */
+  path: string
+  at: string
+}
+
 export interface RunMessage {
   role: MessageRole
   text: string
+  at: string
+  /** Set when the person attached an image to this turn. */
+  attachment?: RunAttachment
+}
+
+/**
+ * What an agent is doing, moment to moment.
+ *
+ * `thought` is the model reasoning aloud before it acts; `tool` is a call going
+ * out; `result` is what came back. These are *observed by the host driver*, not
+ * self-reported by the model: the driver already sees every streamed token and
+ * every tool call, so the feed is complete and costs no extra model calls. Asking
+ * a model to narrate its own tool use gets a partial, flattering account.
+ */
+export type ActivityKind = 'thought' | 'tool' | 'result'
+
+export interface RunActivity {
+  kind: ActivityKind
+  /** Tool name, for `tool` and `result`. */
+  name?: string
+  /** The thought, or a short summary of the arguments or the reply. */
+  detail: string
+  /** Set when a result came back as an error. */
+  failed?: boolean
+  /** How long the call took, in milliseconds. */
+  ms?: number
   at: string
 }
 
@@ -51,6 +95,8 @@ export interface Run {
   tasks: RunTask[]
   /** Turn-by-turn transcript: the request, what the agent said, later asks. */
   messages: RunMessage[]
+  /** What the agent is doing, as observed: thinking, calls, results. */
+  activity: RunActivity[]
   narration: string
   screenshot?: RunShot
   startedAt: string
@@ -78,6 +124,11 @@ const MAX_TASKS = 40
 const MAX_SHOT_BYTES = 3 * 1024 * 1024
 /** Enough transcript to follow a long run, bounded so a loop cannot grow it forever. */
 const MAX_MESSAGES = 200
+/**
+ * Activity is far chattier than the transcript — a single turn can be dozens of
+ * calls — so it is bounded separately and kept out of agent-facing replies.
+ */
+const MAX_ACTIVITY = 400
 
 /** In-memory run store. Bounded, and oldest-first eviction keeps it that way. */
 export class RunStore {
@@ -93,8 +144,8 @@ export class RunStore {
   }
 
   /** Append a turn, evicting the oldest once the transcript is full. */
-  #say(run: Run, role: MessageRole, text: string): void {
-    run.messages.push({ role, text, at: this.#stamp() })
+  #say(run: Run, role: MessageRole, text: string, attachment?: RunAttachment): void {
+    run.messages.push({ role, text, at: this.#stamp(), ...(attachment ? { attachment } : {}) })
     // Keep the opening request, which is the run's context, and drop from just
     // after it — losing the prompt would make the transcript unreadable.
     while (run.messages.length > MAX_MESSAGES) run.messages.splice(1, 1)
@@ -109,6 +160,7 @@ export class RunStore {
     const run: Run = {
       runId, prompt, state: 'planning', tasks: [],
       messages: [{ role: 'user', text: prompt, at }],
+      activity: [],
       narration: '', startedAt: at, updatedAt: at,
     }
     this.#runs.set(runId, run)
@@ -122,11 +174,61 @@ export class RunStore {
    * reply carries the whole transcript, so the agent sees it on its next call
    * without polling for it.
    */
-  say(runId: string, role: MessageRole, text: string): Run {
+  say(runId: string, role: MessageRole, text: string, attachment?: RunAttachment): Run {
     const run = this.get(runId)
     const trimmed = text.trim()
     if (!trimmed) throw new Error('A message needs text')
-    this.#say(run, role, trimmed)
+    this.#say(run, role, trimmed, attachment)
+    run.updatedAt = this.#stamp()
+    return run
+  }
+
+  /** Every image attached to this conversation, oldest first. */
+  attachments(runId: string): RunAttachment[] {
+    return this.get(runId).messages
+      .map(message => message.attachment)
+      .filter((attachment): attachment is RunAttachment => Boolean(attachment))
+  }
+
+  /**
+   * Attach an image to the most recent turn.
+   *
+   * Separate from `say` so the opening request can carry one too: that message is
+   * created by `start`, and a person who drags an image in with their first
+   * sentence should not end up with it hanging off a second, empty turn.
+   */
+  attach(runId: string, attachment: RunAttachment): Run {
+    const run = this.get(runId)
+    const last = run.messages[run.messages.length - 1]
+    if (!last) throw new Error('There is no turn to attach to')
+    last.attachment = attachment
+    run.updatedAt = this.#stamp()
+    return run
+  }
+
+  /**
+   * Append observed activity.
+   *
+   * Takes a batch because a driver watching a stream produces several events at
+   * once, and one call per event would be a lot of traffic for a live view.
+   */
+  record(runId: string, events: Array<Omit<RunActivity, 'at'> & { at?: string }>): Run {
+    const run = this.get(runId)
+    for (const event of events) {
+      const detail = event.detail.trim()
+      if (!detail && !event.name) continue
+      run.activity.push({
+        kind: event.kind,
+        ...(event.name ? { name: event.name } : {}),
+        detail: detail.slice(0, 2000),
+        ...(event.failed ? { failed: true } : {}),
+        ...(typeof event.ms === 'number' && Number.isFinite(event.ms) ? { ms: Math.max(0, Math.round(event.ms)) } : {}),
+        at: event.at ?? this.#stamp(),
+      })
+    }
+    // Oldest-first eviction: a live view cares about now, and the transcript
+    // still holds the narrated account of what happened earlier.
+    if (run.activity.length > MAX_ACTIVITY) run.activity.splice(0, run.activity.length - MAX_ACTIVITY)
     run.updatedAt = this.#stamp()
     return run
   }
@@ -229,6 +331,22 @@ function describe(data: string): string {
 }
 
 /**
+ * The run as an agent should see it.
+ *
+ * Two things are held back. The screenshot's base64 is replaced by its size,
+ * because a model cannot read base64 inside a JSON string and repeating ~100 KB
+ * on every call is pure waste. The activity log is dropped outright: it is a
+ * record of what this agent just did, so returning it is both large and circular.
+ * Both exist for the person watching, and `run_console` still carries them.
+ */
+function forAgent(run: Run): Omit<Run, 'activity'> {
+  const { activity: _activity, ...rest } = run
+  return rest.screenshot
+    ? { ...rest, screenshot: { ...rest.screenshot, data: describe(rest.screenshot.data) } }
+    : rest
+}
+
+/**
  * Register the run-tracking tools and the console UI resource.
  *
  * `capture` is optional: without it the tools still work and the console simply
@@ -253,17 +371,19 @@ export function registerRunConsole(
    * repeating it on every plan, progress and message reply would send the same
    * unusable pixels back dozens of times in a run. `run_console` is the one
    * caller that gets the bytes, because the page has to draw them.
+   *
+   * The activity log is dropped for the same reason and a stronger one: it is a
+   * record of what this agent just did, so feeding it back is both large and
+   * circular. It exists for the person watching.
    */
   const reply = (run: Run): ToolReply => {
-    const described = run.screenshot
-      ? { ...run, screenshot: { ...run.screenshot, data: describe(run.screenshot.data) } }
-      : run
+    const described = forAgent(run)
     return {
       content: [{ type: 'text', text: JSON.stringify(described) }],
       structuredContent: described as unknown as Record<string, unknown>,
     }
   }
-  /** The full run, frame included. For the console UI, which renders it. */
+  /** The full run, frame and activity included. For the console UI. */
   const replyInFull = (run: Run): ToolReply => ({
     content: [{ type: 'text', text: JSON.stringify(run) }],
     structuredContent: run as unknown as Record<string, unknown>,
@@ -278,7 +398,7 @@ export function registerRunConsole(
    * the JSON is replaced by its size so the bytes are not sent twice over.
    */
   const replyWithFrame = (run: Run, shot: RunShot): ToolReply => {
-    const described = { ...run, screenshot: { ...shot, data: describe(shot.data) } }
+    const described = forAgent(run)
     return {
       content: [
         { type: 'text', text: JSON.stringify(described) },
@@ -389,6 +509,37 @@ export function registerRunConsole(
       role: z.enum(['user', 'agent']).default('agent').describe('Who is speaking'),
     },
   }, args => reply(store.say(args.runId, args.role, args.text)))
+
+  define('run_attachment', {
+    description: 'Look at an image the person attached to the conversation. Returns the picture itself, plus the path it is saved at on this machine — pass that path to an application when you need it to load the file, for example as a reference image or a texture. Omit index for the most recent attachment.',
+    inputSchema: {
+      runId,
+      index: z.number().int().nonnegative().optional().describe('Which attachment, oldest first from 0. Omit for the latest.'),
+    },
+  }, args => {
+    const attachments = store.attachments(args.runId)
+    if (!attachments.length) throw new Error('Nothing has been attached to this conversation')
+    const position = args.index ?? attachments.length - 1
+    const attachment = attachments[position]
+    if (!attachment) {
+      throw new Error(`No attachment at index ${position}; this conversation has ${attachments.length}`)
+    }
+    // The path was recorded by the host when the person uploaded the file. A model
+    // only ever supplies an index, so there is no path for it to point anywhere.
+    let data: string
+    try {
+      data = readFileSync(attachment.path).toString('base64')
+    } catch (error) {
+      throw new Error(`Attachment ${attachment.name} is no longer readable at ${attachment.path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return {
+      content: [
+        { type: 'text', text: JSON.stringify({ ...attachment, index: position, of: attachments.length }) },
+        { type: 'image', data, mimeType: attachment.mimeType },
+      ],
+      structuredContent: { ...attachment, index: position, of: attachments.length },
+    }
+  })
 
   define('run_console', {
     description: 'Read the current state of a run: prompt, transcript, plan with task statuses, narration and latest screenshot. This is the complete text fallback for hosts that cannot render MCP Apps.',
