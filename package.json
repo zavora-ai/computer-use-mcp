@@ -23,7 +23,8 @@
   ],
   "bin": {
     "computer-use-mcp": "dist/server.js",
-    "computer-use-mcp-http": "dist/http.js"
+    "computer-use-mcp-http": "dist/http.js",
+    "computer-use-mcp-console": "dist/run-console-host.js"
   },
   "exports": {
     ".": {
@@ -97,6 +98,10 @@
     "./session": {
       "types": "./dist/session.d.ts",
       "import": "./dist/session.js"
+    },
+    "./run-console": {
+      "types": "./dist/run-console-host.d.ts",
+      "import": "./dist/run-console-host.js"
     }
   },
   "files": [
@@ -188,7 +193,13 @@
     "docs/assets/architecture.svg",
     "docs/assets/astra-painting.png",
     "docs/assets/deepseek-ledger-run.gif",
-    "docs/assets/deepseek-ledger-run.mp4"
+    "docs/assets/deepseek-ledger-run.mp4",
+    "dist/agent-run.js",
+    "dist/agent-run.d.ts",
+    "dist/run-console.js",
+    "dist/run-console.d.ts",
+    "dist/run-console-host.js",
+    "dist/run-console-host.d.ts"
   ],
   "scripts": {
     "build:native": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.dylib ../computer-use-napi.node && codesign --force --sign - ../computer-use-napi.darwin-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node ../computer-use-napi.node",
@@ -207,7 +218,8 @@
     "server": "tsx src/server.ts",
     "test:strategy": "npm run build:ts && node --test test/strategy*.test.mjs test/runtime.test.mjs test/session-console.test.mjs",
     "test:browser": "npm run build:ts && node scripts/test-browser.mjs",
-    "evaluate:strategy": "npm run build:ts && node scripts/evaluate-strategy.mjs"
+    "evaluate:strategy": "npm run build:ts && node scripts/evaluate-strategy.mjs",
+    "console": "node dist/run-console-host.js"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
