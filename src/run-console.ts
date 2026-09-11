@@ -1,10 +1,14 @@
 /**
- * Blender Agent run console — a self-contained MCP App.
+ * Agent run console — a self-contained MCP App.
  *
  * Two panels: the conversation on the left, what the agent is looking at on the
  * right. The person watching sees the request, every line the agent says, the
  * plan with live task states, and the latest frame captured from the desktop.
  * They can also send a note mid-run, which reaches the agent on its next call.
+ *
+ * The console itself is generic: the same two panels serve an agent modelling in
+ * Blender and one reading dashboards. Only the header names a use case, so it is
+ * a parameter rather than a constant — see `runConsoleHtml`.
  *
  * Motion is deliberate and driven only by run state: a scan sweep and a pulsing
  * live badge while `working`, a fade when a new frame lands, nothing when idle.
@@ -14,7 +18,72 @@
  * storage, and every value from the agent is written with `textContent`, never
  * interpolated as HTML. An agent that returns markup cannot inject it here.
  */
-export const RUN_CONSOLE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blender Agent</title><style>
+
+/** One segment of the byline under the agent's name. */
+export type BrandCredit = string | { label: string; value: string }
+
+/** What the console header says it is. Everything below the header is generic. */
+export interface ConsoleBrand {
+  /** The agent's name, in the header and the document title. */
+  name?: string
+  /** The stack line beneath it. A bare string is emphasised; a pair reads `label <b>value</b>`. */
+  credits?: BrandCredit[]
+}
+
+/**
+ * The Blender agent's branding, which is what the published console has always
+ * shown. Kept as the default so existing hosts and their screenshots are
+ * unaffected by the header becoming configurable.
+ */
+export const DEFAULT_BRAND: Required<ConsoleBrand> = {
+  name: 'Blender Agent',
+  credits: ['ADK Rust', 'Computer Use MCP', { label: 'running on', value: 'DeepSeek Flash' }],
+}
+
+/** The analytics agent's branding, for a host reading dashboards rather than modelling. */
+export const ANALYTICS_BRAND: Required<ConsoleBrand> = {
+  name: 'Analytics Agent',
+  credits: ['ADK Rust', 'Business Intelligence MCP', { label: 'running on', value: 'DeepSeek Flash' }],
+}
+
+/**
+ * Escape text destined for the header. A brand comes from the host operator
+ * rather than a model, but it is the one string interpolated into this document
+ * as markup, so it is escaped on the way in rather than trusted.
+ */
+function escapeText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function renderCredits(credits: BrandCredit[]): string {
+  return credits
+    .map(credit =>
+      typeof credit === 'string'
+        ? `<b>${escapeText(credit)}</b>`
+        : `${escapeText(credit.label)} <b>${escapeText(credit.value)}</b>`,
+    )
+    .join(' · ')
+}
+
+/** Build the console app, named for whichever agent is reporting into it. */
+export function runConsoleHtml(brand: ConsoleBrand = {}): string {
+  const raw = brand.name ?? DEFAULT_BRAND.name
+  const name = escapeText(raw)
+  const credits = renderCredits(brand.credits ?? DEFAULT_BRAND.credits)
+  // The identity the app announces itself under. Derived from the brand so one
+  // use case never announces itself as another; `Blender Agent` still yields the
+  // `blender-agent-run-console` this has always sent.
+  const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent'
+  return RUN_CONSOLE_TEMPLATE.replace(/__BRAND_NAME__/g, name)
+    .replace('__BRAND_CREDITS__', credits)
+    .replace('__BRAND_SLUG__', slug)
+}
+
+const RUN_CONSOLE_TEMPLATE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>__BRAND_NAME__</title><style>
 :root{
   color-scheme:dark;
   --bg:#101215;--panel:#161a1f;--sunk:#0c0e11;--line:#262c34;
@@ -186,8 +255,8 @@ li[data-status=active]::after{content:"";position:absolute;inset:0;pointer-event
   <header id="brand">
     <div class="mark" aria-hidden="true"></div>
     <div class="who">
-      <h1>Blender Agent</h1>
-      <p class="stack"><b>ADK Rust</b> · <b>Computer Use MCP</b> · running on <b>DeepSeek Flash</b></p>
+      <h1>__BRAND_NAME__</h1>
+      <p class="stack">__BRAND_CREDITS__</p>
     </div>
     <div class="live"><span class="pip" aria-hidden="true"></span><span id="state" role="status" aria-live="polite">connecting</span></div>
   </header>
@@ -473,7 +542,13 @@ window.addEventListener('message',event=>{
 });
 
 setInterval(tick,1000);
-rpc('ui/initialize',{appInfo:{name:'blender-agent-run-console',version:'1.0.0'},appCapabilities:{},protocolVersion:'2026-01-26'})
+rpc('ui/initialize',{appInfo:{name:'__BRAND_SLUG__-run-console',version:'1.0.0'},appCapabilities:{},protocolVersion:'2026-01-26'})
   .then(()=>{ready=true;send({method:'ui/notifications/initialized',params:{}});el('state').textContent='ready';el('say').disabled=false;el('send').disabled=false;if(runId)refresh().catch(showError)})
   .catch(showError);
 </script></body></html>`
+
+/**
+ * The console as it has always shipped, branded for the Blender agent. Hosts that
+ * want a different name call `runConsoleHtml` instead; nothing else differs.
+ */
+export const RUN_CONSOLE_HTML = runConsoleHtml()

@@ -46,6 +46,8 @@
  *   computer-use-mcp-console                # serve, and run the scripted demo
  *   computer-use-mcp-console --no-demo      # serve, and wait for a real agent
  *   computer-use-mcp-console --port 4600 --no-open
+ *   computer-use-mcp-console --no-demo --brand 'Analytics Agent' \
+ *     --credits 'ADK Rust,Business Intelligence MCP,running on=DeepSeek Flash'
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -58,7 +60,7 @@ import { createComputerUseServer, createComputerUseHttpHandler } from './server.
 import { connectInProcess } from './client.js'
 import { createSession } from './session.js'
 import { RunStore, type RunAttachment } from './agent-run.js'
-import { RUN_CONSOLE_HTML } from './run-console.js'
+import { RUN_CONSOLE_HTML, runConsoleHtml, type ConsoleBrand } from './run-console.js'
 import { isModuleEntrypoint } from './entrypoint.js'
 
 /**
@@ -187,6 +189,11 @@ export interface ServeOptions {
   session?: Parameters<typeof createComputerUseServer>[0] extends { session?: infer S } ? S : never
   /** Where to report activity. Printing is the CLI's job, not this function's. */
   onLog?: (line: string) => void
+  /**
+   * What the console header calls the agent. Omit it and the header reads
+   * `Blender Agent`, which is what the published console has always shown.
+   */
+  brand?: ConsoleBrand
 }
 
 export async function serve({
@@ -194,7 +201,11 @@ export async function serve({
   demo = false,
   session: injected,
   onLog = () => {},
+  brand,
 }: ServeOptions = {}): Promise<ConsoleHost> {
+  // Built once: the header is fixed for the life of the host, so there is no
+  // reason to re-render the document on every request for it.
+  const app = brand ? runConsoleHtml(brand) : RUN_CONSOLE_HTML
   // Created once and injected, so every per-request server the MCP endpoint
   // builds records into the same transcript and captures through the same
   // desktop. This is the difference between a live console and an empty one.
@@ -323,7 +334,7 @@ export async function serve({
           return
         }
         if (url === '/') return html(response, HOST_HTML)
-        if (url === '/app') return html(response, RUN_CONSOLE_HTML)
+        if (url === '/app') return html(response, app)
         if (url === '/run-id') {
           response.writeHead(200, { 'Content-Type': 'text/plain' })
           return response.end(currentRunId)
@@ -519,11 +530,24 @@ async function runScriptedDemo(
 if (isModuleEntrypoint(import.meta.url, process.argv[1])) {
   const flag = (name: string): number => process.argv.indexOf(name)
   const portFlag = flag('--port')
+  const brandFlag = flag('--brand')
+  const creditsFlag = flag('--credits')
+  // Comma separated. A segment written `label=value` emphasises only the value,
+  // which is how the default byline reads `running on DeepSeek Flash`.
+  const credits = creditsFlag > -1
+    ? process.argv[creditsFlag + 1].split(',').map(segment => {
+        const [label, ...rest] = segment.trim().split('=')
+        return rest.length ? { label, value: rest.join('=') } : segment.trim()
+      })
+    : undefined
   const host = await serve({
     port: portFlag > -1 ? Number(process.argv[portFlag + 1]) : 4517,
     // The scripted walkthrough is the default so the console shows something the
     // moment it opens. An agent driving it is the real thing; ask for --no-demo.
     demo: flag('--no-demo') === -1,
+    // Name the agent in the header. The console is generic infrastructure, so a
+    // host reading dashboards should not have to say `Blender Agent`.
+    brand: brandFlag > -1 ? { name: process.argv[brandFlag + 1], credits } : undefined,
     onLog: line => console.error(`[console] ${line}`),
   })
   console.log(`Console  ${host.url}`)
