@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 import { createServer } from 'node:http'
-import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   localhostHostValidation,
   localhostOriginValidation,
   toNodeHandler,
 } from '@modelcontextprotocol/node'
 import { createComputerUseHttpHandler } from './server.js'
+import { isModuleEntrypoint } from './entrypoint.js'
 
 const host = process.env.COMPUTER_USE_HTTP_HOST ?? '127.0.0.1'
 const port = Number(process.env.COMPUTER_USE_HTTP_PORT ?? 3100)
@@ -58,6 +57,6 @@ export function startComputerUseHttpServer() {
   return { http, handler, close }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+if (isModuleEntrypoint(import.meta.url, process.argv[1])) {
   startComputerUseHttpServer()
 }

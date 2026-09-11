@@ -1,3 +1,6 @@
+import { realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 /**
  * Standalone stdio entrypoint detection.
  *
@@ -24,4 +27,26 @@ export function isStdioEntrypoint(argv1: string | undefined): boolean {
     normalized.endsWith('/server.js') ||
     normalized.endsWith('/computer-use-mcp')
   )
+}
+
+/**
+ * Is this module the file the process was started from?
+ *
+ * The obvious check — `fileURLToPath(import.meta.url) === resolve(process.argv[1])`
+ * — is false for every packaged CLI. npm installs a bin as a symlink under
+ * `node_modules/.bin`, so `process.argv[1]` is that link while `import.meta.url`
+ * is the real file it points at. The comparison fails, the CLI block never runs,
+ * and the command exits successfully having done nothing at all.
+ *
+ * Comparing resolved real paths gets it right whether the module was reached
+ * directly, through a bin symlink, or through a symlinked checkout.
+ */
+export function isModuleEntrypoint(moduleUrl: string, argv1: string | undefined): boolean {
+  if (!argv1) return false
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argv1)
+  } catch {
+    // A path that cannot be resolved is not the entrypoint.
+    return false
+  }
 }

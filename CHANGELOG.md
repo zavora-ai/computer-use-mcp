@@ -20,6 +20,15 @@
   builds a server per request, and without this every request began with an empty
   transcript and no run was findable twice.
 
+### Fixed
+
+- `computer-use-mcp-http` starts when invoked through its installed binary. npm
+  installs a bin as a symlink under `node_modules/.bin`, so `process.argv[1]` was
+  the link while `import.meta.url` was the real file; the entrypoint comparison was
+  false for every packaged invocation and the command exited successfully without
+  serving anything. `isModuleEntrypoint` compares resolved real paths, and both the
+  HTTP runner and the new console host use it.
+
 ### Changed
 
 - `ServerOptions.session` is documented as a supported way for a host to share one

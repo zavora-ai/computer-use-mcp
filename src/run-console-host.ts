@@ -50,14 +50,13 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-import { resolve as resolvePath } from 'node:path'
 import { localhostHostValidation, localhostOriginValidation, toNodeHandler } from '@modelcontextprotocol/node'
 import { createComputerUseServer, createComputerUseHttpHandler } from './server.js'
 import { connectInProcess } from './client.js'
 import { createSession } from './session.js'
 import { RunStore } from './agent-run.js'
 import { RUN_CONSOLE_HTML } from './run-console.js'
+import { isModuleEntrypoint } from './entrypoint.js'
 
 /**
  * The host page: an iframe plus the postMessage bridge. Same origin, so no CSP
@@ -410,7 +409,7 @@ async function runScriptedDemo(
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) {
+if (isModuleEntrypoint(import.meta.url, process.argv[1])) {
   const flag = (name: string): number => process.argv.indexOf(name)
   const portFlag = flag('--port')
   const host = await serve({
