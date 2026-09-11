@@ -655,6 +655,43 @@ await client.callTool('scrape', { url: 'https://example.com' })
 // Returns clean text extracted from the web page
 ```
 
+## Let a person watch: the run console
+
+Enable it with `runConsole: true` (or run `computer-use-mcp-console`). It adds five
+tools and an MCP App at `ui://computer-use/run-console/v1`, taking the surface from
+65 to 70. A plan the agent declares and the frames it captures render live in a
+browser, so a person follows the work instead of a tool log.
+
+```typescript
+const { runId } = JSON.parse(text(await client.callTool('run_start', { prompt: userRequest })))
+await client.callTool('run_plan', { runId, tasks: [
+  { id: 'read', title: 'Read the current scene' },
+  { id: 'build', title: 'Build the shape' },
+]})
+await client.callTool('run_progress', { runId, taskId: 'read', status: 'active',
+  narration: 'Looking at what is already there.' })
+// capture:true attaches the frame to the console AND returns it to you as an
+// image, so this is how you look at the screen and show it in one call.
+await client.callTool('run_progress', { runId, taskId: 'read', status: 'done',
+  note: '3 objects: Cube, Camera, Light', capture: true, window_id: 1484 })
+await client.callTool('run_progress', { runId, state: 'done', narration: 'Finished.' })
+```
+
+Four things worth knowing:
+
+- **The transcript is the steering channel.** Every run tool reply returns the whole
+  transcript. A turn with `role: "user"` is the person typing while you work, so read
+  it and adapt rather than finishing the plan you started with.
+- **A message you have not answered is the signal to act.** Hosts that keep one run
+  per conversation let an agent poll `run_console` and treat "the last message has
+  `role: "user"`" as work to do; answering appends an `agent` turn and clears it.
+- **Screenshots are captured server-side.** `run_progress` takes `capture: true`, not
+  image data, so the console cannot be made to show a frame the desktop never
+  produced.
+- **A plan declared after the run finished starts clean.** Re-calling `run_plan` while
+  working preserves the status of tasks that keep their id, which is how you revise
+  a plan mid-task. Once the run is `done` or `failed`, nothing is inherited.
+
 ## Platform compatibility
 
 Verified against the platform guards in `src/session/` and the `target_os` gates in

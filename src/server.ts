@@ -7,6 +7,7 @@ import { BrowserBackend } from './browser.js'
 import { registerBrowserTools } from './browser-tools.js'
 import { DesktopBroker } from './desktop-broker.js'
 import { registerStrategy, UI_EXTENSION } from './strategy.js'
+import { registerRunConsole, type RunStore } from './agent-run.js'
 import { principalKey } from './authority.js'
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -93,7 +94,26 @@ export interface ServerOptions extends SessionOptions {
   desktopBroker?: DesktopBroker
   browserBackend?: BrowserBackend
 
-  /** Override session instance for tests. */
+  /**
+   * Expose the agent run console: a plan, narration and live screenshots that a
+   * person can watch while the agent works. Opt-in, because it adds four tools
+   * and a UI resource that only make sense when a human is looking.
+   */
+  runConsole?: boolean
+  /**
+   * Run store to record into. Supply one when serving over HTTP: that handler
+   * builds a server per request, so without a shared store every request would
+   * start from an empty transcript and no run would ever be findable again.
+   */
+  runStore?: RunStore
+  /** Receives the run store so a host can read run state directly. */
+  onRunStore?: (store: RunStore) => void
+
+  /**
+   * Desktop session to drive. Supply one to share a single session across the
+   * per-request servers the HTTP handler builds, or to substitute a fake in
+   * tests. Left unset, each server owns a session and closes it on disconnect.
+   */
   session?: Session
   /** Init-time maximum tool profile. Default full. */
   profile?: ProfileName | string
@@ -149,7 +169,10 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
       capabilities: {
         logging: {},
         resources: { subscribe: true },
-        extensions: { [TASKS_EXTENSION_ID]: {}, ...(opts.desktopBroker ? { [UI_EXTENSION]: {} } : {}) },
+        extensions: {
+          [TASKS_EXTENSION_ID]: {},
+          ...(opts.desktopBroker || opts.runConsole ? { [UI_EXTENSION]: {} } : {}),
+        },
       },
       cacheHints: {
         'server/discover': { ttlMs: 30_000, cacheScope: 'private' },
@@ -280,6 +303,23 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   registry.registerAll(server)
   const extensions = opts.desktopBroker ? registerStrategy(server, registry, opts.desktopBroker) : new Map()
   if (opts.browserBackend) for (const [name, execute] of registerBrowserTools(server, opts.browserBackend, registry)) extensions.set(name, execute)
+  if (opts.runConsole) {
+    // Capture through the same session the agent drives, so the console shows a
+    // real desktop frame rather than anything the model could fabricate.
+    const runConsole = registerRunConsole(server, {
+      ...(opts.runStore ? { store: opts.runStore } : {}),
+      capture: async windowId => {
+        const result = await session.dispatch('screenshot', {
+          ...(windowId !== undefined ? { target_window_id: windowId } : {}),
+          quality: 70,
+        })
+        const image = result.content.find(block => block.type === 'image')
+        return image && image.type === 'image' ? { data: image.data, mimeType: image.mimeType } : null
+      },
+    })
+    for (const [name, execute] of runConsole.executors) extensions.set(name, execute)
+    opts.onRunStore?.(runConsole.store)
+  }
   ;(opts.taskManager ?? taskManager).install(server, registry, extensions)
   opts.onRegistry?.(registry)
   registerPrompts(server, session)

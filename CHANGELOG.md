@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Agent run console (`COMPUTER_USE_PROFILE` unaffected; opt in with
+  `runConsole: true`): five tools — `run_start`, `run_plan`, `run_progress`,
+  `run_say`, `run_console` — plus an MCP App at `ui://computer-use/run-console/v1`.
+  An agent declares a plan, marks one task active at a time and attaches captures
+  as it works, so a person watches the work instead of reading tool calls. The
+  transcript doubles as the steering channel: a `user` turn is returned by every
+  run tool, so an agent mid-task sees a new instruction without polling.
+- `computer-use-mcp-console` binary: a loopback host that serves the console UI,
+  the MCP Apps `postMessage` bridge and a real `/mcp` endpoint from one process, so
+  the browser and the agent read the same run. Runs a scripted walkthrough by
+  default — real captures, written words — so the console can be seen working with
+  no API key; `--no-demo` waits for a live agent instead.
+- `ServerOptions.runStore`, so a shared run store can be injected. The HTTP handler
+  builds a server per request, and without this every request began with an empty
+  transcript and no run was findable twice.
+
+### Changed
+
+- `ServerOptions.session` is documented as a supported way for a host to share one
+  desktop session across the per-request servers the HTTP handler builds, rather
+  than only a test seam.
+- `run_progress` returns a fresh capture as an image block, so one call both shows
+  the person the frame and lets the agent look at it. Agent-facing run replies now
+  describe the stored frame instead of repeating its base64: a reply that carried
+  ~150 KB of unreadable pixels on every plan, progress and message call is now
+  under 6 KB. `run_console` still returns the bytes, because the page draws them.
+- `run_plan` inherits nothing when the run has already finished. A plan declared
+  after `done` or `failed` is the next thing the person asked for, so reusing an
+  obvious task id like `capture` between requests no longer shows the new step as
+  already complete.
+
 ## v7.2.0 (2026-09-10)
 
 Application discovery, optional desktop/browser/runtime services, persistent Tasks,

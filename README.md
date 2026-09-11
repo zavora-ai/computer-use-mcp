@@ -51,6 +51,39 @@ node agents/deepseek-agent/showcase.mjs --receipt random     # a real receipt fr
 [Full-resolution capture](docs/assets/deepseek-ledger-run.mp4) ·
 [how it works, and what it cannot fake](agents/deepseek-agent/README.md)
 
+## See it plan
+
+![The run console: a conversation on the left, the agent's plan and a live frame from Blender on the right](docs/assets/blender-console-live.png)
+
+**Watch the work instead of reading tool calls.** The run console is an MCP App the
+agent reports into: it declares a plan, marks one task active at a time, and
+attaches real screen captures as it goes. You can type to it while it works — the
+message lands in the transcript that every run tool returns, so the agent reads it
+on its next call and can change course mid-task.
+
+Look at it right now, with no API key:
+
+```sh
+npx -y -p @zavora-ai/computer-use-mcp computer-use-mcp-console
+```
+
+That opens the console and drives a **scripted** walkthrough — the words are
+written into the host, but everything it looks at is real, so the frame on the
+right is a capture of your actual screen. For a live agent instead, start the host
+with `--no-demo` and point one at `http://127.0.0.1:4517/mcp`:
+
+```sh
+computer-use-mcp-console --no-demo
+```
+
+That endpoint serves the desktop tools and the run tools from the same server, so
+whatever the agent plans and captures appears in the browser. The screenshot above
+is [an ADK-Rust agent on DeepSeek Flash](https://github.com/zavora-ai/adk-rust/tree/main/examples/blender_console)
+building in Blender across two turns.
+
+The console is loopback-only and unauthenticated: `/mcp` grants desktop control to
+anything that can reach the port. Fine on your own machine, never on a shared host.
+
 ## Set up your agent
 
 Requires **Node.js 20+** and an interactive desktop. The published package bundles
