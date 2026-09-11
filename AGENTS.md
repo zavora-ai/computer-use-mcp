@@ -699,7 +699,7 @@ await client.callTool('scrape', { url: 'https://example.com' })
 
 Enable it with `runConsole: true` (or run `computer-use-mcp-console`). It adds five
 tools and an MCP App at `ui://computer-use/run-console/v1`, taking the surface from
-65 to 70. A plan the agent declares and the frames it captures render live in a
+66 to 71. A plan the agent declares and the frames it captures render live in a
 browser, so a person follows the work instead of a tool log.
 
 ```typescript

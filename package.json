@@ -192,6 +192,7 @@
     "docs/releases/v7.2.0.md",
     "docs/assets/architecture.svg",
     "docs/assets/astra-painting.png",
+    "docs/assets/blender-console-live.png",
     "docs/assets/deepseek-ledger-run.gif",
     "docs/assets/deepseek-ledger-run.mp4",
     "dist/agent-run.js",
