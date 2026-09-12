@@ -541,10 +541,20 @@ export function registerRunConsole(
     }
   }
   /** The full run, frame and activity included. For the console UI. */
-  const replyInFull = (run: Run): ToolReply => ({
-    content: [{ type: 'text', text: JSON.stringify(run) }],
-    structuredContent: run as unknown as Record<string, unknown>,
-  })
+  /**
+   * The whole run, frame bytes included. This is what the page renders and what a
+   * polling host reads, so it carries `pending` for the same reason every other
+   * reply does: unanswered work must be stated, never inferred from the transcript.
+   */
+  const replyInFull = (run: Run): ToolReply => {
+    const cursor = run.acknowledged ?? 1
+    const pending = run.messages.filter(message => message.role === 'user' && message.id > cursor)
+    const full = { ...run, pending }
+    return {
+      content: [{ type: 'text', text: JSON.stringify(full) }],
+      structuredContent: full as unknown as Record<string, unknown>,
+    }
+  }
   /**
    * Reply to a capture, handing the frame back as an image.
    *
