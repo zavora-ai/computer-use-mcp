@@ -11,7 +11,8 @@
  * one the desktop actually produced, not one the model described.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { z, type ZodIssue, type ZodTypeAny } from 'zod'
 import type { McpServer, ServerContext } from '@modelcontextprotocol/server'
 import { RUN_CONSOLE_HTML } from './run-console.js'
@@ -186,9 +187,102 @@ const MAX_ACTIVITY = 400
 export class RunStore {
   readonly #runs = new Map<string, Run>()
   readonly #now: () => Date
+  /**
+   * Where runs are kept between restarts. Unset means memory only, which is the
+   * default because a console that quietly starts writing to disk would be a
+   * surprise, and most hosts are a single session.
+   */
+  readonly #path: string | undefined
+  /** Why persistence is unavailable, if it is. Reported rather than hidden. */
+  #unavailable: string | undefined
+  /** Coalesces writes: a turn produces many mutations and one file is enough. */
+  #pending: ReturnType<typeof setTimeout> | undefined
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor(
+    now: () => Date = () => new Date(),
+    options: { path?: string } = {},
+  ) {
     this.#now = now
+    this.#path = options.path ?? process.env.COMPUTER_USE_RUN_STORE ?? undefined
+    if (this.#path) this.#load()
+  }
+
+  /**
+   * The run most recently touched, if any.
+   *
+   * A restarted host needs this: the store can reload a run and still leave it
+   * orphaned, because the host tracks which run is current in a variable that does
+   * not survive the process. Reconnecting is what makes persistence useful rather
+   * than merely true.
+   */
+  latest(): Run | undefined {
+    let newest: Run | undefined
+    for (const run of this.#runs.values()) {
+      if (!newest || run.updatedAt > newest.updatedAt) newest = run
+    }
+    return newest
+  }
+
+  /** Why a restart would lose this run, if it would. */
+  persistence(): { path?: string; problem?: string } {
+    return {
+      ...(this.#path ? { path: this.#path } : {}),
+      ...(this.#unavailable ? { problem: this.#unavailable } : {}),
+    }
+  }
+
+  #load(): void {
+    if (!this.#path) return
+    try {
+      const text = readFileSync(this.#path, 'utf8')
+      if (!text.trim()) return
+      const runs = JSON.parse(text) as Run[]
+      for (const run of runs) {
+        if (typeof run?.runId === 'string') this.#runs.set(run.runId, run)
+      }
+    } catch (error) {
+      const problem = error as NodeJS.ErrnoException
+      // A missing file is the normal first start, not a fault.
+      if (problem.code !== 'ENOENT') {
+        this.#unavailable = `could not read ${this.#path}: ${problem.message}`
+      }
+    }
+  }
+
+  /**
+   * Persist, soon.
+   *
+   * Coalesced because a single turn mutates the run dozens of times and writing on
+   * each would spend more effort on the file than on the work. Frame bytes are left
+   * out: a capture is hundreds of kilobytes of base64, they are worthless once the
+   * screen has moved on, and writing them on every progress call would make the file
+   * the most expensive thing in the run. A reloaded run therefore shows no frame
+   * until the next capture, which is the honest outcome rather than a stale one.
+   */
+  #persist(): void {
+    if (!this.#path || this.#pending) return
+    this.#pending = setTimeout(() => {
+      this.#pending = undefined
+      if (!this.#path) return
+      try {
+        const runs = [...this.#runs.values()].map(run => {
+          if (!run.screenshot) return run
+          const { screenshot, ...rest } = run
+          // Keep the caption and timing, drop the pixels.
+          return { ...rest, screenshot: { ...screenshot, data: '' } }
+        })
+        const temporary = `${this.#path}.tmp`
+        mkdirSync(dirname(this.#path), { recursive: true })
+        writeFileSync(temporary, JSON.stringify(runs))
+        renameSync(temporary, this.#path)
+        this.#unavailable = undefined
+      } catch (error) {
+        // A console that cannot write its state is still a working console.
+        this.#unavailable = `could not write ${this.#path}: ${(error as Error).message}`
+      }
+    }, 250)
+    // Do not hold the process open for a state file.
+    this.#pending.unref?.()
   }
 
   #stamp(): string {
@@ -217,6 +311,7 @@ export class RunStore {
       narration: '', startedAt: at, updatedAt: at,
     }
     this.#runs.set(runId, run)
+    this.#persist()
     return run
   }
 
@@ -236,6 +331,7 @@ export class RunStore {
     if (role === 'user') delete run.cancelRequested
     this.#say(run, role, trimmed, attachment)
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -259,6 +355,7 @@ export class RunStore {
     if (!last) throw new Error('There is no turn to attach to')
     last.attachment = attachment
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -308,6 +405,7 @@ export class RunStore {
     }
     run.usage = usage
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -327,6 +425,7 @@ export class RunStore {
     // Never move backwards: a stale acknowledgement must not resurrect handled work.
     run.acknowledged = Math.max(run.acknowledged ?? 0, Math.min(target, highest))
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -355,6 +454,7 @@ export class RunStore {
     const run = this.get(runId)
     run.cancelRequested = true
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -376,6 +476,7 @@ export class RunStore {
     // still holds the narrated account of what happened earlier.
     if (run.activity.length > MAX_ACTIVITY) run.activity.splice(0, run.activity.length - MAX_ACTIVITY)
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -413,6 +514,7 @@ export class RunStore {
     })
     if (run.state === 'planning' || fresh) run.state = 'working'
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -457,6 +559,7 @@ export class RunStore {
       run.screenshot = { ...update.screenshot, at: this.#stamp() }
     }
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 

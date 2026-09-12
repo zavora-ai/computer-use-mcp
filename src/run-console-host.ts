@@ -210,6 +210,11 @@ export async function serve({
   // builds records into the same transcript and captures through the same
   // desktop. This is the difference between a live console and an empty one.
   const store = new RunStore()
+  // Say whether a restart would lose this run. A console that silently forgets is
+  // worse than one that says it will.
+  const durability = store.persistence()
+  if (durability.problem) onLog(`run state not durable: ${durability.problem}`)
+  else if (durability.path) onLog(`run state kept in ${durability.path}`)
   const session = injected ?? createSession()
   const shared = { runConsole: true as const, runStore: store, session }
 
@@ -223,7 +228,10 @@ export async function serve({
   const validateOrigin = localhostOriginValidation()
 
   /** The conversation. Empty until the person, or the demo, says something. */
-  let currentRunId = ''
+  // Adopt the newest reloaded run, so a restarted host continues the conversation
+  // rather than leaving it in the store unreachable.
+  let currentRunId = store.latest()?.runId ?? ''
+  if (currentRunId) onLog(`resumed run ${currentRunId}`)
   /** Where uploads land. One directory per host, created on first use. */
   let uploadDirectory = ''
 

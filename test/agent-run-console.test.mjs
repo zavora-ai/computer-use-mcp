@@ -629,3 +629,86 @@ test('every agent-facing reply states what is unanswered', () => {
   assert.equal(run.messages.at(-1).id, 2, 'messages carry stable ids')
   assert.equal(store.pending('r_reply').length, 1)
 })
+
+test('a run survives a restart, so the steering channel is not lost with the process', async () => {
+  // The transcript is how a person steers a run mid-flight. Losing it to a host
+  // restart loses the conversation, not just a cache.
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const path = join(mkdtempSync(join(tmpdir(), 'run-store-')), 'runs.json')
+
+  const first = new RunStore(() => new Date(), { path })
+  first.start('which category needs attention?', 'r_keep')
+  first.plan('r_keep', [{ id: 'a', title: 'Find it' }, { id: 'b', title: 'Measure it' }])
+  first.progress('r_keep', { taskId: 'a', status: 'done', note: 'Gizmo -21% MoM' })
+  first.say('r_keep', 'user', 'also check Widget')
+  first.spend('r_keep', { calls: 12, inputTokens: 184_000 })
+  await new Promise(resolve => setTimeout(resolve, 600))
+
+  const second = new RunStore(() => new Date(), { path })
+  const run = second.get('r_keep')
+  assert.equal(run.prompt, 'which category needs attention?')
+  assert.equal(run.tasks[0].status, 'done')
+  assert.equal(run.tasks[0].note, 'Gizmo -21% MoM', 'a finding must survive, not just a status')
+  assert.equal(run.usage.calls, 12)
+  assert.deepEqual(
+    second.pending('r_keep').map(message => message.text),
+    ['also check Widget'],
+    'an unanswered question must survive a restart or it is silently dropped',
+  )
+})
+
+test('frame bytes are not written to disk, because they are worthless once stale', async () => {
+  // A capture is hundreds of kilobytes of base64 and describes a screen that has
+  // since moved on. Writing it on every progress call would make the state file the
+  // most expensive thing in the run.
+  const { mkdtempSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const path = join(mkdtempSync(join(tmpdir(), 'run-frame-')), 'runs.json')
+
+  const store = new RunStore(() => new Date(), { path })
+  const run = store.start('show me the dashboard', 'r_shot')
+  run.screenshot = { data: 'A'.repeat(300_000), mimeType: 'image/png', at: 'now', caption: 'the dashboard' }
+  store.say('r_shot', 'agent', 'here it is')
+  await new Promise(resolve => setTimeout(resolve, 600))
+
+  assert.ok(statSync(path).size < 5_000, 'the state file must not carry the pixels')
+  assert.equal(store.get('r_shot').screenshot.data.length, 300_000, 'memory keeps the frame')
+
+  const reloaded = new RunStore(() => new Date(), { path })
+  assert.equal(reloaded.get('r_shot').screenshot.caption, 'the dashboard', 'the caption is worth keeping')
+  assert.equal(reloaded.get('r_shot').screenshot.data, '', 'and a reloaded run honestly has no frame')
+})
+
+test('memory only is the default, and an unwritable path is reported not fatal', async () => {
+  // A console that cannot write its state is still a working console; refusing to
+  // start would be the worse failure.
+  const ephemeral = new RunStore()
+  ephemeral.start('x', 'r_mem')
+  assert.deepEqual(ephemeral.persistence(), {}, 'no path configured means nothing is claimed')
+
+  const store = new RunStore(() => new Date(), { path: '/proc/definitely/not/writable/runs.json' })
+  store.start('x', 'r_bad')
+  await new Promise(resolve => setTimeout(resolve, 600))
+  assert.match(store.persistence().problem ?? '', /could not write/, 'the reason must be reportable')
+  assert.equal(store.get('r_bad').prompt, 'x', 'and the run still works in memory')
+})
+
+test('the newest run is identifiable, so a restarted host can resume it', async () => {
+  // Persistence that leaves the run unreachable is true but useless: the host tracks
+  // which run is current in a variable that does not survive the process.
+  const store = new RunStore()
+  assert.equal(store.latest(), undefined, 'nothing to resume before anything happens')
+  store.start('first', 'r_old')
+  await new Promise(resolve => setTimeout(resolve, 5))
+  store.start('second', 'r_new')
+  assert.equal(store.latest().runId, 'r_new', 'the newest by update time')
+
+  // Touching the older one makes it current again, which is what a person typing into
+  // an older conversation should do.
+  await new Promise(resolve => setTimeout(resolve, 5))
+  store.say('r_old', 'user', 'back to this one')
+  assert.equal(store.latest().runId, 'r_old')
+})
