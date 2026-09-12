@@ -214,34 +214,87 @@ test('Phase 1: disableSessionLock lets two in-process sessions coexist', async (
 })
 
 // ── Lease staleness: the wedge cases ────────────────────────────────────────
-// A crashed holder whose PID the OS recycles is indistinguishable from a live
-// holder by PID existence alone. Renewal timestamps are what make it decidable.
+// A crashed holder whose PID the OS recycles is indistinguishable from a live holder
+// by PID existence alone. The lease's recorded start time is what makes it decidable,
+// and a heartbeat alone is not: the reasons a healthy process stops renewing are the
+// same reasons it is still holding the desktop.
 
-test('a live PID holding an expired lease is reclaimed (defeats PID reuse)', async () => {
+test('a live owner keeps its lease however long since it last renewed', async () => {
+  // This test previously asserted the opposite, and was encoding a real defect: a live
+  // process whose event loop stalled — a long synchronous native call, a GC pause, the
+  // Windows overlay deadlock this server actually had — stopped renewing and had its
+  // lock taken while it was still driving the desktop. Two agents on one desktop is
+  // worse than waiting for one.
   const lockPath = newLockPath()
-  // A live foreign PID that never renewed the lease is exactly what PID reuse
-  // looks like: the recorded owner is gone, but its number belongs to something.
   const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: 'ignore' })
   sleeper.unref()
   const foreignPid = sleeper.pid
   assert.ok(foreignPid > 0 && foreignPid !== process.pid)
   try {
-    await new Promise(r => setTimeout(r, 50))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: foreignPid,
+      renewedAt: Date.now() - SESSION_LEASE_TTL_MS - 60_000,
+      // Started after boot, so it is plausibly the process it claims to be.
+      startedAt: Date.now() - 1_000,
+    }), { mode: 0o600 })
+
+    assert.throws(
+      () => acquireSessionLock(lockPath),
+      error => {
+        assert.match(error.message, new RegExp(String(foreignPid)), 'the holder must be named')
+        return true
+      },
+      'a live holder must not be displaced on heartbeat age alone',
+    )
+    assert.equal(readSessionLease(lockPath).pid, foreignPid, 'the lease must be untouched')
+  } finally {
+    try { process.kill(foreignPid, 'SIGKILL') } catch { /* already gone */ }
+  }
+})
+
+test('a lease that began before this boot is reclaimed, which is what defeats PID reuse', async () => {
+  // The case liveness cannot see: the owner crashed and the OS handed its PID to
+  // something else, so pidIsAlive answers about a stranger. A lease claiming to have
+  // started before the machine booted cannot belong to a live process.
+  const lockPath = newLockPath()
+  const sleeper = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: 'ignore' })
+  sleeper.unref()
+  const foreignPid = sleeper.pid
+  try {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const bootedAt = Date.now() - os.uptime() * 1000
     fs.writeFileSync(lockPath, JSON.stringify({
       pid: foreignPid,
       renewedAt: Date.now() - SESSION_LEASE_TTL_MS - 1_000,
+      startedAt: bootedAt - 60_000,
     }), { mode: 0o600 })
 
     const handle = acquireSessionLock(lockPath)
     try {
-      const lease = readSessionLease(lockPath)
-      assert.equal(lease.pid, process.pid, 'lock must transfer to the reclaiming process')
-      assert.ok(Date.now() - lease.renewedAt < SESSION_LEASE_TTL_MS, 'reclaimed lease must be freshly renewed')
-    } finally { handle.release() }
-    assert.equal(fs.existsSync(lockPath), false)
+      assert.equal(readSessionLease(lockPath).pid, process.pid, 'the lock must transfer')
+    } finally {
+      handle.release()
+    }
   } finally {
     try { process.kill(foreignPid, 'SIGKILL') } catch { /* already gone */ }
-    try { fs.unlinkSync(lockPath) } catch { /* already removed */ }
+  }
+})
+
+test('a dead owner is always reclaimable, with or without a start time', async () => {
+  for (const extra of [{}, { startedAt: Date.now() - 1_000 }]) {
+    const lockPath = newLockPath()
+    const sleeper = spawn(process.execPath, ['-e', ''], { detached: true, stdio: 'ignore' })
+    sleeper.unref()
+    const deadPid = sleeper.pid
+    await new Promise(resolve => setTimeout(resolve, 200))
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: deadPid, renewedAt: Date.now(), ...extra }), { mode: 0o600 })
+    const handle = acquireSessionLock(lockPath)
+    try {
+      assert.equal(readSessionLease(lockPath).pid, process.pid)
+    } finally {
+      handle.release()
+    }
   }
 })
 

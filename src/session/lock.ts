@@ -59,6 +59,14 @@ interface Lease {
   pid: number
   /** Absent for locks written by older versions, which only recorded a bare PID. */
   renewedAt?: number
+  /**
+   * When the owning process started, in epoch milliseconds.
+   *
+   * Recorded so a reclaimer can tell the owner from a stranger that inherited its PID:
+   * a lease that began before this machine booted cannot belong to a live process.
+   * Node cannot portably ask another process when it started, so the owner writes it.
+   */
+  startedAt?: number
 }
 
 export type SessionLease = Lease
@@ -76,26 +84,60 @@ function readLease(lockPath: string): Lease | undefined {
   // decide by shape rather than relying on a parse failure to signal the format.
   try { parsed = JSON.parse(raw) } catch { parsed = undefined }
   if (parsed !== null && typeof parsed === 'object') {
-    const record = parsed as { pid?: unknown; renewedAt?: unknown }
+    const record = parsed as { pid?: unknown; renewedAt?: unknown; startedAt?: unknown }
     const pid = Number(record.pid)
     if (!Number.isInteger(pid) || pid <= 0) return undefined
+    const startedAt = typeof record.startedAt === 'number' ? { startedAt: record.startedAt } : {}
     return typeof record.renewedAt === 'number'
-      ? { pid, renewedAt: record.renewedAt }
-      : { pid }
+      ? { pid, renewedAt: record.renewedAt, ...startedAt }
+      : { pid, ...startedAt }
   }
   // Bare PID from an older process: liveness is the only signal available.
   const pid = typeof parsed === 'number' ? parsed : Number.parseInt(raw, 10)
   return Number.isInteger(pid) && pid > 0 ? { pid } : undefined
 }
 
-/** Reclaimable when the owner is gone, or when it stopped renewing while still holding a PID. */
+/**
+ * Reclaimable when the owner is gone, or when the PID it recorded cannot be the
+ * process that recorded it.
+ *
+ * **A live owner is never stale.** The heartbeat used to be enough on its own: a lease
+ * whose `renewedAt` had aged past the TTL was reclaimed even when its PID was alive.
+ * That is wrong, because the reasons a healthy process stops renewing are exactly the
+ * reasons it is still holding the desktop — a long synchronous native call, a garbage
+ * collection pause, a wedged event loop. This server had a real instance of the last
+ * one: a Windows overlay call blocked the loop indefinitely, and the wedged process
+ * both kept the lock and could not renew it. Reclaiming there would have put two
+ * agents on one desktop, typing over each other, which is worse than waiting.
+ *
+ * The heartbeat still earns its place, for the case liveness cannot see: the owner
+ * crashed and the operating system handed its PID to something else, so `pidIsAlive`
+ * answers about a stranger. That is what `startedAt` is for. A lease claiming to have
+ * begun before this machine booted cannot belong to a live process, whatever holds its
+ * PID now, and is reclaimable. Comparing against boot time rather than a duration is
+ * what makes this decidable without asking another process about itself, which Node
+ * cannot portably do.
+ */
 function leaseIsStale(lease: Lease, now: number): boolean {
   if (!pidIsAlive(lease.pid)) return true
-  return lease.renewedAt !== undefined && now - lease.renewedAt > LEASE_TTL_MS
+  // The PID is alive. Either it is the owner, or the owner died and its PID was reused.
+  if (lease.startedAt !== undefined) {
+    const bootedAt = now - os.uptime() * 1000
+    // Allow a second of slack: uptime and Date.now come from different clocks.
+    if (lease.startedAt < bootedAt - 1_000) return true
+  }
+  // Alive, and nothing proves it is an impostor. Its lease stands, however long since
+  // it last renewed. A permanently wedged holder is an operator problem — the error
+  // reports the PID so it can be killed — not something to resolve by taking the
+  // desktop out from under it.
+  return false
 }
 
+/** This process's start time, computed once: uptime only moves forward from here. */
+const PROCESS_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000)
+
 function writeLease(descriptor: number, pid: number): void {
-  const payload = JSON.stringify({ pid, renewedAt: Date.now() })
+  const payload = JSON.stringify({ pid, renewedAt: Date.now(), startedAt: PROCESS_STARTED_AT })
   fs.ftruncateSync(descriptor, 0)
   fs.writeSync(descriptor, payload, 0, 'utf8')
 }
