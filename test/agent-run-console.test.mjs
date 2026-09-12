@@ -3,6 +3,9 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 import { RunStore, newRunId, RUN_CONSOLE_URI } from '../dist/agent-run.js'
@@ -689,7 +692,13 @@ test('memory only is the default, and an unwritable path is reported not fatal',
   ephemeral.start('x', 'r_mem')
   assert.deepEqual(ephemeral.persistence(), {}, 'no path configured means nothing is claimed')
 
-  const store = new RunStore(() => new Date(), { path: '/proc/definitely/not/writable/runs.json' })
+  // A path whose parent is a regular file. Creating a directory there fails on every
+  // platform, which a POSIX-shaped path does not: '/proc/...' on Windows is read as
+  // 'C:\proc\...', and a recursive mkdir cheerfully creates it, so the store wrote
+  // successfully and reported no problem. CI on Windows caught that.
+  const blocker = path.join(os.tmpdir(), `run-store-blocker-${process.pid}`)
+  fs.writeFileSync(blocker, 'not a directory')
+  const store = new RunStore(() => new Date(), { path: path.join(blocker, 'runs.json') })
   store.start('x', 'r_bad')
   await new Promise(resolve => setTimeout(resolve, 600))
   assert.match(store.persistence().problem ?? '', /could not write/, 'the reason must be reportable')

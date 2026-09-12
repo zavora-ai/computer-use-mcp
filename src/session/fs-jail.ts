@@ -168,6 +168,40 @@ export function openWithinRoots(
     ? flags | fs.constants.O_NOFOLLOW
     : flags
 
+  // Refuse a symlinked target before opening it.
+  //
+  // O_NOFOLLOW does the same job on POSIX and does it without a race, but Windows has
+  // no such flag: Node leaves `fs.constants.O_NOFOLLOW` undefined there, so the bit
+  // coerces to zero and the open follows the link. CI caught this — a Windows runner
+  // created a file outside the root through a symlinked final component while macOS and
+  // Linux refused it.
+  //
+  // `lstat` describes the link itself rather than its destination on all three
+  // platforms, so asking here closes the hole. On POSIX this is belt and braces, since
+  // O_NOFOLLOW would refuse anyway. On Windows it is the only mechanism available
+  // through Node, and it is a check before a use: a link created in the window between
+  // this call and the open is not caught. That window is narrow and Windows offers no
+  // way to close it from Node — FILE_FLAG_OPEN_REPARSE_POINT is not exposed — so it is
+  // recorded here rather than papered over, and `verified` reports whether the stronger
+  // guarantee actually held.
+  if (enforced) {
+    try {
+      if (fs.lstatSync(decision.path).isSymbolicLink()) {
+        return {
+          violation: {
+            error: 'fs_root_violation',
+            message: `${target} is a symbolic link, and following it could leave the configured roots. `
+              + 'The final component of a path must be a real file when COMPUTER_USE_FS_ROOTS is set.',
+            path: target,
+            roots: fsRoots(),
+          } as unknown as FsRootViolation,
+        }
+      }
+    } catch {
+      // No such entry yet, which is the ordinary case for a write. Nothing to refuse.
+    }
+  }
+
   const fd = (() => {
     try {
       return mode === undefined
@@ -210,6 +244,12 @@ export function openWithinRoots(
   try {
     const opened = fs.fstatSync(fd)
     const named = fs.lstatSync(decision.path)
+    // Windows reports 0 for both fields on some filesystems, which would make any two
+    // files compare equal and turn this check into a rubber stamp. Say the guarantee is
+    // absent rather than assert one that compared nothing.
+    if (opened.ino === 0 && opened.dev === 0) {
+      return { violation: null, fd, verified: false }
+    }
     if (opened.dev !== named.dev || opened.ino !== named.ino) {
       try { fs.closeSync(fd) } catch { /* closing a doomed descriptor */ }
       return {

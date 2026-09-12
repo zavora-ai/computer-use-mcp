@@ -80,3 +80,33 @@ test('with no boundary configured, nothing is refused and deliberate symlinks st
   assert.equal(opened.verified, false, 'and the stronger guarantee is honestly reported absent')
   fs.closeSync(opened.fd)
 })
+
+test('a dangling symlink is refused cleanly, not surfaced as an open failure', () => {
+  // This exercises the explicit pre-open check rather than the kernel flag. A symlink
+  // pointing at a path whose parent does not exist makes the open fail with ENOENT
+  // instead of the ELOOP that O_NOFOLLOW produces, so a boundary that relied only on
+  // the open refusing would raise an unexplained I/O error here — or, on a platform
+  // with no O_NOFOLLOW at all, would create the parent and follow the link. CI on
+  // Windows demonstrated the second: fs.constants.O_NOFOLLOW is undefined there, the
+  // bit coerced to zero, and a file appeared outside the root.
+  const { root, outside } = sandbox()
+  fs.symlinkSync(path.join(outside, 'no-such-dir', 'stolen.txt'), path.join(root, 'dangling.txt'))
+  const opened = openWithinRoots(path.join(root, 'dangling.txt'), WRITE, undefined, 0o600)
+  assert.ok(opened.violation, 'refused')
+  assert.match(opened.violation.message, /symbolic link/, 'and the reason names the cause')
+  assert.equal(fs.existsSync(path.join(outside, 'no-such-dir')), false, 'nothing created outside')
+})
+
+test('a symlink resolving inside the roots is still followed to its canonical path', () => {
+  // Deliberately allowed, and an existing test in the jail suite depends on it: a link
+  // whose destination is inside the boundary is written through its canonical path. The
+  // refusal is for the case canonicalizing cannot settle — a dangling link, whose
+  // destination realpath cannot resolve, so the name check sees an ordinary path inside
+  // the root while the open would follow the link out of it.
+  const { root } = sandbox()
+  fs.writeFileSync(path.join(root, 'target.txt'), 'inside')
+  fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'alias.txt'))
+  const opened = openWithinRoots(path.join(root, 'alias.txt'), WRITE, undefined, 0o600)
+  assert.equal(opened.violation, null, 'followed, because the destination is provably inside')
+  fs.closeSync(opened.fd)
+})
