@@ -57,6 +57,16 @@ export interface RunAttachment {
 }
 
 export interface RunMessage {
+  /**
+   * Stable, monotonic within a run.
+   *
+   * The original design asked an agent to detect unanswered work by checking whether
+   * the last message was the person's. That is wrong, and measurably so: a
+   * `run_progress` narration appends an agent message, so a question typed while the
+   * agent was working stopped being last and became invisible. An id plus an
+   * acknowledgement cursor cannot be erased by anything the agent says.
+   */
+  id: number
   role: MessageRole
   text: string
   at: string
@@ -124,6 +134,14 @@ export interface Run {
   /** What this run has spent. Absent until a host reports any. */
   usage?: RunUsage
   /**
+   * The highest message id the agent has said it handled.
+   *
+   * Anything the person sent above this is still waiting, whatever the agent has
+   * said since. Held separately from the transcript precisely so narration cannot
+   * move it.
+   */
+  acknowledged?: number
+  /**
    * Set when the person watching asked the agent to stop.
    *
    * Cooperative, and deliberately so. The page cannot terminate a model call in
@@ -179,7 +197,8 @@ export class RunStore {
 
   /** Append a turn, evicting the oldest once the transcript is full. */
   #say(run: Run, role: MessageRole, text: string, attachment?: RunAttachment): void {
-    run.messages.push({ role, text, at: this.#stamp(), ...(attachment ? { attachment } : {}) })
+    const id = (run.messages.at(-1)?.id ?? 0) + 1
+    run.messages.push({ id, role, text, at: this.#stamp(), ...(attachment ? { attachment } : {}) })
     // Keep the opening request, which is the run's context, and drop from just
     // after it — losing the prompt would make the transcript unreadable.
     while (run.messages.length > MAX_MESSAGES) run.messages.splice(1, 1)
@@ -193,7 +212,7 @@ export class RunStore {
     const at = this.#stamp()
     const run: Run = {
       runId, prompt, state: 'planning', tasks: [],
-      messages: [{ role: 'user', text: prompt, at }],
+      messages: [{ id: 1, role: 'user', text: prompt, at }],
       activity: [],
       narration: '', startedAt: at, updatedAt: at,
     }
@@ -290,6 +309,37 @@ export class RunStore {
     run.usage = usage
     run.updatedAt = this.#stamp()
     return run
+  }
+
+  /**
+   * Mark messages up to `throughId` as handled.
+   *
+   * Explicit, because the alternative was inferring it from the transcript and that
+   * inference lost messages. An agent that answers a mid-run question says so; until
+   * it does, the question stays in `pending`.
+   */
+  acknowledge(runId: string, throughId?: number): Run {
+    const run = this.get(runId)
+    const highest = run.messages.at(-1)?.id ?? 0
+    const target = typeof throughId === 'number' && Number.isFinite(throughId)
+      ? Math.max(0, Math.trunc(throughId))
+      : highest
+    // Never move backwards: a stale acknowledgement must not resurrect handled work.
+    run.acknowledged = Math.max(run.acknowledged ?? 0, Math.min(target, highest))
+    run.updatedAt = this.#stamp()
+    return run
+  }
+
+  /**
+   * Messages from the person that have not been acknowledged.
+   *
+   * The opening prompt is excluded: it is the run's own subject, and reporting it as
+   * unanswered work would make every run start with a false pending item.
+   */
+  pending(runId: string): RunMessage[] {
+    const run = this.get(runId)
+    const cursor = run.acknowledged ?? 1
+    return run.messages.filter(message => message.role === 'user' && message.id > cursor)
   }
 
   /**
@@ -435,11 +485,22 @@ function describe(data: string): string {
  * record of what this agent just did, so returning it is both large and circular.
  * Both exist for the person watching, and `run_console` still carries them.
  */
-function forAgent(run: Run): Omit<Run, 'activity'> {
+/**
+ * What an agent sees. Activity is elided, frame bytes are described, and unanswered
+ * messages are stated rather than left to be inferred.
+ *
+ * `pending` is computed here so it appears in *every* reply. The failure it replaces
+ * was an agent inferring unanswered work from "the last message is the person's",
+ * which its own narration then falsified.
+ */
+function forAgent(run: Run): Omit<Run, 'activity'> & { pending: RunMessage[] } {
   const { activity: _activity, ...rest } = run
-  return rest.screenshot
-    ? { ...rest, screenshot: { ...rest.screenshot, data: describe(rest.screenshot.data) } }
-    : rest
+  const cursor = run.acknowledged ?? 1
+  const pending = run.messages.filter(message => message.role === 'user' && message.id > cursor)
+  const base = { ...rest, pending }
+  return base.screenshot
+    ? { ...base, screenshot: { ...base.screenshot, data: describe(base.screenshot.data) } }
+    : base
 }
 
 /**
@@ -603,8 +664,12 @@ export function registerRunConsole(
       runId,
       text: z.string().min(1).max(4000).describe('What is being said'),
       role: z.enum(['user', 'agent']).default('agent').describe('Who is speaking'),
+      acknowledge: z.number().int().min(0).optional().describe('Highest pending message id this answers. Pass it when replying to something the person typed mid-run, so it stops being reported as unanswered.'),
     },
-  }, args => reply(store.say(args.runId, args.role, args.text)))
+  }, args => {
+    const run = store.say(args.runId, args.role, args.text)
+    return reply(args.acknowledge === undefined ? run : store.acknowledge(args.runId, args.acknowledge))
+  })
 
   define('run_spend', {
     description: 'Report what a model call cost, so the person watching can see the run\'s price as it accrues. For the host driving the run, which is the only thing that sees the model\'s usage fields — an agent should not call this about itself. Cumulative: send each call\'s usage and the console adds it up. Money appears only when a price per million tokens is supplied.',

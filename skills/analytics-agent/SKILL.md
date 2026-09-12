@@ -35,6 +35,12 @@ number to average.
 Prefer a **certified** metric definition over your own reading of a chart. If the two
 disagree, say so — that is worth more than a confident average.
 
+**But check where a definition came from first.** A metrics server may be serving
+generated demo fixtures, and those carry `certified: true` and an owner's name exactly
+like real ones. `analytics_backend_info` reports `provenance` as `live` or `demo`. If it
+is `demo`, say so every time you quote a figure from it. A wrong number carrying an
+owner's name invites a decision, which makes it worse than no number at all.
+
 ## Invariants
 
 - **Show the dashboard early, not last.** The person should see what you are
@@ -68,5 +74,20 @@ error was, plainly enough for an operator to act on. Do not go looking through t
 desktop, the terminal or the filesystem to reverse-engineer the environment — that is
 not analysis.
 
-Nothing you can call here writes to a dashboard. Clicking a filter changes your view,
-not their data.
+## What you can and cannot change
+
+Be precise about this, because the boundary is not where it looks.
+
+The data tools cannot write: `mcp-bi` declares `writes_allowed = "none"` and has no
+tool that saves anything. **The browser is different.** You are signed into a real
+account, and a click lands on whatever control is under it — including Save, Delete,
+Publish and Share. Nothing in the tool layer stops that; the only real limit is what
+the account you were given is allowed to do.
+
+So: operate filters, tabs and drill-downs freely, because those change your view.
+Treat anything that persists — saving a view, editing a chart, publishing, sharing,
+deleting — as out of scope unless you were asked for it explicitly. If you are unsure
+whether a control persists, do not click it and say why.
+
+An operator reading this: give the agent a **read-only account**. That is the boundary
+that actually holds.

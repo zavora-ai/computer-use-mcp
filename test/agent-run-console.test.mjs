@@ -575,3 +575,57 @@ test('the console offers a stop control and a meter, and says what stop means', 
   assert.ok(RUN_CONSOLE_HTML.includes('Stopping'), 'the pending state should be visible')
   assert.ok(RUN_CONSOLE_HTML.includes('renderMeter'))
 })
+
+test('a narration cannot hide a message the person sent mid-run', () => {
+  // The original rule was "the last message is the person's". A run_progress
+  // narration appends an agent message, so a question typed while the agent worked
+  // stopped being last and became invisible. Measured before the fix, and the reason
+  // an acknowledgement cursor exists.
+  const store = new RunStore()
+  store.start('first question', 'r_ack')
+  store.plan('r_ack', [{ id: 'a', title: 'A' }])
+  store.say('r_ack', 'user', 'wait, also check Gizmo')
+  assert.equal(store.pending('r_ack').length, 1)
+
+  store.progress('r_ack', { taskId: 'a', status: 'active', narration: 'Measuring.' })
+  const pending = store.pending('r_ack')
+  assert.equal(pending.length, 1, 'narration must not clear pending work')
+  assert.equal(pending[0].text, 'wait, also check Gizmo')
+})
+
+test('the opening prompt is never reported as unanswered', () => {
+  // It is the run's own subject. Counting it would make every run start with a
+  // false pending item, and an agent that trusts the list would loop.
+  const store = new RunStore()
+  store.start('the question', 'r_first')
+  assert.deepEqual(store.pending('r_first'), [])
+})
+
+test('acknowledging clears only up to the id given, and never goes backwards', () => {
+  const store = new RunStore()
+  store.start('first', 'r_cursor')
+  store.say('r_cursor', 'user', 'second')
+  store.say('r_cursor', 'user', 'third')
+  assert.equal(store.pending('r_cursor').length, 2)
+
+  store.acknowledge('r_cursor', 2)
+  assert.equal(store.pending('r_cursor').length, 1, 'only the acknowledged one clears')
+  assert.equal(store.pending('r_cursor')[0].text, 'third')
+
+  // A stale acknowledgement must not resurrect handled work.
+  store.acknowledge('r_cursor', 1)
+  assert.equal(store.pending('r_cursor').length, 1, 'the cursor does not move backwards')
+
+  store.acknowledge('r_cursor')
+  assert.equal(store.pending('r_cursor').length, 0, 'no id means everything so far')
+})
+
+test('every agent-facing reply states what is unanswered', () => {
+  // Stated rather than inferred, because the inference is what failed.
+  const store = new RunStore()
+  store.start('first', 'r_reply')
+  store.say('r_reply', 'user', 'and check Gizmo')
+  const run = store.get('r_reply')
+  assert.equal(run.messages.at(-1).id, 2, 'messages carry stable ids')
+  assert.equal(store.pending('r_reply').length, 1)
+})
