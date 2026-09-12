@@ -6,7 +6,7 @@ import test from 'node:test'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 import { RunStore, newRunId, RUN_CONSOLE_URI } from '../dist/agent-run.js'
-import { RUN_CONSOLE_HTML } from '../dist/run-console.js'
+import { RUN_CONSOLE_HTML, runConsoleHtml, ANALYTICS_BRAND } from '../dist/run-console.js'
 
 const parse = result => JSON.parse(result.content.find(block => block.type === 'text').text)
 
@@ -429,8 +429,7 @@ test('the console app is self-contained and cannot be made to run agent markup',
 test('the console is branded and built from the two panels it promises', () => {
   for (const attribution of ['Blender Agent', 'ADK Rust', 'Computer Use MCP', 'DeepSeek Flash']) {
     assert.ok(RUN_CONSOLE_HTML.includes(attribution), `the console must credit ${attribution}`)
-  }
-  // Left panel: the conversation and a composer that calls run_say.
+  }  // Left panel: the conversation and a composer that calls run_say.
   assert.ok(RUN_CONSOLE_HTML.includes('id="chat"'))
   assert.ok(RUN_CONSOLE_HTML.includes('id="composer"'))
   assert.ok(RUN_CONSOLE_HTML.includes("'run_say'"))
@@ -453,4 +452,45 @@ test('the console resource is served with the MCP App mime type and an empty CSP
   } finally {
     await client.close()
   }
+})
+
+test('the default branding is exactly what it always was, so existing hosts are untouched', () => {
+  // The header became a parameter; the published console must not have changed.
+  assert.equal(runConsoleHtml(), RUN_CONSOLE_HTML)
+  assert.ok(RUN_CONSOLE_HTML.includes('<title>Blender Agent</title>'))
+  assert.ok(RUN_CONSOLE_HTML.includes('<h1>Blender Agent</h1>'))
+  assert.ok(
+    RUN_CONSOLE_HTML.includes(
+      '<b>ADK Rust</b> \u00b7 <b>Computer Use MCP</b> \u00b7 running on <b>DeepSeek Flash</b>',
+    ),
+    'the byline must render exactly as before, with only the model emphasised',
+  )
+})
+
+test('a host can name the agent without touching the console', () => {
+  const analytics = runConsoleHtml(ANALYTICS_BRAND)
+  assert.ok(analytics.includes('<title>Analytics Agent</title>'))
+  assert.ok(analytics.includes('<h1>Analytics Agent</h1>'))
+  assert.ok(analytics.includes('<b>Business Intelligence MCP</b>'))
+  // The BI use case must not carry the Blender one's name anywhere.
+  // Nothing of the other use case may survive — not the header, not the identity
+  // the app announces itself under.
+  assert.ok(!/blender/i.test(analytics), 'a rebranded console must not mention Blender at all')
+  assert.ok(analytics.includes("name:'analytics-agent-run-console'"))
+  assert.ok(RUN_CONSOLE_HTML.includes("name:'blender-agent-run-console'"), 'the default identity is unchanged')
+  // Everything below the header is the same generic console.
+  for (const shared of ['id="chat"', 'id="composer"', "'run_say'", 'id="acts"', 'id="plan"', 'id="shot"']) {
+    assert.ok(analytics.includes(shared), `the rebranded console still has ${shared}`)
+  }
+})
+
+test('a brand is escaped, because it is the one string interpolated as markup', () => {
+  const injected = runConsoleHtml({
+    name: '<script>alert(1)</script>',
+    credits: [{ label: '"onload', value: '<img>' }],
+  })
+  assert.ok(!injected.includes('<script>alert(1)</script>'), 'markup in a brand must not survive')
+  assert.ok(injected.includes('&lt;script&gt;alert(1)&lt;/script&gt;'))
+  assert.ok(injected.includes('&quot;onload'))
+  assert.ok(injected.includes('&lt;img&gt;'))
 })
