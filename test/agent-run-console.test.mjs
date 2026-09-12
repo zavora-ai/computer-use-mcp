@@ -494,3 +494,84 @@ test('a brand is escaped, because it is the one string interpolated as markup', 
   assert.ok(injected.includes('&quot;onload'))
   assert.ok(injected.includes('&lt;img&gt;'))
 })
+
+test('a run reports what it has spent, and shows money only when priced', async () => {
+  // Both gaps this closes were failures that happened: a balance exhausted mid-run
+  // with nothing on screen to warn, and no way to stop a turn going nowhere.
+  const store = new RunStore()
+  const run = store.start('analyse this', 'run_cost')
+  assert.equal(run.usage, undefined, 'a run starts with nothing spent')
+
+  store.spend('run_cost', { calls: 1, inputTokens: 1000, outputTokens: 200, cachedTokens: 900 })
+  store.spend('run_cost', { calls: 1, inputTokens: 500, outputTokens: 100, reasoningTokens: 6959 })
+  const usage = store.get('run_cost').usage
+  assert.equal(usage.calls, 2, 'usage accumulates across calls')
+  assert.equal(usage.inputTokens, 1500)
+  assert.equal(usage.outputTokens, 300)
+  assert.equal(usage.cachedTokens, 900)
+  assert.equal(usage.reasoningTokens, 6959)
+  assert.equal(usage.cost, undefined, 'no price means no money, rather than a guess')
+})
+
+test('a supplied price is applied to output and reasoning together', () => {
+  // Reasoning bills against completion tokens, which is why an unbudgeted thought
+  // can cost more than the answer. Charging it at the input rate would understate.
+  const store = new RunStore()
+  store.start('x', 'run_price')
+  store.spend('run_price', {
+    inputTokens: 1_000_000,
+    outputTokens: 500_000,
+    reasoningTokens: 500_000,
+    inputPricePerMillion: 0.28,
+    outputPricePerMillion: 0.42,
+    currency: 'USD',
+  })
+  const usage = store.get('run_price').usage
+  // 1.0 × 0.28 + (0.5 + 0.5) × 0.42
+  assert.equal(usage.cost, 0.7)
+  assert.equal(usage.currency, 'USD')
+})
+
+test('usage is clamped so a bad report cannot corrupt the meter', () => {
+  const store = new RunStore()
+  store.start('x', 'run_clamp')
+  store.spend('run_clamp', { calls: 1, inputTokens: -50, outputTokens: Number.NaN })
+  const usage = store.get('run_clamp').usage
+  assert.equal(usage.inputTokens, 0, 'a negative count is not subtracted')
+  assert.equal(usage.outputTokens, 0, 'a non-finite count is ignored')
+})
+
+test('a cancel is cooperative: recorded, visible to the agent, and not a claim', async () => {
+  // The page cannot recall a model call in flight. A run that claimed to be
+  // cancelled while still spending would be worse than one that takes a moment to
+  // notice, so this is a flag the agent reads on its next call.
+  const store = new RunStore()
+  store.start('analyse this', 'run_stop')
+  store.plan('run_stop', [{ id: 'a', title: 'Step A' }])
+  assert.equal(store.get('run_stop').cancelRequested, undefined)
+
+  store.requestCancel('run_stop')
+  assert.equal(store.get('run_stop').cancelRequested, true)
+  assert.notEqual(store.get('run_stop').state, 'failed', 'asking is not the same as having stopped')
+})
+
+test('an agent message keeps the cancel, a new instruction clears it', () => {
+  // Clearing on the agent's own reply would lose the ask before it acted. Not
+  // clearing on a new instruction would stop the very work just requested.
+  const store = new RunStore()
+  store.start('first', 'run_turns')
+  store.requestCancel('run_turns')
+  store.say('run_turns', 'agent', 'stopping as asked')
+  assert.equal(store.get('run_turns').cancelRequested, true)
+  store.say('run_turns', 'user', 'actually carry on')
+  assert.equal(store.get('run_turns').cancelRequested, undefined)
+})
+
+test('the console offers a stop control and a meter, and says what stop means', () => {
+  assert.ok(RUN_CONSOLE_HTML.includes('id="stop"'))
+  assert.ok(RUN_CONSOLE_HTML.includes('id="meter"'))
+  assert.ok(RUN_CONSOLE_HTML.includes("'run_cancel'"), 'the page must be able to ask')
+  // The button must not claim the run has ended, because it has only been asked.
+  assert.ok(RUN_CONSOLE_HTML.includes('Stopping'), 'the pending state should be visible')
+  assert.ok(RUN_CONSOLE_HTML.includes('renderMeter'))
+})

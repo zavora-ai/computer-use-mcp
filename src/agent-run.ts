@@ -88,6 +88,28 @@ export interface RunActivity {
   at: string
 }
 
+/**
+ * What a turn has cost so far.
+ *
+ * Reported by the host driving the run, because only it sees the model's usage
+ * fields. Money is only ever shown when a price is configured: token counts are a
+ * fact, and a rate hardcoded here would be wrong within a quarter.
+ */
+export interface RunUsage {
+  /** Model calls made. */
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  /** Prompt tokens served from cache, when the provider reports them. */
+  cachedTokens: number
+  /** Reasoning tokens, when the provider bills them separately. */
+  reasoningTokens: number
+  /** Currency amount, present only when the host was given a price. */
+  cost?: number
+  /** ISO 4217 code for `cost`, so a reader is never guessing. */
+  currency?: string
+}
+
 export interface Run {
   runId: string
   prompt: string
@@ -99,6 +121,18 @@ export interface Run {
   activity: RunActivity[]
   narration: string
   screenshot?: RunShot
+  /** What this run has spent. Absent until a host reports any. */
+  usage?: RunUsage
+  /**
+   * Set when the person watching asked the agent to stop.
+   *
+   * Cooperative, and deliberately so. The page cannot terminate a model call in
+   * flight, and pretending otherwise would leave a run that looks stopped while it
+   * keeps spending. Instead this appears in every run tool's reply, so the agent
+   * sees it on its next call and can stop cleanly, reporting what it has. A host
+   * driver that watches for it can also abort its own stream, which is faster.
+   */
+  cancelRequested?: boolean
   startedAt: string
   updatedAt: string
 }
@@ -178,6 +212,9 @@ export class RunStore {
     const run = this.get(runId)
     const trimmed = text.trim()
     if (!trimmed) throw new Error('A message needs text')
+    // A new instruction from the person is a new turn, so a cancel they asked for
+    // earlier is spent. Leaving it set would stop the very work they just asked for.
+    if (role === 'user') delete run.cancelRequested
     this.#say(run, role, trimmed, attachment)
     run.updatedAt = this.#stamp()
     return run
@@ -212,6 +249,65 @@ export class RunStore {
    * Takes a batch because a driver watching a stream produces several events at
    * once, and one call per event would be a lot of traffic for a live view.
    */
+  /**
+   * Add what a model call cost. Cumulative, because a turn is many calls.
+   *
+   * Only the host driving the run can know this: the usage fields come back with
+   * the model response, and nothing inside an MCP server sees them. A price is
+   * applied here rather than in the page so the arithmetic is done once.
+   */
+  spend(runId: string, delta: {
+    calls?: number
+    inputTokens?: number
+    outputTokens?: number
+    cachedTokens?: number
+    reasoningTokens?: number
+    inputPricePerMillion?: number
+    outputPricePerMillion?: number
+    currency?: string
+  }): Run {
+    const run = this.get(runId)
+    const usage: RunUsage = run.usage ?? {
+      calls: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0,
+    }
+    const add = (value: number | undefined): number =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+    usage.calls += add(delta.calls ?? 1)
+    usage.inputTokens += add(delta.inputTokens)
+    usage.outputTokens += add(delta.outputTokens)
+    usage.cachedTokens += add(delta.cachedTokens)
+    usage.reasoningTokens += add(delta.reasoningTokens)
+    // Money only when a rate was supplied. A rate baked in here would be stale
+    // within a quarter, and a wrong cost is worse than no cost.
+    const inputRate = delta.inputPricePerMillion
+    const outputRate = delta.outputPricePerMillion
+    if (typeof inputRate === 'number' || typeof outputRate === 'number') {
+      const cost = (usage.inputTokens / 1e6) * (inputRate ?? 0)
+        + ((usage.outputTokens + usage.reasoningTokens) / 1e6) * (outputRate ?? 0)
+      usage.cost = Math.round(cost * 1e6) / 1e6
+      if (delta.currency) usage.currency = delta.currency
+    }
+    run.usage = usage
+    run.updatedAt = this.#stamp()
+    return run
+  }
+
+  /**
+   * Record that the person watching asked the agent to stop.
+   *
+   * This does not stop anything by itself, and the naming is deliberate. A model
+   * call already in flight cannot be recalled from a browser page, so the honest
+   * design is a flag the agent reads on its next call. A run that claimed to be
+   * cancelled while still spending would be worse than one that takes a few
+   * seconds to notice.
+   */
+  requestCancel(runId: string): Run {
+    const run = this.get(runId)
+    run.cancelRequested = true
+    run.updatedAt = this.#stamp()
+    return run
+  }
+
   record(runId: string, events: Array<Omit<RunActivity, 'at'> & { at?: string }>): Run {
     const run = this.get(runId)
     for (const event of events) {
@@ -509,6 +605,35 @@ export function registerRunConsole(
       role: z.enum(['user', 'agent']).default('agent').describe('Who is speaking'),
     },
   }, args => reply(store.say(args.runId, args.role, args.text)))
+
+  define('run_spend', {
+    description: 'Report what a model call cost, so the person watching can see the run\'s price as it accrues. For the host driving the run, which is the only thing that sees the model\'s usage fields — an agent should not call this about itself. Cumulative: send each call\'s usage and the console adds it up. Money appears only when a price per million tokens is supplied.',
+    inputSchema: {
+      runId,
+      calls: z.number().int().min(0).max(1000).optional().default(1).describe('Model calls this covers'),
+      input_tokens: z.number().int().min(0).optional().describe('Prompt tokens'),
+      output_tokens: z.number().int().min(0).optional().describe('Completion tokens'),
+      cached_tokens: z.number().int().min(0).optional().describe('Prompt tokens served from cache'),
+      reasoning_tokens: z.number().int().min(0).optional().describe('Reasoning tokens, where billed separately'),
+      input_price_per_million: z.number().min(0).optional().describe('Rate for prompt tokens; omit to show tokens only'),
+      output_price_per_million: z.number().min(0).optional().describe('Rate for completion and reasoning tokens'),
+      currency: z.string().min(3).max(3).optional().describe('ISO 4217 code for the cost figure'),
+    },
+  }, args => reply(store.spend(args.runId, {
+    calls: args.calls,
+    inputTokens: args.input_tokens,
+    outputTokens: args.output_tokens,
+    cachedTokens: args.cached_tokens,
+    reasoningTokens: args.reasoning_tokens,
+    inputPricePerMillion: args.input_price_per_million,
+    outputPricePerMillion: args.output_price_per_million,
+    currency: args.currency,
+  })))
+
+  define('run_cancel', {
+    description: 'Record that the person watching asked the agent to stop. Cooperative: it does not terminate anything, because a model call in flight cannot be recalled. The flag appears in every run tool reply, so an agent that sees cancel_requested should stop where it is, report what it already has with run_progress, and set state "done" or "failed" rather than carrying on.',
+    inputSchema: { runId },
+  }, args => reply(store.requestCancel(args.runId)))
 
   define('run_attachment', {
     description: 'Look at an image the person attached to the conversation. Returns the picture itself, plus the path it is saved at on this machine — pass that path to an application when you need it to load the file, for example as a reference image or a texture. Omit index for the most recent attachment.',

@@ -753,6 +753,8 @@ server-side search tool. Configure a provider for real use:
 | `COMPUTER_USE_SEARCH_API_KEY` | Key for the chosen provider. |
 | `COMPUTER_USE_BROWSER_DOM` | `true` to allow `browser_page_text` and `browser_find`. Off by default: a browser holds live sessions, so its DOM can carry tokens and personal data. |
 | `COMPUTER_USE_BROWSER_DEBUG_PORT` | Attach to a Chromium DevTools port **you** started the browser with. This server never opens one, because a debug port lets any local process drive your signed-in browser. |
+| `COMPUTER_USE_PRICE_INPUT`, `COMPUTER_USE_PRICE_OUTPUT` | Price per million tokens, used only to show a run's cost in the console. Without them the meter shows token counts and no money, because a rate baked into the server would be wrong within a quarter. |
+| `COMPUTER_USE_PRICE_CURRENCY` | ISO 4217 code shown beside the cost figure. |
 | `COMPUTER_USE_BROWSER_BLOCKED_HOSTS` | Overrides the default refusal list of credential stores (1Password, LastPass, Bitwarden, Dashlane, Keeper, Google Passwords, iCloud). Defense in depth, not a boundary. |
 
 Without a key it falls back to DuckDuckGo's HTML endpoint, which is there so the
