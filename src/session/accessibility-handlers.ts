@@ -240,9 +240,15 @@ export async function handleAccessibilityTool(
   }
 
   if (tool === 'run_script') {
-    const language = isWindows
-      ? (args.language === 'powershell' ? 'powershell' : String(args.language ?? 'powershell'))
-      : (args.language === 'javascript' ? 'javascript' : 'applescript')
+    // Pass the requested language through. This used to coerce anything that was not
+    // `javascript` to `applescript` on every non-Windows platform, so a Linux caller
+    // asking for `bash` was told "applescript is not supported on Linux" — a confusing
+    // thing to hear when you asked for bash, and the reason issue #19 was filed. The
+    // schema validates the value at the MCP boundary, so there is nothing to correct
+    // here; the service decides what each platform can run.
+    const language = typeof args.language === 'string' && args.language.length > 0
+      ? args.language
+      : (isWindows ? 'powershell' : 'applescript')
     const requested = typeof args.timeout_ms === 'number' ? args.timeout_ms : 30_000
     const timeoutMs = Math.max(100, Math.min(requested, 120_000))
     const result = await context.runScript(language, stringArg(args, 'script'), timeoutMs, context.signal)

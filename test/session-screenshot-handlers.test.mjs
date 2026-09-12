@@ -144,3 +144,24 @@ test('a window that could not be captured says so instead of pretending', () => 
   assert.match(text, /whole screen/)
   assert.match(text, /screen_x = image_x \* 1\.3333/)
 })
+
+test('a missing native crop is reported as a capability gap, not a TypeError', () => {
+  // Issue #20: crop_image existed for macOS and Windows and not for Linux, so zoom
+  // failed with "cropImage is not a function" — a TypeError that names no platform,
+  // no reason and no alternative. The export is now implemented for Linux; this guard
+  // is for the next time something is built for two platforms out of three.
+  const f = fixture({ cropImage: undefined })
+  const result = f.handler.handle('zoom', { region: [10, 10, 50, 50] })
+  assert.equal(result.isError, true)
+  const body = JSON.parse(result.content.find(part => part.type === 'text').text)
+  assert.equal(body.error, 'platform_unsupported')
+  assert.match(JSON.stringify(body), /screenshot/, 'the alternative must be named')
+  assert.match(JSON.stringify(body), /rebuild/, 'a local build is the likely cause')
+})
+
+test('zoom still crops when the native export is present', () => {
+  const f = fixture()
+  const result = f.handler.handle('zoom', { region: [10, 10, 50, 50] })
+  assert.equal(result.isError, undefined)
+  assert.ok(f.native.calls.some(([kind]) => kind === 'crop'), 'the native crop should be used')
+})

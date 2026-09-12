@@ -175,6 +175,70 @@ mod linux {
             "unchanged": false,
         }))
     }
+
+    /// Crop a region from a base64-encoded image at full resolution.
+    ///
+    /// This was missing on Linux while macOS and Windows had it, so `zoom` failed with
+    /// `cropImage is not a function` — a TypeError from JavaScript reaching for an
+    /// export that did not exist, which says nothing about which platform or why. The
+    /// operation is not platform-specific at all: decode, crop, re-encode. It ended up
+    /// duplicated per platform because the encode helpers are, and the Linux block was
+    /// simply never given a copy.
+    #[napi]
+    pub fn crop_image(
+        base64_image: String,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+        quality: Option<u32>,
+    ) -> napi::Result<serde_json::Value> {
+        let img_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&base64_image)
+            .map_err(|e| napi::Error::from_reason(format!("base64 decode: {e}")))?;
+
+        let img = image::ImageReader::new(std::io::Cursor::new(&img_bytes))
+            .with_guessed_format()
+            .map_err(|e| napi::Error::from_reason(format!("image format: {e}")))?
+            .decode()
+            .map_err(|e| napi::Error::from_reason(format!("image decode: {e}")))?;
+
+        // Clamp into the image rather than failing: a caller asking for a region that
+        // runs off the edge wants what is there, and an error would tell it nothing it
+        // could act on without a second round trip.
+        let iw = img.width();
+        let ih = img.height();
+        let cx1 = x1.min(iw.saturating_sub(1));
+        let cy1 = y1.min(ih.saturating_sub(1));
+        let cx2 = x2.min(iw).max(cx1 + 1);
+        let cy2 = y2.min(ih).max(cy1 + 1);
+
+        let cropped = img.crop_imm(cx1, cy1, cx2 - cx1, cy2 - cy1);
+        let width = cropped.width();
+        let height = cropped.height();
+
+        let q = quality.unwrap_or(0);
+        let mut buf = Vec::new();
+        let mime = if q == 0 {
+            cropped
+                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .map_err(|e| napi::Error::from_reason(format!("png encode: {e}")))?;
+            "image/png"
+        } else {
+            // JPEG has no alpha, so drop it rather than letting the encoder refuse.
+            image::DynamicImage::ImageRgb8(cropped.to_rgb8())
+                .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+                .map_err(|e| napi::Error::from_reason(format!("jpeg encode: {e}")))?;
+            "image/jpeg"
+        };
+
+        Ok(serde_json::json!({
+            "base64": base64::engine::general_purpose::STANDARD.encode(&buf),
+            "width": width,
+            "height": height,
+            "mimeType": mime,
+        }))
+    }
 }
 
 // ── macOS implementation ──────────────────────────────────────────────────────

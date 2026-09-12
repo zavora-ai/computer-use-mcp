@@ -262,7 +262,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
 
   // ── v5: Scripting bridge ────────────────────────────────────────────────
   tool('run_script', 'Execute a script and return the output. On macOS: AppleScript or JXA for scriptable apps. On Windows: PowerShell. Bounded by timeout_ms.', {
-    language: z.enum(['applescript', 'javascript', 'powershell']).describe('Scripting language (applescript/javascript on macOS, powershell on Windows)'),
+    language: z.enum(['applescript', 'javascript', 'powershell', 'bash']).describe('Scripting language. applescript and javascript are macOS only; bash works on macOS and Linux; powershell works anywhere pwsh is installed and is the Windows default.'),
     script: z.string().describe('Script body to execute'),
     timeout_ms: z.number().int().positive().max(120_000).optional().describe('Hard timeout in ms (default 30000, max 120000)'),
   }, SCRIPTING)

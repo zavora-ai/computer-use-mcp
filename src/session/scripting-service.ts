@@ -66,39 +66,82 @@ export class ScriptingService {
     return this.#powerShellExe
   }
 
+  /**
+   * Run a script in the named language.
+   *
+   * Dispatched **language first**, then platform. The previous shape was the reverse,
+   * and it produced a real contradiction: `bash` was implemented on Linux, promised by
+   * the platform table, and recommended by this file's own error message — while the
+   * tool's schema enum never contained it. A caller following the advice got
+   * `invalid_arguments`, and on an older build got told applescript was unsupported,
+   * which is a confusing thing to hear when you asked for bash. Language first means
+   * an unsupported combination can only be reported one way, and it is the way the
+   * schema and the docs agree on.
+   */
   runScript(
     language: string,
     script: string,
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<SpawnResult> {
-    if (this.#platform === 'win32') {
-      if (language === 'applescript' || language === 'javascript') {
-        return Promise.resolve(this.#unsupported(language, 'Windows', 'powershell'))
+    const platformName = this.#platform === 'win32'
+      ? 'Windows'
+      : this.#platform === 'linux' ? 'Linux' : 'macOS'
+
+    switch (language) {
+      case 'applescript':
+      case 'javascript':
+        // Apple-event scripting only exists on macOS.
+        if (this.#platform !== 'darwin') {
+          return Promise.resolve(this.#unsupported(
+            language,
+            platformName,
+            this.#platform === 'win32' ? 'powershell' : 'bash',
+          ))
+        }
+        return this.#spawn(
+          'osascript',
+          language === 'javascript' ? ['-l', 'JavaScript', '-e', script] : ['-e', script],
+          timeoutMs,
+          signal,
+        )
+
+      case 'powershell': {
+        // Present on all three: Windows ships it, and pwsh is installable elsewhere.
+        const executable = this.#platform === 'win32' ? this.getPowerShellExe() : 'pwsh'
+        // Quoting a script through -Command is where this used to break on Windows, so
+        // anything with a quote, a dollar or a newline goes base64 instead.
+        if (this.#platform === 'win32' && /['"$`\r\n]/.test(script)) {
+          return this.#spawn(executable, [
+            '-NoProfile', '-NonInteractive', '-EncodedCommand',
+            Buffer.from(script, 'utf16le').toString('base64'),
+          ], timeoutMs, signal)
+        }
+        return this.#spawn(
+          executable,
+          ['-NoProfile', '-NonInteractive', '-Command', script],
+          timeoutMs,
+          signal,
+        )
       }
-      const executable = this.getPowerShellExe()
-      if (/['"$`\r\n]/.test(script)) {
-        return this.#spawn(executable, [
-          '-NoProfile', '-NonInteractive', '-EncodedCommand',
-          Buffer.from(script, 'utf16le').toString('base64'),
-        ], timeoutMs, signal)
-      }
-      return this.#spawn(executable, ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs, signal)
+
+      case 'bash':
+        // macOS and Linux both have it. Windows may through WSL or Git Bash, but that
+        // is not something to assume, so it is refused there with the alternative.
+        if (this.#platform === 'win32') {
+          return Promise.resolve(this.#unsupported(language, platformName, 'powershell'))
+        }
+        return this.#spawn('bash', ['-c', script], timeoutMs, signal)
+
+      default:
+        return Promise.resolve(this.#unsupported(
+          language,
+          platformName,
+          this.#platform === 'darwin'
+            ? 'applescript", "javascript", "bash" or "powershell'
+            : this.#platform === 'linux' ? 'bash" or "powershell' : 'powershell',
+        ))
     }
-    if (this.#platform === 'linux') {
-      if (language === 'applescript' || language === 'javascript') {
-        return Promise.resolve(this.#unsupported(language, 'Linux', 'bash" or "powershell'))
-      }
-      return language === 'powershell'
-        ? this.#spawn('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], timeoutMs, signal)
-        : this.#spawn('bash', ['-c', script], timeoutMs, signal)
-    }
-    return this.#spawn(
-      'osascript',
-      language === 'javascript' ? ['-l', 'JavaScript', '-e', script] : ['-e', script],
-      timeoutMs,
-      signal,
-    )
   }
 
   async #findAppPath(bundleId: string): Promise<string | undefined> {

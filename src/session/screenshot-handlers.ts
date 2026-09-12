@@ -1,5 +1,5 @@
 import type { NativeModule } from '../native.js'
-import { ok, type ToolResult } from '../result.js'
+import { ok, type ToolResult, platformUnsupported } from '../result.js'
 import { PROVIDER_QUALITY, PROVIDER_WIDTH } from './constants.js'
 import type { TargetStateController } from './target-state.js'
 import type { VirtualPointerController } from './virtual-pointer.js'
@@ -141,6 +141,20 @@ export class ScreenshotHandler {
       }
       const source = this.#native.takeScreenshot(undefined, undefined, 0, undefined, undefined)
       if (!source.base64) throw new Error('Screenshot capture failed')
+      // A missing native export used to surface as `cropImage is not a function`, a
+      // TypeError from JavaScript reaching for something that was never built for this
+      // platform. It says nothing about which platform, why, or what to do — and it was
+      // real: crop_image existed for macOS and Windows and not for Linux. Check for it,
+      // and if it is absent say so in the shape every other capability gap uses.
+      if (typeof this.#native.cropImage !== 'function') {
+        return platformUnsupported(
+          'zoom',
+          'platforms whose native module provides cropImage',
+          'Take a screenshot instead and crop it yourself; the reply states the mapping '
+            + 'from image pixels to screen coordinates. If you built the native module '
+            + 'locally, rebuild it — this export is missing rather than failing.',
+        )
+      }
       const cropped = this.#native.cropImage(
         source.base64, x1, y1, x2, y2, typeof args.quality === 'number' ? args.quality : 0,
       )
