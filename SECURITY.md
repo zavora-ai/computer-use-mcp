@@ -4,10 +4,10 @@
 
 | Version | Supported |
 |---|---|
-| 7.1.x | Yes |
-| 7.0.x | Security fixes |
-| 6.x | Security fixes |
-| 5.x and earlier | No |
+| 7.4.x | Yes |
+| 7.3.x | Security fixes |
+| 7.0.x – 7.2.x | Security fixes |
+| 6.x and earlier | No |
 
 ## Reporting a vulnerability
 
