@@ -224,7 +224,7 @@ browser fixture. These live checks need their documented platform prerequisites.
 
 ## Documentation and support
 
-- [v7.2.0 release notes and rollout checklist](docs/releases/v7.2.0.md)
+- [v7.4.0 release notes and rollout checklist](docs/releases/v7.4.0.md)
 - [Tool usage and agent setup](AGENTS.md)
 - [Architecture and platform support](docs/ARCHITECTURE.md)
 - [Sessions, Tasks, browser isolation and supervision](docs/STRATEGY.md)

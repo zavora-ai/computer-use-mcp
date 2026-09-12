@@ -1,6 +1,6 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "7.3.0",
+  "version": "7.4.0",
   "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) \u2014 screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
@@ -190,7 +190,7 @@
     "dist/task-client.d.ts",
     "workers",
     "docs/releases/v7.2.0.md",
-    "docs/releases/v7.3.0.md",
+    "docs/releases/v7.4.0.md",
     "docs/assets/architecture.svg",
     "docs/assets/astra-painting.png",
     "docs/assets/blender-console-live.png",
