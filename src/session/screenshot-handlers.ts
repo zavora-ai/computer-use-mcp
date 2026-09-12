@@ -48,6 +48,50 @@ export class ScreenshotHandler {
     return this.#lastScreenshot ? structuredClone(this.#lastScreenshot) : undefined
   }
 
+  /**
+   * Describe a capture so a point in the image can be turned into a click.
+   *
+   * Reporting only `WxH`, as this used to, left every agent to infer the mapping —
+   * and they infer it wrong. A screen capture scales uniformly with no offset, so
+   * its mapping is exact and worth stating. A window capture includes the window's
+   * shadow, so its scale is approximate and that has to be said rather than implied.
+   * A window that could not be captured falls back to the screen, which is the case
+   * that silently produces coordinates far from where an agent believes it clicked.
+   */
+  #describeCapture(width: number, height: number, windowId: number | undefined): string {
+    const size = `${width}x${height}`
+    const display = this.#native.getDisplaySize()
+    const imageAspect = width / height
+    const screenAspect = display.width / display.height
+    const looksLikeScreen = Math.abs(imageAspect - screenAspect) < 0.02
+
+    const bounds = windowId !== undefined ? this.#native.getWindow?.(windowId)?.bounds : undefined
+
+    if (windowId !== undefined && bounds && !looksLikeScreen) {
+      // Scaled from width, because the shadow adds more height than width.
+      const scale = bounds.width / width
+      return [
+        `${size} | window ${windowId} at ${bounds.x},${bounds.y} sized ${bounds.width}x${bounds.height}`,
+        `screen_x ≈ ${bounds.x} + image_x * ${scale.toFixed(4)}`,
+        `screen_y ≈ ${bounds.y} + image_y * ${scale.toFixed(4)}`,
+        'the capture includes the window shadow, so this mapping is approximate:'
+          + ' click, then capture again to confirm before typing.'
+          + ' For exact coordinates omit target_window_id and use a screen capture.',
+      ].join('\n')
+    }
+
+    const scale = display.width / width
+    const fellBack = windowId !== undefined
+      ? ` | window ${windowId} could not be captured on its own, so this is the whole screen`
+      : ''
+    return [
+      `${size} | screen ${display.width}x${display.height}${fellBack}`,
+      `screen_x = image_x * ${scale.toFixed(4)}`,
+      `screen_y = image_y * ${scale.toFixed(4)}`,
+      'a screen capture scales uniformly with no offset, so this mapping is exact.',
+    ].join('\n')
+  }
+
   handle(tool: string, args: Record<string, unknown>): ToolResult | undefined {
     if (tool === 'screenshot') {
       const provider = typeof args.provider === 'string' ? args.provider : this.#defaultProvider
@@ -81,7 +125,7 @@ export class ScreenshotHandler {
       this.#lastResult = {
         content: [
           { type: 'image', data: image.base64, mimeType: image.mimeType },
-          { type: 'text', text: `${image.width}x${image.height}` },
+          { type: 'text', text: this.#describeCapture(image.width, image.height, windowId) },
         ],
       }
       return this.#lastResult
