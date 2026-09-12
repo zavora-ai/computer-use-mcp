@@ -107,6 +107,11 @@ body[data-busy] .mark{animation:spin 3.4s linear infinite}
 h1{font-size:15.5px;font-weight:650;margin:0;letter-spacing:.2px}
 .stack{margin:1px 0 0;font-size:11.5px;color:var(--faint);letter-spacing:.35px}
 .stack b{color:var(--dim);font-weight:550}
+#meter{margin-left:auto;font:11px ui-monospace,Menlo,monospace;color:#7c8798;
+  white-space:nowrap;letter-spacing:.02em}
+#stop{background:#2a1d1d;border-color:#5a3535;color:#e0a0a0}
+#stop:hover:not(:disabled){background:#3a2525;border-color:#7a4545}
+#stop[hidden]{display:none}
 .live{display:flex;align-items:center;gap:7px;font-size:11.5px;letter-spacing:.9px;
   text-transform:uppercase;color:var(--dim);padding:5px 11px;border:1px solid var(--line);
   border-radius:999px;background:var(--sunk);white-space:nowrap}
@@ -258,6 +263,7 @@ li[data-status=active]::after{content:"";position:absolute;inset:0;pointer-event
       <h1>__BRAND_NAME__</h1>
       <p class="stack">__BRAND_CREDITS__</p>
     </div>
+    <div id="meter" title="What this run has spent"></div>
     <div class="live"><span class="pip" aria-hidden="true"></span><span id="state" role="status" aria-live="polite">connecting</span></div>
   </header>
 
@@ -281,6 +287,7 @@ li[data-status=active]::after{content:"";position:absolute;inset:0;pointer-event
       <input id="pick" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
       <button id="clip" type="button" title="Attach an image" aria-label="Attach an image">+</button>
       <input id="say" placeholder="Ask the agent to build something…" maxlength="2000" autocomplete="off" disabled>
+      <button id="stop" type="button" title="Ask the agent to stop where it is">Stop</button>
       <button id="send" type="submit" disabled>Send</button>
     </form>
   </section>
@@ -413,7 +420,12 @@ function render(run){
   // Planning counts as busy: the agent is thinking, it just has nothing
   // to show yet, and a still screen reads as a hang.
   document.body.toggleAttribute('data-busy',run.state==='planning'||run.state==='working');
-  el('state').textContent=run.state||'working';
+  el('state').textContent=run.cancelRequested&&!finished?'stopping':(run.state||'working');
+  renderMeter(run.usage);
+  // Only offer to stop something that is actually running.
+  el('stop').hidden=finished||!runId;
+  el('stop').disabled=!!run.cancelRequested;
+  el('stop').textContent=run.cancelRequested?'Stopping…':'Stop';
   const tasks=Array.isArray(run.tasks)?run.tasks:[];
   const done=tasks.filter(t=>t.status==='done'||t.status==='skipped').length;
   const counts=el('counts');
@@ -467,6 +479,35 @@ function drawActs(activity){
   if(atBottom)acts.scrollTop=acts.scrollHeight;
 }
 
+// Tokens are a fact; money is only shown when the host was given a price, because a
+// rate guessed here would be wrong and a wrong cost is worse than none.
+function renderMeter(usage){
+  const meter=el('meter');
+  if(!usage||!usage.calls){meter.textContent='';meter.hidden=true;return}
+  meter.hidden=false;
+  const parts=[];
+  parts.push(usage.calls+(usage.calls===1?' call':' calls'));
+  const io=[];
+  if(usage.inputTokens)io.push(compact(usage.inputTokens)+' in');
+  if(usage.outputTokens)io.push(compact(usage.outputTokens)+' out');
+  if(io.length)parts.push(io.join(' / '));
+  if(usage.cachedTokens&&usage.inputTokens){
+    parts.push(Math.round(usage.cachedTokens/usage.inputTokens*100)+'% cached');
+  }
+  if(usage.reasoningTokens)parts.push(compact(usage.reasoningTokens)+' thinking');
+  if(typeof usage.cost==='number'){
+    const currency=usage.currency?usage.currency+' ':'';
+    parts.push(currency+usage.cost.toFixed(usage.cost<1?4:2));
+  }
+  meter.textContent=parts.join(' · ');
+}
+
+function compact(value){
+  if(value<1000)return String(value);
+  if(value<1000000)return (value/1000).toFixed(value<10000?1:0)+'k';
+  return (value/1000000).toFixed(1)+'M';
+}
+
 function showError(error){el('state').textContent='error';el('composer-error').style.display='block';el('composer-error').textContent=error.message||String(error)}
 function valueOf(result){if(result.isError)throw Error(result.content?.[0]?.text||'Operation failed');return result.structuredContent||JSON.parse(result.content?.find(c=>c.type==='text')?.text||'{}')}
 async function call(name,args){return valueOf(await rpc('tools/call',{name,arguments:args}))}
@@ -502,6 +543,13 @@ function clearAttachment(){
   chip.textContent='';
 }
 
+// Stop is cooperative: it records the ask and the agent sees it on its next call.
+// The button says so by becoming "Stopping…" rather than claiming the run has ended.
+el('stop').addEventListener('click',()=>{
+  if(!runId)return;
+  el('stop').disabled=true;el('stop').textContent='Stopping…';
+  call('run_cancel',{runId}).then(render).catch(showError);
+});
 el('composer').addEventListener('submit',event=>{
   event.preventDefault();
   const input=el('say');

@@ -1,5 +1,72 @@
 # Changelog
 
+## v7.4.0 (2026-09-12)
+
+Read the browser the person is already signed into, watch what a run costs, stop it,
+and keep the conversation across a restart. See [the release notes](docs/releases/v7.4.0.md).
+
+### Added
+
+- **`browser_tabs`, `browser_page_text`, `browser_find`** — read the browser already
+  open rather than a fresh one. `browser_find` returns an element's position in
+  **logical screen coordinates ready for `left_click`**, which is the point: a capture
+  is scaled 2.5× down and a form field is about 35 pixels tall, so an estimated click
+  misses. Verified by signing into a dashboard in three calls, where estimating from a
+  screenshot had taken more than thirty and never succeeded.
+  - Three tiers, probed per call: tab titles and URLs need nothing on macOS; the live
+    DOM needs either Apple-event JavaScript, whose absence returns a nameable `-1723`,
+    or a DevTools port. Nothing here enables a browser setting or launches a browser
+    with a debug port — both weaken it for every other local process, indefinitely,
+    with nothing on screen to show it happened.
+  - Off by default behind `COMPUTER_USE_BROWSER_DOM`, because a browser holds live
+    sessions: closer to `run_script` than to `screenshot`. Credential-store hosts are
+    refused, page text is labelled untrusted, and URLs are redacted — including
+    secrets nested inside an encoded `redirect=`, which a live tab was carrying.
+- **`run_spend` and a cost meter** — calls, tokens in and out, cache hit rate and
+  reasoning tokens. Money only when `COMPUTER_USE_PRICE_INPUT` / `_OUTPUT` are set;
+  a rate baked into the server would be stale within a quarter, and a wrong cost is
+  worse than none. Reasoning is priced with output, because that is how it bills.
+- **`run_cancel` and a stop control** — cooperative, and named to say so. A page cannot
+  recall a model call in flight, so the flag appears in every run tool reply and the
+  agent stops cleanly. The button reads "Stopping…" rather than claiming the run ended.
+- **`COMPUTER_USE_RUN_STORE`** — run state across a restart, so the transcript a person
+  steers with is not lost with the process. Frames are never written: a 300,000-byte
+  capture leaves a 472-byte file, and a reloaded run honestly shows no frame until the
+  next capture.
+- **A configurable console header.** The console is generic; only its header named one
+  use case. `runConsoleHtml(brand)`, plus `--brand` and `--credits`. The default is
+  asserted byte-identical to what shipped before.
+
+### Fixed
+
+- **Unanswered messages could be erased.** Detecting pending work as "the last message
+  is the person's" was falsified by the agent's own narration: a `run_progress` call
+  appends an agent message, so a question typed mid-run stopped being last and became
+  invisible. Messages now carry stable ids and the run holds an acknowledgement cursor
+  that never moves backwards.
+- **A capture's coordinate mapping is now stated.** The reply used to be the bare string
+  `1024x432`, leaving every agent to infer the mapping — and they infer it wrong, one
+  missing a form's fields by 15, 50 and 77 pixels. It now names the mapping and flags
+  the two cases that mislead: a window capture includes the window's shadow, and a
+  window that cannot be captured silently becomes a screen capture.
+- **`key` no longer accepts text.** An agent with no `type` tool spelled a URL out one
+  keystroke at a time against an error that only said `Unknown key in combo`. Every
+  real combination still passes, including `shift+;` and `ctrl+win+f4`.
+- **`scrape use_dom` no longer advertises what it never implemented**, and its error
+  names the alternative.
+- **The Blender recorder works on another machine.** The capture device was hardcoded to
+  AVFoundation index 1, correct here only because device 0 is a virtual camera; it now
+  discovers the screen. The crop converts logical points to capture pixels, so a Retina
+  display no longer records a quarter of the intended area. Shutdown is bounded, and a
+  failure restores the applications it hid.
+
+### Changed
+
+- **The skills state goals and measured facts, not steps.** Prescriptive guidance made an
+  agent *slower* than none — a pixel-by-pixel login recipe was worse than no recipe.
+  354 lines became 130; everything cut was a recipe, everything kept is a measurement.
+- 70 tools by default, 78 with the run console. 435 tests.
+
 ## v7.3.0 (2026-09-11)
 
 The run console shows what an agent is thinking and every call it makes, accepts an

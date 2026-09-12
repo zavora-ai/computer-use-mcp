@@ -111,6 +111,13 @@ export function fsBoundaryEnforced(clientRoots?: readonly string[]): boolean {
  * symlink swapped in after the check (the check-then-use race). With no boundary
  * configured there is nothing to bypass, so the caller's path is returned
  * unchanged and deliberate symlinks keep behaving as the caller expects.
+ *
+ * **This is necessary but not sufficient, and `openWithinRoots` is the rest of it.**
+ * Canonicalizing narrows the window; it cannot close it. The path is resolved at one
+ * instant and the syscall happens at another, and for a write target that does not
+ * exist yet the tail cannot be canonicalized at all — a component created as a symlink
+ * in between will be followed. Closing that needs the operation to happen on a
+ * descriptor whose identity has been verified, not on a name resolved earlier.
  */
 export function enforceFsRoots(target: string, clientRoots?: readonly string[]): FsRootDecision {
   const violation = fsRootsViolation(target, clientRoots)
@@ -119,4 +126,148 @@ export function enforceFsRoots(target: string, clientRoots?: readonly string[]):
     violation: null,
     path: fsBoundaryEnforced(clientRoots) ? resolveForJail(target) : target,
   }
+}
+
+/**
+ * Open a path and prove the descriptor is inside the roots before anything reads or
+ * writes through it.
+ *
+ * The check-then-use race cannot be won with pathnames: whatever a name resolves to
+ * now, it may resolve elsewhere by the time the kernel looks again. What can be won is
+ * the question asked after opening — this descriptor, whatever games were played with
+ * names, refers to *this* file, and here is whether that file is inside the boundary.
+ *
+ * Two things make that answerable:
+ *
+ * - `O_NOFOLLOW` on the final component, so the last name in the path cannot itself be
+ *   a symlink at open time. That covers the common swap.
+ * - `/dev/fd/N`, which on macOS and Linux resolves to the path the descriptor actually
+ *   holds. Comparing *that* against the roots is a statement about the open file rather
+ *   than about a name, so a component swapped mid-flight is caught rather than
+ *   followed.
+ *
+ * Where `/dev/fd` is unavailable — Windows — the descriptor's identity cannot be
+ * recovered this way, so the caller is told so rather than being given false assurance.
+ * The pathname check still applies there; it is simply the weaker guarantee it always
+ * was.
+ */
+export function openWithinRoots(
+  target: string,
+  flags: number,
+  clientRoots?: readonly string[],
+  mode?: number,
+): { violation: FsRootViolation } | { violation: null; fd: number; verified: boolean } {
+  const decision = enforceFsRoots(target, clientRoots)
+  if (decision.violation) return { violation: decision.violation }
+
+  // O_NOFOLLOW refuses a symlink as the final component. Without a boundary in force
+  // there is nothing to protect, and refusing a deliberate symlink would be a
+  // behaviour change, so it is only added when a boundary applies.
+  const enforced = fsBoundaryEnforced(clientRoots)
+  const openFlags = enforced && typeof fs.constants.O_NOFOLLOW === 'number'
+    ? flags | fs.constants.O_NOFOLLOW
+    : flags
+
+  // Refuse a symlinked target before opening it.
+  //
+  // O_NOFOLLOW does the same job on POSIX and does it without a race, but Windows has
+  // no such flag: Node leaves `fs.constants.O_NOFOLLOW` undefined there, so the bit
+  // coerces to zero and the open follows the link. CI caught this — a Windows runner
+  // created a file outside the root through a symlinked final component while macOS and
+  // Linux refused it.
+  //
+  // `lstat` describes the link itself rather than its destination on all three
+  // platforms, so asking here closes the hole. On POSIX this is belt and braces, since
+  // O_NOFOLLOW would refuse anyway. On Windows it is the only mechanism available
+  // through Node, and it is a check before a use: a link created in the window between
+  // this call and the open is not caught. That window is narrow and Windows offers no
+  // way to close it from Node — FILE_FLAG_OPEN_REPARSE_POINT is not exposed — so it is
+  // recorded here rather than papered over, and `verified` reports whether the stronger
+  // guarantee actually held.
+  if (enforced) {
+    try {
+      if (fs.lstatSync(decision.path).isSymbolicLink()) {
+        return {
+          violation: {
+            error: 'fs_root_violation',
+            message: `${target} is a symbolic link, and following it could leave the configured roots. `
+              + 'The final component of a path must be a real file when COMPUTER_USE_FS_ROOTS is set.',
+            path: target,
+            roots: fsRoots(),
+          } as unknown as FsRootViolation,
+        }
+      }
+    } catch {
+      // No such entry yet, which is the ordinary case for a write. Nothing to refuse.
+    }
+  }
+
+  const fd = (() => {
+    try {
+      return mode === undefined
+        ? fs.openSync(decision.path, openFlags)
+        : fs.openSync(decision.path, openFlags, mode)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      // O_NOFOLLOW reports ELOOP when the final component is a symlink. That is the
+      // boundary working, not an I/O fault, so it is reported as a violation with the
+      // reason rather than thrown as an unexplained open failure.
+      if (enforced && (code === 'ELOOP' || code === 'EMLINK')) return 'symlink' as const
+      throw error
+    }
+  })()
+  if (fd === 'symlink') {
+    return {
+      violation: {
+        error: 'fs_root_violation',
+        message: `${target} is a symbolic link, and following it could leave the configured roots. `
+          + 'The final component of a path must be a real file when COMPUTER_USE_FS_ROOTS is set.',
+        path: target,
+        roots: fsRoots(),
+      } as unknown as FsRootViolation,
+    }
+  }
+
+  if (!enforced) return { violation: null, fd, verified: false }
+
+  // Ask whether the descriptor still refers to the file the check approved.
+  //
+  // Identity, not names. `fstat` describes the open file; `lstat` describes whatever the
+  // name refers to right now. If the device and inode agree, nothing was swapped in
+  // between, and the descriptor is the thing that was checked. If they disagree,
+  // something changed under us and refusing is the only safe answer.
+  //
+  // This replaces an earlier attempt to recover the path from `/dev/fd/N`, which works
+  // on Linux and does not on macOS: there `realpath` returns `/dev/fd/11` rather than
+  // the file, so every legitimate write was rejected. Comparing inodes needs no
+  // procfs and behaves the same on all three platforms.
+  try {
+    const opened = fs.fstatSync(fd)
+    const named = fs.lstatSync(decision.path)
+    // Windows reports 0 for both fields on some filesystems, which would make any two
+    // files compare equal and turn this check into a rubber stamp. Say the guarantee is
+    // absent rather than assert one that compared nothing.
+    if (opened.ino === 0 && opened.dev === 0) {
+      return { violation: null, fd, verified: false }
+    }
+    if (opened.dev !== named.dev || opened.ino !== named.ino) {
+      try { fs.closeSync(fd) } catch { /* closing a doomed descriptor */ }
+      return {
+        violation: {
+          error: 'fs_root_violation',
+          message: `${target} changed while it was being opened, so it cannot be confirmed inside `
+            + 'the configured roots. Nothing was written. This is what a symlink swapped in '
+            + 'between the check and the open looks like.',
+          path: target,
+          roots: fsRoots(),
+        } as unknown as FsRootViolation,
+      }
+    }
+  } catch {
+    // The identity could not be established. The pathname check passed and O_NOFOLLOW
+    // held, so the descriptor is usable — but say the stronger guarantee is absent
+    // rather than implying it.
+    return { violation: null, fd, verified: false }
+  }
+  return { violation: null, fd, verified: true }
 }

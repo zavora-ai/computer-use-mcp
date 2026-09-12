@@ -210,6 +210,11 @@ export async function serve({
   // builds records into the same transcript and captures through the same
   // desktop. This is the difference between a live console and an empty one.
   const store = new RunStore()
+  // Say whether a restart would lose this run. A console that silently forgets is
+  // worse than one that says it will.
+  const durability = store.persistence()
+  if (durability.problem) onLog(`run state not durable: ${durability.problem}`)
+  else if (durability.path) onLog(`run state kept in ${durability.path}`)
   const session = injected ?? createSession()
   const shared = { runConsole: true as const, runStore: store, session }
 
@@ -223,7 +228,10 @@ export async function serve({
   const validateOrigin = localhostOriginValidation()
 
   /** The conversation. Empty until the person, or the demo, says something. */
-  let currentRunId = ''
+  // Adopt the newest reloaded run, so a restarted host continues the conversation
+  // rather than leaving it in the store unreachable.
+  let currentRunId = store.latest()?.runId ?? ''
+  if (currentRunId) onLog(`resumed run ${currentRunId}`)
   /** Where uploads land. One directory per host, created on first use. */
   let uploadDirectory = ''
 
@@ -321,6 +329,14 @@ export async function serve({
       if (!currentRunId) return { content: [{ type: 'text', text: '{}' }] }
       return client.callTool('run_console', { runId: currentRunId }) as Promise<ToolResult>
     }
+    // Stopping is something the watching person is entitled to ask for, so the page
+    // may call it — with the runId pinned here, like every other page call, so a
+    // page cannot address a run it was not given.
+    if (name === 'run_cancel') {
+      if (!currentRunId) return { content: [{ type: 'text', text: '{}' }] }
+      onLog('the person asked the agent to stop')
+      return client.callTool('run_cancel', { runId: currentRunId }) as Promise<ToolResult>
+    }
     return { isError: true, content: [{ type: 'text', text: `${name} may not be called from the app` }] }
   }
 
@@ -387,6 +403,29 @@ export async function serve({
         // would simply stop updating and the person would be left watching a
         // spinner. This grants nothing new: /mcp already accepts run_progress
         // from anything that can reach this port.
+        // Usage reported by the driver. The price lives here rather than in the
+        // driver so an operator can set it once, and so a run started without one
+        // still shows token counts instead of nothing.
+        if (request.method === 'POST' && url === '/driver/usage') {
+          const body = await readBody(request)
+          if (!currentRunId) return json(response, { isError: true, content: [{ type: 'text', text: 'No run yet' }] }, 409)
+          const rate = (name: string): number | undefined => {
+            const raw = process.env[name]
+            if (raw === undefined) return undefined
+            const value = Number(raw)
+            return Number.isFinite(value) && value >= 0 ? value : undefined
+          }
+          return json(response, await client.callTool('run_spend', {
+            ...body,
+            runId: currentRunId,
+            ...(rate('COMPUTER_USE_PRICE_INPUT') !== undefined
+              ? { input_price_per_million: rate('COMPUTER_USE_PRICE_INPUT') } : {}),
+            ...(rate('COMPUTER_USE_PRICE_OUTPUT') !== undefined
+              ? { output_price_per_million: rate('COMPUTER_USE_PRICE_OUTPUT') } : {}),
+            ...(process.env.COMPUTER_USE_PRICE_CURRENCY
+              ? { currency: process.env.COMPUTER_USE_PRICE_CURRENCY } : {}),
+          }))
+        }
         if (request.method === 'POST' && url === '/driver') {
           const body = await readBody(request)
           if (!currentRunId) return json(response, { isError: true, content: [{ type: 'text', text: 'No run yet' }] }, 409)

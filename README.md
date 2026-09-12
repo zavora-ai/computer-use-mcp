@@ -139,7 +139,7 @@ Downloads is not guaranteed to bypass those prompts.
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
 
-The default profile exposes **67 tools**. Set `COMPUTER_USE_PROFILE=core` for a
+The default profile exposes **70 tools**. Set `COMPUTER_USE_PROFILE=core` for a
 smaller starting set; `ax`, `scripting`, `windows-admin` and `full` are also
 available. Optional host services add their own tools.
 
@@ -224,7 +224,7 @@ browser fixture. These live checks need their documented platform prerequisites.
 
 ## Documentation and support
 
-- [v7.2.0 release notes and rollout checklist](docs/releases/v7.2.0.md)
+- [v7.4.0 release notes and rollout checklist](docs/releases/v7.4.0.md)
 - [Tool usage and agent setup](AGENTS.md)
 - [Architecture and platform support](docs/ARCHITECTURE.md)
 - [Sessions, Tasks, browser isolation and supervision](docs/STRATEGY.md)

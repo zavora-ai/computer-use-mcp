@@ -90,3 +90,78 @@ test('zoom validates bounds and crops a lossless full-resolution capture', () =>
   assert.equal(result.content[1].text, '20x30 (zoomed from 800x600)')
   assert.deepEqual(f.native.calls.at(-1), ['crop', 'raw', 1, 2, 21, 32, 0])
 })
+
+test('a screen capture reports an exact mapping from image pixels to click coordinates', () => {
+  // Reporting only WxH left every agent to infer this, and they infer it wrong: one
+  // clicked a form three times with a y scale it had guessed, missing by 30, 57 and
+  // 87 pixels. A screen capture scales uniformly with no offset, so it can be stated.
+  const f = fixture()
+  const text = f.handler.handle('screenshot', {}).content.find(c => c.type === 'text').text
+  assert.match(text, /^800x600 \| screen 1200x800$/m)
+  // 1200 display / 800 image = 1.5
+  assert.match(text, /screen_x = image_x \* 1\.5000/)
+  assert.match(text, /screen_y = image_y \* 1\.5000/)
+  assert.match(text, /exact/)
+})
+
+test('a window capture reports the window origin and says the mapping is approximate', () => {
+  // A window capture includes the window's shadow, so its scale cannot be exact.
+  // Saying so is the difference between an agent verifying and an agent trusting.
+  const windows = new Map([[42, {
+    windowId: 42, bundleId: 'app.target', isOnScreen: true,
+    bounds: { x: 100, y: 50, width: 1000, height: 700 },
+  }]])
+  const f = fixture({
+    getWindow: id => windows.get(id) ?? null,
+    // 800x600 is aspect 1.333, distinct from the 1.5 display, so it is a window shot.
+    takeScreenshot: () => ({ base64: 'raw', width: 800, height: 600, mimeType: 'image/png', hash: 'w' }),
+  })
+  const text = f.handler.handle('screenshot', { target_window_id: 42 }).content
+    .find(c => c.type === 'text').text
+  assert.match(text, /window 42 at 100,50 sized 1000x700/)
+  assert.match(text, /screen_x ≈ 100 \+ image_x \* 1\.2500/)
+  assert.match(text, /screen_y ≈ 50 \+ image_y \* 1\.2500/)
+  assert.match(text, /approximate/)
+  assert.match(text, /screen capture/, 'should point at the exact alternative')
+})
+
+test('a window that could not be captured says so instead of pretending', () => {
+  // The failure that actually misled an agent: a window capture silently returning
+  // the whole screen. Its mapping is then valid but its frame of reference is not
+  // the one the agent believes, so every coordinate it derives is wrong.
+  const windows = new Map([[42, {
+    windowId: 42, bundleId: 'app.target', isOnScreen: true,
+    bounds: { x: 100, y: 50, width: 1000, height: 700 },
+  }]])
+  const f = fixture({
+    getWindow: id => windows.get(id) ?? null,
+    // Aspect 1.5 matches the display, so this is the screen, not the window.
+    takeScreenshot: () => ({ base64: 'raw', width: 900, height: 600, mimeType: 'image/png', hash: 's' }),
+  })
+  const text = f.handler.handle('screenshot', { target_window_id: 42 }).content
+    .find(c => c.type === 'text').text
+  assert.match(text, /window 42 could not be captured on its own/)
+  assert.match(text, /whole screen/)
+  assert.match(text, /screen_x = image_x \* 1\.3333/)
+})
+
+test('a missing native crop is reported as a capability gap, not a TypeError', () => {
+  // Issue #20: crop_image existed for macOS and Windows and not for Linux, so zoom
+  // failed with "cropImage is not a function" — a TypeError that names no platform,
+  // no reason and no alternative. The export is now implemented for Linux; this guard
+  // is for the next time something is built for two platforms out of three.
+  const f = fixture({ cropImage: undefined })
+  const result = f.handler.handle('zoom', { region: [10, 10, 50, 50] })
+  assert.equal(result.isError, true)
+  const body = JSON.parse(result.content.find(part => part.type === 'text').text)
+  assert.equal(body.error, 'platform_unsupported')
+  assert.match(JSON.stringify(body), /screenshot/, 'the alternative must be named')
+  assert.match(JSON.stringify(body), /rebuild/, 'a local build is the likely cause')
+})
+
+test('zoom still crops when the native export is present', () => {
+  const f = fixture()
+  const result = f.handler.handle('zoom', { region: [10, 10, 50, 50] })
+  assert.equal(result.isError, undefined)
+  assert.ok(f.native.calls.some(([kind]) => kind === 'crop'), 'the native crop should be used')
+})

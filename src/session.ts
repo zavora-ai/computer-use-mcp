@@ -28,6 +28,7 @@ import { TargetStateController } from './session/target-state.js'
 import { VirtualPointerController } from './session/virtual-pointer.js'
 import { runDoctor as runDoctorService } from './session/doctor.js'
 import { handleAdminTool } from './session/admin-handlers.js'
+import { handleBrowserTool } from './session/browser-handlers.js'
 import { handleWindowTool } from './session/window-handlers.js'
 import { handleLinuxAccessibility } from './session/linux-atspi.js'
 import { handleAccessibilityTool } from './session/accessibility-handlers.js'
@@ -373,6 +374,11 @@ export function createSession(opts: SessionOptions = {}): Session {
         ...(onProgress ? { onProgress } : {}),
       })
       if (extracted) return extracted
+      const browserResult = await handleBrowserTool(tool, args, {
+        spawnBounded,
+        ...(signal ? { signal } : {}),
+      })
+      if (browserResult) return browserResult
       const windowResult = await handleWindowTool(tool, args, {
         native: n,
         targets: targetController,

@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createHash, type Hash } from 'node:crypto'
-import { enforceFsRoots } from './fs-jail.js'
+import { enforceFsRoots, openWithinRoots } from './fs-jail.js'
 import type { SpawnBounded } from './spawn.js'
 import { errJson, ok, platformUnsupported, type ToolResult } from '../result.js'
 
@@ -129,8 +129,22 @@ export async function handleAdminTool(
     if (mode === 'write') {
       const content = typeof args.content === 'string' ? args.content : ''
       fs.mkdirSync(path.dirname(filePath), { recursive: true })
-      if (args.append) fs.appendFileSync(filePath, content, encoding)
-      else fs.writeFileSync(filePath, content, encoding)
+      // Write through a descriptor whose identity was checked after opening, not
+      // through a name resolved before. A name can be redirected between the check and
+      // the syscall — including by creating the final component as a symlink, which no
+      // amount of canonicalizing beforehand can see, because it did not exist yet.
+      const opened = openWithinRoots(
+        filePath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | (args.append ? fs.constants.O_APPEND : fs.constants.O_TRUNC),
+        context.clientRoots,
+        0o600,
+      )
+      if (opened.violation) return errJson(opened.violation as unknown as Record<string, unknown>)
+      try {
+        fs.writeFileSync(opened.fd, content, { encoding })
+      } finally {
+        try { fs.closeSync(opened.fd) } catch { /* already closed */ }
+      }
       return ok(`Written to ${filePath}`)
     }
     if (mode === 'copy') {
@@ -286,7 +300,24 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 
   if (tool === 'scrape') {
     const url = requiredString(args, 'url')
-    if (args.use_dom) return { content: [{ type: 'text', text: 'use_dom mode requires a browser tab open with the URL. This feature is not yet implemented.' }], isError: true }
+    // Never implemented, and advertised anyway, so agents spend a call discovering
+    // that. Reading a live tab's DOM needs a channel into the browser — a debug
+    // port or an automation server — which this package does not own. Point at the
+    // tool that does rather than reporting an absence.
+    if (args.use_dom) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'use_dom is not implemented: this server has no channel into a running '
+            + 'browser tab. For a page behind a login or rendered by script, drive the '
+            + 'browser with a browser-automation MCP server (for example @playwright/mcp), '
+            + 'which reads the DOM and acts by selector. Use scrape without use_dom to '
+            + 'fetch the URL over HTTP, and desktop tools only for what a browser cannot '
+            + 'do, such as native dialogs.',
+        }],
+        isError: true,
+      }
+    }
     try {
       const response = await (context.fetch ?? globalThis.fetch)(url, {
         headers: { 'User-Agent': 'computer-use-mcp/7.0.0' }, signal: AbortSignal.timeout(15_000),

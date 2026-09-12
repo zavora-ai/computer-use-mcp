@@ -9,7 +9,7 @@
  *   BLENDER_MCP_BIN=... ADK_RUST=... node agents/blender-agent/record.mjs "<task>"
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -95,21 +95,97 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   })
 }
 
-function startCapture({ crop, output }) {
+/**
+ * Which AVFoundation input is the screen.
+ *
+ * This used to be hardcoded to `1:`, which is right on one machine by coincidence:
+ * here device 0 is an OBS virtual camera and 1 is the screen. Without OBS installed
+ * the screen is device 0, and the recorder would have captured a webcam. So ask
+ * ffmpeg and match on the label it prints.
+ */
+function findScreenDevice() {
+  const listing = spawnSync('ffmpeg', ['-f', 'avfoundation', '-list_devices', 'true', '-i', ''], {
+    encoding: 'utf8',
+  })
+  // ffmpeg writes the device list to stderr and exits non-zero; that is expected.
+  const output = `${listing.stderr ?? ''}${listing.stdout ?? ''}`
+  const match = output.match(/\[(\d+)\]\s+Capture screen/i)
+  if (!match) {
+    throw new Error(
+      'No AVFoundation "Capture screen" device found. Grant Screen Recording permission to '
+      + 'the terminal running this, or set RECORD_SCREEN_DEVICE to the index ffmpeg lists for '
+      + `your screen. ffmpeg reported:\n${output.split('\n').filter(line => line.includes('[')).join('\n')}`,
+    )
+  }
+  return match[1]
+}
+
+/**
+ * Convert a window rectangle in logical points to capture pixels.
+ *
+ * AVFoundation captures the framebuffer, which on a Retina display holds two pixels
+ * per logical point, while `get_window` reports logical points. Cropping with the
+ * logical numbers therefore took a quarter of the intended area from the top-left
+ * corner. `get_display_size` reports both, so the ratio is measured rather than
+ * assumed — and it is 1 on a non-Retina screen, where this becomes a no-op.
+ */
+function toCapturePixels(crop, display) {
+  const scale = display?.pixelWidth && display?.width ? display.pixelWidth / display.width : 1
+  const even = value => Math.max(2, Math.round(value * scale / 2) * 2) // h264 wants even dimensions
+  return {
+    x: Math.round(crop.x * scale),
+    y: Math.round(crop.y * scale),
+    width: even(crop.width),
+    height: even(crop.height),
+    scale,
+  }
+}
+
+function startCapture({ crop, output, display }) {
+  const device = process.env.RECORD_SCREEN_DEVICE ?? findScreenDevice()
+  const box = toCapturePixels(crop, display)
+  if (box.scale !== 1) {
+    console.error(`[record] display scale ${box.scale}× — cropping ${box.width}×${box.height} capture pixels`)
+  }
   const ffmpeg = spawn('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-y',
-    '-f', 'avfoundation', '-capture_cursor', '1', '-framerate', '12', '-i', '1:',
-    '-vf', `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`,
+    '-f', 'avfoundation', '-capture_cursor', '1', '-framerate', '12', '-i', `${device}:`,
+    '-vf', `crop=${box.width}:${box.height}:${box.x}:${box.y}`,
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-pix_fmt', 'yuv420p',
     output,
   ], { stdio: ['pipe', 'inherit', 'inherit'] })
   cleanup.ffmpeg = ffmpeg
+
+  // A spawn failure must surface here rather than as a silent absence of a file.
+  let spawnError
+  ffmpeg.once('error', error => { spawnError = error })
+
   return {
     stop: async () => {
+      if (spawnError) throw new Error(`ffmpeg could not start: ${spawnError.message}`)
+      // If ffmpeg has already gone, 'close' will never fire again and waiting for it
+      // hangs the whole recorder. Check before listening.
+      if (ffmpeg.exitCode !== null || ffmpeg.signalCode !== null) {
+        console.error(`[record] ffmpeg had already exited (${ffmpeg.exitCode ?? ffmpeg.signalCode})`)
+        return
+      }
       // 'q' finalises the container; killing ffmpeg truncates the file.
-      ffmpeg.stdin.write('q')
-      ffmpeg.stdin.end()
-      await new Promise(resolve => ffmpeg.once('close', resolve))
+      try {
+        ffmpeg.stdin.write('q')
+        ffmpeg.stdin.end()
+      } catch {
+        // The pipe is gone, which means so is ffmpeg; fall through to the wait, which
+        // will resolve on close or time out.
+      }
+      // Bounded, and escalating: a finalise that never completes must not hang a
+      // recorder whose only remaining job is to restore the person's screen.
+      const closed = new Promise(resolve => ffmpeg.once('close', resolve))
+      const timedOut = new Promise(resolve => setTimeout(() => resolve('timeout'), 10_000))
+      if (await Promise.race([closed, timedOut]) === 'timeout') {
+        console.error('[record] ffmpeg did not finalise in 10s — terminating it')
+        ffmpeg.kill('SIGKILL')
+        await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 2_000))])
+      }
     },
   }
 }
@@ -142,18 +218,35 @@ export async function record(task) {
     height: even(window.bounds.height),
   }
   console.error(`[record] Blender window ${crop.width}x${crop.height} at ${crop.x},${crop.y}`)
+  // Measured, not assumed: the crop has to be in capture pixels, and the ratio between
+  // those and logical points is 2 on a Retina display and 1 elsewhere.
+  const display = JSON.parse(
+    (await control.getDisplaySize()).content.find(part => part.type === 'text').text,
+  )
 
   hidden = await clearScreenFor(control)
   cleanup.hidden = hidden
   console.error(`[record] hid ${hidden.length} app(s) so only Blender is on camera`)
-  const capture = startCapture({ crop, output: temporary })
+  // Inside the guarded region, because startCapture can fail — no screen device, no
+  // Screen Recording permission — and the apps are already hidden by this point.
+  // Failing here used to leave the person's desktop emptied with nothing recording.
+  let capture
   try {
+    capture = startCapture({ crop, output: temporary, display })
     await run(process.execPath === '' ? 'cargo' : 'cargo',
       ['run', '-q', '--manifest-path', join(adk, 'examples/blender_studio/Cargo.toml'), '--', task],
       { cwd: adk, env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'error' } })
   } finally {
     await new Promise(r => setTimeout(r, 1500))
-    await capture.stop()
+    // Stopping must never prevent restoring: a broken recorder that leaves half the
+    // desktop hidden is a worse outcome than a lost video.
+    if (capture) {
+      try {
+        await capture.stop()
+      } catch (error) {
+        console.error(`[record] could not finalise the capture: ${error.message}`)
+      }
+    }
     await cleanUpNow()
   }
 

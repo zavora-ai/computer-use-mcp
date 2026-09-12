@@ -1,6 +1,6 @@
 server_id = "computer_use_mcp"
 display_name = "Computer Use"
-version = "7.3.0"
+version = "7.4.0"
 domain = "desktop-automation"
 sdk_version = "2.0.0"
 risk_level = "high"
@@ -470,6 +470,27 @@ credential_bindings = []
 [[tools]]
 name = "web_search"
 description = "Web Search"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "browser_tabs"
+description = "Browser Tabs"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "browser_page_text"
+description = "Browser Page Text"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "browser_find"
+description = "Browser Find"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []

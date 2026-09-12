@@ -51,3 +51,71 @@ test('platform-incompatible script languages fail without spawning a process', a
   assert.match(result.stderr, /not supported on Linux/)
   assert.equal(spawned, false)
 })
+
+// Issue #19: a Linux caller asking for bash was told "applescript is not supported on
+// Linux". Two defects met to produce that. The handler coerced anything that was not
+// `javascript` to `applescript` on every non-Windows platform, and the tool's schema
+// enum never contained `bash` — while the dispatch implemented it, the platform table
+// documented it, and this file's own error message recommended it.
+
+function routing(platform) {
+  const calls = []
+  const service = new ScriptingService({
+    native: {},
+    platform,
+    execFile: () => { throw new Error('no pwsh here') },
+    spawnBounded: async (command, ...rest) => {
+      calls.push(command)
+      return { stdout: '', stderr: '', code: 0, timedOut: false }
+    },
+  })
+  return { service, calls }
+}
+
+test('bash reaches bash on macOS and Linux, and is refused on Windows with the alternative', async () => {
+  for (const platform of ['darwin', 'linux']) {
+    const { service, calls } = routing(platform)
+    const result = await service.runScript('bash', 'echo hello', 1000)
+    assert.equal(result.code, 0, `bash should run on ${platform}`)
+    assert.equal(calls[0], 'bash', `${platform} must spawn bash, not osascript`)
+  }
+  const { service } = routing('win32')
+  const refused = await service.runScript('bash', 'echo hello', 1000)
+  assert.match(refused.stderr, /not supported on Windows/)
+  assert.match(refused.stderr, /powershell/, 'the alternative must be named')
+})
+
+test('an unsupported language names an alternative the schema actually accepts', async () => {
+  // The original message advised `bash` on Linux while the enum rejected it, so a
+  // caller following the advice got invalid_arguments.
+  const { service } = routing('linux')
+  const refused = await service.runScript('applescript', 'return 1', 1000)
+  assert.match(refused.stderr, /not supported on Linux/)
+  for (const advised of refused.stderr.match(/"([a-z]+)"/g) ?? []) {
+    const language = advised.replaceAll('"', '')
+    assert.ok(
+      ['applescript', 'javascript', 'powershell', 'bash'].includes(language),
+      `the message advises "${language}", which the schema must accept`,
+    )
+  }
+})
+
+test('applescript and javascript go to osascript, and only on macOS', async () => {
+  const { service, calls } = routing('darwin')
+  await service.runScript('applescript', 'return 1', 1000)
+  await service.runScript('javascript', '1+1', 1000)
+  assert.deepEqual(calls, ['osascript', 'osascript'])
+
+  for (const platform of ['linux', 'win32']) {
+    const { service, calls } = routing(platform)
+    const result = await service.runScript('javascript', '1+1', 1000)
+    assert.equal(result.code, 1, `javascript must be refused on ${platform}`)
+    assert.deepEqual(calls, [], 'and nothing should be spawned')
+  }
+})
+
+test('powershell is reachable off Windows, where pwsh is the executable', async () => {
+  const { service, calls } = routing('linux')
+  await service.runScript('powershell', 'Write-Output 1', 1000)
+  assert.equal(calls[0], 'pwsh')
+})

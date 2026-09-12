@@ -11,7 +11,8 @@
  * one the desktop actually produced, not one the model described.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { z, type ZodIssue, type ZodTypeAny } from 'zod'
 import type { McpServer, ServerContext } from '@modelcontextprotocol/server'
 import { RUN_CONSOLE_HTML } from './run-console.js'
@@ -57,6 +58,16 @@ export interface RunAttachment {
 }
 
 export interface RunMessage {
+  /**
+   * Stable, monotonic within a run.
+   *
+   * The original design asked an agent to detect unanswered work by checking whether
+   * the last message was the person's. That is wrong, and measurably so: a
+   * `run_progress` narration appends an agent message, so a question typed while the
+   * agent was working stopped being last and became invisible. An id plus an
+   * acknowledgement cursor cannot be erased by anything the agent says.
+   */
+  id: number
   role: MessageRole
   text: string
   at: string
@@ -88,6 +99,28 @@ export interface RunActivity {
   at: string
 }
 
+/**
+ * What a turn has cost so far.
+ *
+ * Reported by the host driving the run, because only it sees the model's usage
+ * fields. Money is only ever shown when a price is configured: token counts are a
+ * fact, and a rate hardcoded here would be wrong within a quarter.
+ */
+export interface RunUsage {
+  /** Model calls made. */
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  /** Prompt tokens served from cache, when the provider reports them. */
+  cachedTokens: number
+  /** Reasoning tokens, when the provider bills them separately. */
+  reasoningTokens: number
+  /** Currency amount, present only when the host was given a price. */
+  cost?: number
+  /** ISO 4217 code for `cost`, so a reader is never guessing. */
+  currency?: string
+}
+
 export interface Run {
   runId: string
   prompt: string
@@ -99,6 +132,26 @@ export interface Run {
   activity: RunActivity[]
   narration: string
   screenshot?: RunShot
+  /** What this run has spent. Absent until a host reports any. */
+  usage?: RunUsage
+  /**
+   * The highest message id the agent has said it handled.
+   *
+   * Anything the person sent above this is still waiting, whatever the agent has
+   * said since. Held separately from the transcript precisely so narration cannot
+   * move it.
+   */
+  acknowledged?: number
+  /**
+   * Set when the person watching asked the agent to stop.
+   *
+   * Cooperative, and deliberately so. The page cannot terminate a model call in
+   * flight, and pretending otherwise would leave a run that looks stopped while it
+   * keeps spending. Instead this appears in every run tool's reply, so the agent
+   * sees it on its next call and can stop cleanly, reporting what it has. A host
+   * driver that watches for it can also abort its own stream, which is faster.
+   */
+  cancelRequested?: boolean
   startedAt: string
   updatedAt: string
 }
@@ -134,9 +187,102 @@ const MAX_ACTIVITY = 400
 export class RunStore {
   readonly #runs = new Map<string, Run>()
   readonly #now: () => Date
+  /**
+   * Where runs are kept between restarts. Unset means memory only, which is the
+   * default because a console that quietly starts writing to disk would be a
+   * surprise, and most hosts are a single session.
+   */
+  readonly #path: string | undefined
+  /** Why persistence is unavailable, if it is. Reported rather than hidden. */
+  #unavailable: string | undefined
+  /** Coalesces writes: a turn produces many mutations and one file is enough. */
+  #pending: ReturnType<typeof setTimeout> | undefined
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor(
+    now: () => Date = () => new Date(),
+    options: { path?: string } = {},
+  ) {
     this.#now = now
+    this.#path = options.path ?? process.env.COMPUTER_USE_RUN_STORE ?? undefined
+    if (this.#path) this.#load()
+  }
+
+  /**
+   * The run most recently touched, if any.
+   *
+   * A restarted host needs this: the store can reload a run and still leave it
+   * orphaned, because the host tracks which run is current in a variable that does
+   * not survive the process. Reconnecting is what makes persistence useful rather
+   * than merely true.
+   */
+  latest(): Run | undefined {
+    let newest: Run | undefined
+    for (const run of this.#runs.values()) {
+      if (!newest || run.updatedAt > newest.updatedAt) newest = run
+    }
+    return newest
+  }
+
+  /** Why a restart would lose this run, if it would. */
+  persistence(): { path?: string; problem?: string } {
+    return {
+      ...(this.#path ? { path: this.#path } : {}),
+      ...(this.#unavailable ? { problem: this.#unavailable } : {}),
+    }
+  }
+
+  #load(): void {
+    if (!this.#path) return
+    try {
+      const text = readFileSync(this.#path, 'utf8')
+      if (!text.trim()) return
+      const runs = JSON.parse(text) as Run[]
+      for (const run of runs) {
+        if (typeof run?.runId === 'string') this.#runs.set(run.runId, run)
+      }
+    } catch (error) {
+      const problem = error as NodeJS.ErrnoException
+      // A missing file is the normal first start, not a fault.
+      if (problem.code !== 'ENOENT') {
+        this.#unavailable = `could not read ${this.#path}: ${problem.message}`
+      }
+    }
+  }
+
+  /**
+   * Persist, soon.
+   *
+   * Coalesced because a single turn mutates the run dozens of times and writing on
+   * each would spend more effort on the file than on the work. Frame bytes are left
+   * out: a capture is hundreds of kilobytes of base64, they are worthless once the
+   * screen has moved on, and writing them on every progress call would make the file
+   * the most expensive thing in the run. A reloaded run therefore shows no frame
+   * until the next capture, which is the honest outcome rather than a stale one.
+   */
+  #persist(): void {
+    if (!this.#path || this.#pending) return
+    this.#pending = setTimeout(() => {
+      this.#pending = undefined
+      if (!this.#path) return
+      try {
+        const runs = [...this.#runs.values()].map(run => {
+          if (!run.screenshot) return run
+          const { screenshot, ...rest } = run
+          // Keep the caption and timing, drop the pixels.
+          return { ...rest, screenshot: { ...screenshot, data: '' } }
+        })
+        const temporary = `${this.#path}.tmp`
+        mkdirSync(dirname(this.#path), { recursive: true })
+        writeFileSync(temporary, JSON.stringify(runs))
+        renameSync(temporary, this.#path)
+        this.#unavailable = undefined
+      } catch (error) {
+        // A console that cannot write its state is still a working console.
+        this.#unavailable = `could not write ${this.#path}: ${(error as Error).message}`
+      }
+    }, 250)
+    // Do not hold the process open for a state file.
+    this.#pending.unref?.()
   }
 
   #stamp(): string {
@@ -145,7 +291,8 @@ export class RunStore {
 
   /** Append a turn, evicting the oldest once the transcript is full. */
   #say(run: Run, role: MessageRole, text: string, attachment?: RunAttachment): void {
-    run.messages.push({ role, text, at: this.#stamp(), ...(attachment ? { attachment } : {}) })
+    const id = (run.messages.at(-1)?.id ?? 0) + 1
+    run.messages.push({ id, role, text, at: this.#stamp(), ...(attachment ? { attachment } : {}) })
     // Keep the opening request, which is the run's context, and drop from just
     // after it — losing the prompt would make the transcript unreadable.
     while (run.messages.length > MAX_MESSAGES) run.messages.splice(1, 1)
@@ -159,11 +306,12 @@ export class RunStore {
     const at = this.#stamp()
     const run: Run = {
       runId, prompt, state: 'planning', tasks: [],
-      messages: [{ role: 'user', text: prompt, at }],
+      messages: [{ id: 1, role: 'user', text: prompt, at }],
       activity: [],
       narration: '', startedAt: at, updatedAt: at,
     }
     this.#runs.set(runId, run)
+    this.#persist()
     return run
   }
 
@@ -178,8 +326,12 @@ export class RunStore {
     const run = this.get(runId)
     const trimmed = text.trim()
     if (!trimmed) throw new Error('A message needs text')
+    // A new instruction from the person is a new turn, so a cancel they asked for
+    // earlier is spent. Leaving it set would stop the very work they just asked for.
+    if (role === 'user') delete run.cancelRequested
     this.#say(run, role, trimmed, attachment)
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -203,6 +355,7 @@ export class RunStore {
     if (!last) throw new Error('There is no turn to attach to')
     last.attachment = attachment
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -212,6 +365,99 @@ export class RunStore {
    * Takes a batch because a driver watching a stream produces several events at
    * once, and one call per event would be a lot of traffic for a live view.
    */
+  /**
+   * Add what a model call cost. Cumulative, because a turn is many calls.
+   *
+   * Only the host driving the run can know this: the usage fields come back with
+   * the model response, and nothing inside an MCP server sees them. A price is
+   * applied here rather than in the page so the arithmetic is done once.
+   */
+  spend(runId: string, delta: {
+    calls?: number
+    inputTokens?: number
+    outputTokens?: number
+    cachedTokens?: number
+    reasoningTokens?: number
+    inputPricePerMillion?: number
+    outputPricePerMillion?: number
+    currency?: string
+  }): Run {
+    const run = this.get(runId)
+    const usage: RunUsage = run.usage ?? {
+      calls: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, reasoningTokens: 0,
+    }
+    const add = (value: number | undefined): number =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+    usage.calls += add(delta.calls ?? 1)
+    usage.inputTokens += add(delta.inputTokens)
+    usage.outputTokens += add(delta.outputTokens)
+    usage.cachedTokens += add(delta.cachedTokens)
+    usage.reasoningTokens += add(delta.reasoningTokens)
+    // Money only when a rate was supplied. A rate baked in here would be stale
+    // within a quarter, and a wrong cost is worse than no cost.
+    const inputRate = delta.inputPricePerMillion
+    const outputRate = delta.outputPricePerMillion
+    if (typeof inputRate === 'number' || typeof outputRate === 'number') {
+      const cost = (usage.inputTokens / 1e6) * (inputRate ?? 0)
+        + ((usage.outputTokens + usage.reasoningTokens) / 1e6) * (outputRate ?? 0)
+      usage.cost = Math.round(cost * 1e6) / 1e6
+      if (delta.currency) usage.currency = delta.currency
+    }
+    run.usage = usage
+    run.updatedAt = this.#stamp()
+    this.#persist()
+    return run
+  }
+
+  /**
+   * Mark messages up to `throughId` as handled.
+   *
+   * Explicit, because the alternative was inferring it from the transcript and that
+   * inference lost messages. An agent that answers a mid-run question says so; until
+   * it does, the question stays in `pending`.
+   */
+  acknowledge(runId: string, throughId?: number): Run {
+    const run = this.get(runId)
+    const highest = run.messages.at(-1)?.id ?? 0
+    const target = typeof throughId === 'number' && Number.isFinite(throughId)
+      ? Math.max(0, Math.trunc(throughId))
+      : highest
+    // Never move backwards: a stale acknowledgement must not resurrect handled work.
+    run.acknowledged = Math.max(run.acknowledged ?? 0, Math.min(target, highest))
+    run.updatedAt = this.#stamp()
+    this.#persist()
+    return run
+  }
+
+  /**
+   * Messages from the person that have not been acknowledged.
+   *
+   * The opening prompt is excluded: it is the run's own subject, and reporting it as
+   * unanswered work would make every run start with a false pending item.
+   */
+  pending(runId: string): RunMessage[] {
+    const run = this.get(runId)
+    const cursor = run.acknowledged ?? 1
+    return run.messages.filter(message => message.role === 'user' && message.id > cursor)
+  }
+
+  /**
+   * Record that the person watching asked the agent to stop.
+   *
+   * This does not stop anything by itself, and the naming is deliberate. A model
+   * call already in flight cannot be recalled from a browser page, so the honest
+   * design is a flag the agent reads on its next call. A run that claimed to be
+   * cancelled while still spending would be worse than one that takes a few
+   * seconds to notice.
+   */
+  requestCancel(runId: string): Run {
+    const run = this.get(runId)
+    run.cancelRequested = true
+    run.updatedAt = this.#stamp()
+    this.#persist()
+    return run
+  }
+
   record(runId: string, events: Array<Omit<RunActivity, 'at'> & { at?: string }>): Run {
     const run = this.get(runId)
     for (const event of events) {
@@ -230,6 +476,7 @@ export class RunStore {
     // still holds the narrated account of what happened earlier.
     if (run.activity.length > MAX_ACTIVITY) run.activity.splice(0, run.activity.length - MAX_ACTIVITY)
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -267,6 +514,7 @@ export class RunStore {
     })
     if (run.state === 'planning' || fresh) run.state = 'working'
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -311,6 +559,7 @@ export class RunStore {
       run.screenshot = { ...update.screenshot, at: this.#stamp() }
     }
     run.updatedAt = this.#stamp()
+    this.#persist()
     return run
   }
 
@@ -339,11 +588,22 @@ function describe(data: string): string {
  * record of what this agent just did, so returning it is both large and circular.
  * Both exist for the person watching, and `run_console` still carries them.
  */
-function forAgent(run: Run): Omit<Run, 'activity'> {
+/**
+ * What an agent sees. Activity is elided, frame bytes are described, and unanswered
+ * messages are stated rather than left to be inferred.
+ *
+ * `pending` is computed here so it appears in *every* reply. The failure it replaces
+ * was an agent inferring unanswered work from "the last message is the person's",
+ * which its own narration then falsified.
+ */
+function forAgent(run: Run): Omit<Run, 'activity'> & { pending: RunMessage[] } {
   const { activity: _activity, ...rest } = run
-  return rest.screenshot
-    ? { ...rest, screenshot: { ...rest.screenshot, data: describe(rest.screenshot.data) } }
-    : rest
+  const cursor = run.acknowledged ?? 1
+  const pending = run.messages.filter(message => message.role === 'user' && message.id > cursor)
+  const base = { ...rest, pending }
+  return base.screenshot
+    ? { ...base, screenshot: { ...base.screenshot, data: describe(base.screenshot.data) } }
+    : base
 }
 
 /**
@@ -384,10 +644,20 @@ export function registerRunConsole(
     }
   }
   /** The full run, frame and activity included. For the console UI. */
-  const replyInFull = (run: Run): ToolReply => ({
-    content: [{ type: 'text', text: JSON.stringify(run) }],
-    structuredContent: run as unknown as Record<string, unknown>,
-  })
+  /**
+   * The whole run, frame bytes included. This is what the page renders and what a
+   * polling host reads, so it carries `pending` for the same reason every other
+   * reply does: unanswered work must be stated, never inferred from the transcript.
+   */
+  const replyInFull = (run: Run): ToolReply => {
+    const cursor = run.acknowledged ?? 1
+    const pending = run.messages.filter(message => message.role === 'user' && message.id > cursor)
+    const full = { ...run, pending }
+    return {
+      content: [{ type: 'text', text: JSON.stringify(full) }],
+      structuredContent: full as unknown as Record<string, unknown>,
+    }
+  }
   /**
    * Reply to a capture, handing the frame back as an image.
    *
@@ -507,8 +777,41 @@ export function registerRunConsole(
       runId,
       text: z.string().min(1).max(4000).describe('What is being said'),
       role: z.enum(['user', 'agent']).default('agent').describe('Who is speaking'),
+      acknowledge: z.number().int().min(0).optional().describe('Highest pending message id this answers. Pass it when replying to something the person typed mid-run, so it stops being reported as unanswered.'),
     },
-  }, args => reply(store.say(args.runId, args.role, args.text)))
+  }, args => {
+    const run = store.say(args.runId, args.role, args.text)
+    return reply(args.acknowledge === undefined ? run : store.acknowledge(args.runId, args.acknowledge))
+  })
+
+  define('run_spend', {
+    description: 'Report what a model call cost, so the person watching can see the run\'s price as it accrues. For the host driving the run, which is the only thing that sees the model\'s usage fields — an agent should not call this about itself. Cumulative: send each call\'s usage and the console adds it up. Money appears only when a price per million tokens is supplied.',
+    inputSchema: {
+      runId,
+      calls: z.number().int().min(0).max(1000).optional().default(1).describe('Model calls this covers'),
+      input_tokens: z.number().int().min(0).optional().describe('Prompt tokens'),
+      output_tokens: z.number().int().min(0).optional().describe('Completion tokens'),
+      cached_tokens: z.number().int().min(0).optional().describe('Prompt tokens served from cache'),
+      reasoning_tokens: z.number().int().min(0).optional().describe('Reasoning tokens, where billed separately'),
+      input_price_per_million: z.number().min(0).optional().describe('Rate for prompt tokens; omit to show tokens only'),
+      output_price_per_million: z.number().min(0).optional().describe('Rate for completion and reasoning tokens'),
+      currency: z.string().min(3).max(3).optional().describe('ISO 4217 code for the cost figure'),
+    },
+  }, args => reply(store.spend(args.runId, {
+    calls: args.calls,
+    inputTokens: args.input_tokens,
+    outputTokens: args.output_tokens,
+    cachedTokens: args.cached_tokens,
+    reasoningTokens: args.reasoning_tokens,
+    inputPricePerMillion: args.input_price_per_million,
+    outputPricePerMillion: args.output_price_per_million,
+    currency: args.currency,
+  })))
+
+  define('run_cancel', {
+    description: 'Record that the person watching asked the agent to stop. Cooperative: it does not terminate anything, because a model call in flight cannot be recalled. The flag appears in every run tool reply, so an agent that sees cancel_requested should stop where it is, report what it already has with run_progress, and set state "done" or "failed" rather than carrying on.',
+    inputSchema: { runId },
+  }, args => reply(store.requestCancel(args.runId)))
 
   define('run_attachment', {
     description: 'Look at an image the person attached to the conversation. Returns the picture itself, plus the path it is saved at on this machine — pass that path to an application when you need it to load the file, for example as a reference image or a texture. Omit index for the most recent attachment.',

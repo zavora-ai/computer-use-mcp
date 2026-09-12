@@ -419,7 +419,7 @@ export class TasksExtensionTransport implements Transport {
             ...result,
             _meta: {
               'io.modelcontextprotocol/serverInfo': {
-                name: 'computer-use', title: 'Computer Use MCP', version: '7.3.0',
+                name: 'computer-use', title: 'Computer Use MCP', version: '7.4.0',
                 description: 'Cross-platform desktop control with policy-aware automation.',
                 websiteUrl: 'https://github.com/zavora-ai/computer-use-mcp',
               },

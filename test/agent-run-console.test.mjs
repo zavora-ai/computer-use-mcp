@@ -3,6 +3,9 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 import { RunStore, newRunId, RUN_CONSOLE_URI } from '../dist/agent-run.js'
@@ -493,4 +496,228 @@ test('a brand is escaped, because it is the one string interpolated as markup', 
   assert.ok(injected.includes('&lt;script&gt;alert(1)&lt;/script&gt;'))
   assert.ok(injected.includes('&quot;onload'))
   assert.ok(injected.includes('&lt;img&gt;'))
+})
+
+test('a run reports what it has spent, and shows money only when priced', async () => {
+  // Both gaps this closes were failures that happened: a balance exhausted mid-run
+  // with nothing on screen to warn, and no way to stop a turn going nowhere.
+  const store = new RunStore()
+  const run = store.start('analyse this', 'run_cost')
+  assert.equal(run.usage, undefined, 'a run starts with nothing spent')
+
+  store.spend('run_cost', { calls: 1, inputTokens: 1000, outputTokens: 200, cachedTokens: 900 })
+  store.spend('run_cost', { calls: 1, inputTokens: 500, outputTokens: 100, reasoningTokens: 6959 })
+  const usage = store.get('run_cost').usage
+  assert.equal(usage.calls, 2, 'usage accumulates across calls')
+  assert.equal(usage.inputTokens, 1500)
+  assert.equal(usage.outputTokens, 300)
+  assert.equal(usage.cachedTokens, 900)
+  assert.equal(usage.reasoningTokens, 6959)
+  assert.equal(usage.cost, undefined, 'no price means no money, rather than a guess')
+})
+
+test('a supplied price is applied to output and reasoning together', () => {
+  // Reasoning bills against completion tokens, which is why an unbudgeted thought
+  // can cost more than the answer. Charging it at the input rate would understate.
+  const store = new RunStore()
+  store.start('x', 'run_price')
+  store.spend('run_price', {
+    inputTokens: 1_000_000,
+    outputTokens: 500_000,
+    reasoningTokens: 500_000,
+    inputPricePerMillion: 0.28,
+    outputPricePerMillion: 0.42,
+    currency: 'USD',
+  })
+  const usage = store.get('run_price').usage
+  // 1.0 × 0.28 + (0.5 + 0.5) × 0.42
+  assert.equal(usage.cost, 0.7)
+  assert.equal(usage.currency, 'USD')
+})
+
+test('usage is clamped so a bad report cannot corrupt the meter', () => {
+  const store = new RunStore()
+  store.start('x', 'run_clamp')
+  store.spend('run_clamp', { calls: 1, inputTokens: -50, outputTokens: Number.NaN })
+  const usage = store.get('run_clamp').usage
+  assert.equal(usage.inputTokens, 0, 'a negative count is not subtracted')
+  assert.equal(usage.outputTokens, 0, 'a non-finite count is ignored')
+})
+
+test('a cancel is cooperative: recorded, visible to the agent, and not a claim', async () => {
+  // The page cannot recall a model call in flight. A run that claimed to be
+  // cancelled while still spending would be worse than one that takes a moment to
+  // notice, so this is a flag the agent reads on its next call.
+  const store = new RunStore()
+  store.start('analyse this', 'run_stop')
+  store.plan('run_stop', [{ id: 'a', title: 'Step A' }])
+  assert.equal(store.get('run_stop').cancelRequested, undefined)
+
+  store.requestCancel('run_stop')
+  assert.equal(store.get('run_stop').cancelRequested, true)
+  assert.notEqual(store.get('run_stop').state, 'failed', 'asking is not the same as having stopped')
+})
+
+test('an agent message keeps the cancel, a new instruction clears it', () => {
+  // Clearing on the agent's own reply would lose the ask before it acted. Not
+  // clearing on a new instruction would stop the very work just requested.
+  const store = new RunStore()
+  store.start('first', 'run_turns')
+  store.requestCancel('run_turns')
+  store.say('run_turns', 'agent', 'stopping as asked')
+  assert.equal(store.get('run_turns').cancelRequested, true)
+  store.say('run_turns', 'user', 'actually carry on')
+  assert.equal(store.get('run_turns').cancelRequested, undefined)
+})
+
+test('the console offers a stop control and a meter, and says what stop means', () => {
+  assert.ok(RUN_CONSOLE_HTML.includes('id="stop"'))
+  assert.ok(RUN_CONSOLE_HTML.includes('id="meter"'))
+  assert.ok(RUN_CONSOLE_HTML.includes("'run_cancel'"), 'the page must be able to ask')
+  // The button must not claim the run has ended, because it has only been asked.
+  assert.ok(RUN_CONSOLE_HTML.includes('Stopping'), 'the pending state should be visible')
+  assert.ok(RUN_CONSOLE_HTML.includes('renderMeter'))
+})
+
+test('a narration cannot hide a message the person sent mid-run', () => {
+  // The original rule was "the last message is the person's". A run_progress
+  // narration appends an agent message, so a question typed while the agent worked
+  // stopped being last and became invisible. Measured before the fix, and the reason
+  // an acknowledgement cursor exists.
+  const store = new RunStore()
+  store.start('first question', 'r_ack')
+  store.plan('r_ack', [{ id: 'a', title: 'A' }])
+  store.say('r_ack', 'user', 'wait, also check Gizmo')
+  assert.equal(store.pending('r_ack').length, 1)
+
+  store.progress('r_ack', { taskId: 'a', status: 'active', narration: 'Measuring.' })
+  const pending = store.pending('r_ack')
+  assert.equal(pending.length, 1, 'narration must not clear pending work')
+  assert.equal(pending[0].text, 'wait, also check Gizmo')
+})
+
+test('the opening prompt is never reported as unanswered', () => {
+  // It is the run's own subject. Counting it would make every run start with a
+  // false pending item, and an agent that trusts the list would loop.
+  const store = new RunStore()
+  store.start('the question', 'r_first')
+  assert.deepEqual(store.pending('r_first'), [])
+})
+
+test('acknowledging clears only up to the id given, and never goes backwards', () => {
+  const store = new RunStore()
+  store.start('first', 'r_cursor')
+  store.say('r_cursor', 'user', 'second')
+  store.say('r_cursor', 'user', 'third')
+  assert.equal(store.pending('r_cursor').length, 2)
+
+  store.acknowledge('r_cursor', 2)
+  assert.equal(store.pending('r_cursor').length, 1, 'only the acknowledged one clears')
+  assert.equal(store.pending('r_cursor')[0].text, 'third')
+
+  // A stale acknowledgement must not resurrect handled work.
+  store.acknowledge('r_cursor', 1)
+  assert.equal(store.pending('r_cursor').length, 1, 'the cursor does not move backwards')
+
+  store.acknowledge('r_cursor')
+  assert.equal(store.pending('r_cursor').length, 0, 'no id means everything so far')
+})
+
+test('every agent-facing reply states what is unanswered', () => {
+  // Stated rather than inferred, because the inference is what failed.
+  const store = new RunStore()
+  store.start('first', 'r_reply')
+  store.say('r_reply', 'user', 'and check Gizmo')
+  const run = store.get('r_reply')
+  assert.equal(run.messages.at(-1).id, 2, 'messages carry stable ids')
+  assert.equal(store.pending('r_reply').length, 1)
+})
+
+test('a run survives a restart, so the steering channel is not lost with the process', async () => {
+  // The transcript is how a person steers a run mid-flight. Losing it to a host
+  // restart loses the conversation, not just a cache.
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const path = join(mkdtempSync(join(tmpdir(), 'run-store-')), 'runs.json')
+
+  const first = new RunStore(() => new Date(), { path })
+  first.start('which category needs attention?', 'r_keep')
+  first.plan('r_keep', [{ id: 'a', title: 'Find it' }, { id: 'b', title: 'Measure it' }])
+  first.progress('r_keep', { taskId: 'a', status: 'done', note: 'Gizmo -21% MoM' })
+  first.say('r_keep', 'user', 'also check Widget')
+  first.spend('r_keep', { calls: 12, inputTokens: 184_000 })
+  await new Promise(resolve => setTimeout(resolve, 600))
+
+  const second = new RunStore(() => new Date(), { path })
+  const run = second.get('r_keep')
+  assert.equal(run.prompt, 'which category needs attention?')
+  assert.equal(run.tasks[0].status, 'done')
+  assert.equal(run.tasks[0].note, 'Gizmo -21% MoM', 'a finding must survive, not just a status')
+  assert.equal(run.usage.calls, 12)
+  assert.deepEqual(
+    second.pending('r_keep').map(message => message.text),
+    ['also check Widget'],
+    'an unanswered question must survive a restart or it is silently dropped',
+  )
+})
+
+test('frame bytes are not written to disk, because they are worthless once stale', async () => {
+  // A capture is hundreds of kilobytes of base64 and describes a screen that has
+  // since moved on. Writing it on every progress call would make the state file the
+  // most expensive thing in the run.
+  const { mkdtempSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const path = join(mkdtempSync(join(tmpdir(), 'run-frame-')), 'runs.json')
+
+  const store = new RunStore(() => new Date(), { path })
+  const run = store.start('show me the dashboard', 'r_shot')
+  run.screenshot = { data: 'A'.repeat(300_000), mimeType: 'image/png', at: 'now', caption: 'the dashboard' }
+  store.say('r_shot', 'agent', 'here it is')
+  await new Promise(resolve => setTimeout(resolve, 600))
+
+  assert.ok(statSync(path).size < 5_000, 'the state file must not carry the pixels')
+  assert.equal(store.get('r_shot').screenshot.data.length, 300_000, 'memory keeps the frame')
+
+  const reloaded = new RunStore(() => new Date(), { path })
+  assert.equal(reloaded.get('r_shot').screenshot.caption, 'the dashboard', 'the caption is worth keeping')
+  assert.equal(reloaded.get('r_shot').screenshot.data, '', 'and a reloaded run honestly has no frame')
+})
+
+test('memory only is the default, and an unwritable path is reported not fatal', async () => {
+  // A console that cannot write its state is still a working console; refusing to
+  // start would be the worse failure.
+  const ephemeral = new RunStore()
+  ephemeral.start('x', 'r_mem')
+  assert.deepEqual(ephemeral.persistence(), {}, 'no path configured means nothing is claimed')
+
+  // A path whose parent is a regular file. Creating a directory there fails on every
+  // platform, which a POSIX-shaped path does not: '/proc/...' on Windows is read as
+  // 'C:\proc\...', and a recursive mkdir cheerfully creates it, so the store wrote
+  // successfully and reported no problem. CI on Windows caught that.
+  const blocker = path.join(os.tmpdir(), `run-store-blocker-${process.pid}`)
+  fs.writeFileSync(blocker, 'not a directory')
+  const store = new RunStore(() => new Date(), { path: path.join(blocker, 'runs.json') })
+  store.start('x', 'r_bad')
+  await new Promise(resolve => setTimeout(resolve, 600))
+  assert.match(store.persistence().problem ?? '', /could not write/, 'the reason must be reportable')
+  assert.equal(store.get('r_bad').prompt, 'x', 'and the run still works in memory')
+})
+
+test('the newest run is identifiable, so a restarted host can resume it', async () => {
+  // Persistence that leaves the run unreachable is true but useless: the host tracks
+  // which run is current in a variable that does not survive the process.
+  const store = new RunStore()
+  assert.equal(store.latest(), undefined, 'nothing to resume before anything happens')
+  store.start('first', 'r_old')
+  await new Promise(resolve => setTimeout(resolve, 5))
+  store.start('second', 'r_new')
+  assert.equal(store.latest().runId, 'r_new', 'the newest by update time')
+
+  // Touching the older one makes it current again, which is what a person typing into
+  // an older conversation should do.
+  await new Promise(resolve => setTimeout(resolve, 5))
+  store.say('r_old', 'user', 'back to this one')
+  assert.equal(store.latest().runId, 'r_old')
 })

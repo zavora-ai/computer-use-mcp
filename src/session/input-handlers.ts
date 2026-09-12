@@ -13,6 +13,29 @@ const INPUT_TOOLS = new Set([
   'read_clipboard', 'write_clipboard', 'multi_select', 'multi_edit',
 ])
 
+/**
+ * Does this look like text an agent meant to type, rather than a key combination?
+ *
+ * Deliberately conservative: a real combo is short, and its parts are key names.
+ * Only these shapes are rejected, so no legitimate combo becomes unusable:
+ *
+ * - a URL or path, which no combo contains
+ * - whitespace outside a `+` combo, i.e. more than one word
+ * - a long single token, longer than any key name
+ *
+ * `command+l`, `return`, `shift+;`, `f11` and `ctrl+alt+delete` all pass.
+ */
+function looksLikeProse(combo: string): boolean {
+  const trimmed = combo.trim()
+  if (trimmed.includes('://') || trimmed.startsWith('/')) return true
+  // Split on the combo separator first; a combo's parts are individual key names.
+  const parts = trimmed.split('+').filter(part => part.length > 0)
+  if (parts.some(part => /\s/.test(part.trim()) && part.trim().includes(' '))) return true
+  // The longest key name in use is around a dozen characters ("page_down",
+  // "volume_down"); a single token far past that is text, not a key.
+  return parts.some(part => part.trim().length > 16)
+}
+
 /** Physical pointer, keyboard, clipboard, and batch-input execution. */
 export class InputHandler {
   readonly #native: NativeModule
@@ -168,9 +191,23 @@ export class InputHandler {
     }
 
     if (tool === 'key') {
+      const combo = string('text')
+      // `key` presses a key combination. An agent that wants to enter text often
+      // reaches for it anyway and then spells the text out one keystroke at a
+      // time, which is slow, wrong, and hard to diagnose from the native layer's
+      // `Unknown key in combo`. Say which tool to use instead, before acting.
+      const looksLikeText = looksLikeProse(combo)
+      if (looksLikeText) {
+        throw new Error(
+          `key presses a key combination such as "command+l" or "return", not text. ` +
+            `Received ${JSON.stringify(combo.length > 60 ? `${combo.slice(0, 60)}…` : combo)}. ` +
+            `Use the type tool to enter text — it accepts press_enter to submit, and routes ` +
+            `long or multi-line text through the clipboard.`,
+        )
+      }
       const resolved = target()
       await focus(resolved)
-      this.#native.keyPress(string('text'), args.repeat !== undefined ? number('repeat', 1) : undefined)
+      this.#native.keyPress(combo, args.repeat !== undefined ? number('repeat', 1) : undefined)
       if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
       return ok(`Pressed ${args.text}`)
     }

@@ -282,7 +282,11 @@ mod win {
 
     const POINTER_SIZE: i32 = 24;
     const COLOR_KEY: COLORREF = COLORREF(0x00ff00ff);
+    /// Asks the overlay thread to apply the position and visibility now held in
+    /// `OVERLAY`. Posted, never sent: see `set_overlay_pos`.
+    const WM_APPLY_OVERLAY: u32 = WM_APP + 1;
     static START: Once = Once::new();
+    static READY: Mutex<bool> = Mutex::new(false);
     static OVERLAY: Mutex<OverlayState> = Mutex::new(OverlayState {
         hwnd: 0,
         x: 0,
@@ -309,6 +313,26 @@ mod win {
         lparam: LPARAM,
     ) -> LRESULT {
         match msg {
+            // Applied here, on the thread that owns the window, because that is the only
+            // thread that may touch it without blocking. See `set_overlay_pos`.
+            WM_APPLY_OVERLAY => {
+                let (x, y, visible) = {
+                    let state = OVERLAY.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    (state.x, state.y, state.visible)
+                };
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    x - POINTER_SIZE / 2,
+                    y - POINTER_SIZE / 2,
+                    POINTER_SIZE,
+                    POINTER_SIZE,
+                    SWP_NOACTIVATE | if visible { SWP_SHOWWINDOW } else { SWP_NOZORDER },
+                );
+                let _ = InvalidateRect(hwnd, None, BOOL(1));
+                let _ = ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+                LRESULT(0)
+            }
             WM_NCHITTEST => LRESULT(HTTRANSPARENT as isize),
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
             WM_ERASEBKGND => LRESULT(1),
@@ -382,25 +406,54 @@ mod win {
                     OVERLAY.lock().unwrap().hwnd = hwnd.0 as isize;
                 }
 
+                // Only now is it safe for another thread to post to this window. The
+                // HWND alone was not enough: it was published before the pump existed,
+                // so a caller could post — or worse, make a blocking cross-thread call —
+                // into a window with nothing servicing it.
+                *READY.lock().unwrap() = true;
+
                 let mut msg = MSG::default();
-                while GetMessageW(&mut msg, None, 0, 0).into() {
-                    TranslateMessage(&msg);
+                loop {
+                    let result = GetMessageW(&mut msg, None, 0, 0);
+                    // GetMessageW returns -1 on error, and the old `while …into()` read
+                    // that as true, then dispatched an uninitialised MSG forever.
+                    if result.0 <= 0 {
+                        break;
+                    }
+                    let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+
+                // The pump has stopped, so nothing can service this window any more.
+                // Saying so is what stops a later call waiting on it indefinitely.
+                *READY.lock().unwrap() = false;
+                OVERLAY.lock().unwrap().hwnd = 0;
             });
         });
     }
 
+    /// The overlay window, once its thread is pumping messages.
+    ///
+    /// Waits on `READY` rather than on the HWND being non-zero. The HWND was published
+    /// before the message loop started, which left a window during which another thread
+    /// could act on a window nobody was servicing.
     fn hwnd() -> napi::Result<HWND> {
         start_overlay_thread();
         let deadline = Instant::now() + Duration::from_millis(750);
         loop {
-            let value = OVERLAY.lock().unwrap().hwnd;
-            if value != 0 {
-                return Ok(HWND(value as *mut _));
+            if *READY.lock().unwrap() {
+                let value = OVERLAY.lock().unwrap().hwnd;
+                if value != 0 {
+                    return Ok(HWND(value as *mut _));
+                }
             }
             if Instant::now() >= deadline {
-                return Err(napi::Error::from_reason("overlay HWND was not created"));
+                return Err(napi::Error::from_reason(
+                    "the agent pointer overlay window was not ready within 750ms. The overlay \
+                     runs on its own thread with a message loop; if this persists, use \
+                     native_overlay: false and screenshot { show_agent_pointer: true }, which \
+                     draws the pointer into the returned image instead.",
+                ));
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -425,30 +478,34 @@ mod win {
         let hwnd = hwnd()?;
         let xi = x.round() as i32;
         let yi = y.round() as i32;
+        // Record the wanted state first, then ask the owning thread to apply it.
+        //
+        // This used to call SetWindowPos and ShowWindow directly. Both are synchronous
+        // when the window belongs to another thread: they send messages and wait for that
+        // thread to process them. If it is not pumping — because it exited, or because it
+        // had not reached its loop yet — the caller waits forever. On Node that means the
+        // event loop stops dead, the whole MCP server stops answering, and the wedged
+        // process keeps holding the cross-process session lock. That was issue #32,
+        // observed on Windows 11 with two mixed-DPI monitors: blocked synchronously, CPU
+        // idle, still frozen after 150 seconds.
+        //
+        // PostMessageW is asynchronous. It returns immediately whether or not anything is
+        // listening, so no Win32 call can hold the event loop.
+        {
+            let mut state = OVERLAY.lock().unwrap();
+            state.x = xi;
+            state.y = yi;
+            state.visible = visible || state.visible;
+        }
         unsafe {
-            SetWindowPos(
-                hwnd,
-                HWND_TOPMOST,
-                xi - POINTER_SIZE / 2,
-                yi - POINTER_SIZE / 2,
-                POINTER_SIZE,
-                POINTER_SIZE,
-                SWP_NOACTIVATE
-                    | if visible {
-                        SWP_SHOWWINDOW
-                    } else {
-                        SWP_NOZORDER
-                    },
-            );
-            InvalidateRect(hwnd, None, BOOL(1));
-            if visible {
-                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if PostMessageW(hwnd, WM_APPLY_OVERLAY, WPARAM(0), LPARAM(0)).is_err() {
+                return Err(napi::Error::from_reason(
+                    "could not reach the agent pointer overlay thread. Use native_overlay: \
+                     false and screenshot { show_agent_pointer: true } to draw the pointer \
+                     into the returned image instead.",
+                ));
             }
         }
-        let mut state = OVERLAY.lock().unwrap();
-        state.x = xi;
-        state.y = yi;
-        state.visible = visible || state.visible;
         Ok(status_json())
     }
 
@@ -465,11 +522,14 @@ mod win {
 
     #[napi]
     pub fn agent_pointer_overlay_hide() -> napi::Result<serde_json::Value> {
+        // Same reasoning as set_overlay_pos: ShowWindow on another thread's window is a
+        // blocking cross-thread call, so the state is recorded and the owning thread is
+        // asked to apply it.
+        OVERLAY.lock().unwrap().visible = false;
         let hwnd = hwnd()?;
         unsafe {
-            ShowWindow(hwnd, SW_HIDE);
+            let _ = PostMessageW(hwnd, WM_APPLY_OVERLAY, WPARAM(0), LPARAM(0));
         }
-        OVERLAY.lock().unwrap().visible = false;
         Ok(status_json())
     }
 
