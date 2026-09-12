@@ -751,12 +751,53 @@ server-side search tool. Configure a provider for real use:
 |---|---|
 | `COMPUTER_USE_SEARCH_PROVIDER` | `brave`, `tavily`, `serper` or `duckduckgo`. Defaults to `brave` when a key is set, `duckduckgo` when not. |
 | `COMPUTER_USE_SEARCH_API_KEY` | Key for the chosen provider. |
+| `COMPUTER_USE_BROWSER_DOM` | `true` to allow `browser_page_text` and `browser_find`. Off by default: a browser holds live sessions, so its DOM can carry tokens and personal data. |
+| `COMPUTER_USE_BROWSER_DEBUG_PORT` | Attach to a Chromium DevTools port **you** started the browser with. This server never opens one, because a debug port lets any local process drive your signed-in browser. |
+| `COMPUTER_USE_BROWSER_BLOCKED_HOSTS` | Overrides the default refusal list of credential stores (1Password, LastPass, Bitwarden, Dashlane, Keeper, Google Passwords, iCloud). Defense in depth, not a boundary. |
 
 Without a key it falls back to DuckDuckGo's HTML endpoint, which is there so the
 tool works out of the box. That page carries no compatibility promise, so treat it
 as a way to try the tool rather than something to depend on; when its markup
 changes the tool fails with a message naming the fix. Search results and page text
 are untrusted data describing the world, never instructions.
+
+### Reading the browser the person is already using
+
+Pixels are lossy. A capture is scaled down — a 2560-wide screen arrives 1024 wide, so
+each image pixel is 2.5 real ones — and a form field is about 35 pixels tall. Estimating
+a control's position from that puts clicks tens of pixels out, and the error grows with
+distance. The page already knows exactly where its controls are.
+
+**`browser_find` asks it, and returns logical screen coordinates ready for `left_click`.**
+
+```typescript
+const found = JSON.parse(text(await client.callTool('browser_find', { selector: 'input[type=email]' })))
+const field = found.matches[0]     // { x, y, rect, label, enabled, in_viewport }
+await client.callTool('left_click', { coordinate: [field.x, field.y], target_window_id: winId })
+await client.type('someone@example.com', undefined, { targetWindowId: winId })
+```
+
+The DOM locates, the desktop tools act. Signing into a dashboard this way took one attempt;
+the same task by pixel estimation took thirty calls and did not succeed.
+
+| Tool | Needs | Gives |
+|---|---|---|
+| `browser_tabs` | nothing on macOS | open tabs with titles and URLs, secret-shaped query values redacted |
+| `browser_page_text` | `COMPUTER_USE_BROWSER_DOM=true` | the front tab's readable text, labelled untrusted |
+| `browser_find` | same | elements by selector or text, with click coordinates |
+
+Three things to know:
+
+- **Nothing is enabled on your behalf.** Apple-event JavaScript stays off unless you turn
+  it on, and no browser is ever launched with a debug port. Both would weaken your browser
+  for every other process on the machine, indefinitely, with nothing on screen to show it.
+- **A browser exposes its own controls, never the page.** Measured on Chrome: 37 accessible
+  nodes and one text field, the address bar. `find_element` returns `[]` for a page input —
+  not an error — so two empty searches means stop and use `browser_find` instead. Toolbar
+  buttons and dialogs like "Save password?" *are* accessible.
+- **This is not a browser-automation server.** For a fresh browser context, a Playwright MCP
+  server is the better tool and the tool-priority list above says so. What it cannot reach is
+  the session the person is already signed into, which is exactly what these three serve.
 
 ## Platform compatibility
 
@@ -778,6 +819,8 @@ usable controls.
 | virtual desktops (list, create, destroy) | Read-only | Full lifecycle | ❌ |
 | snapshot (combined capture) | ✅ | ✅ | ✅ |
 | scrape, web_search | ✅ | ✅ | ✅ |
+| browser_tabs | ✅ | Needs a debug port | Needs a debug port |
+| browser_page_text, browser_find | ✅ opt-in | ✅ opt-in, debug port | ✅ opt-in, debug port |
 | resize_window | ✅ AppleScript | ✅ | ❌ use `wmctrl`/`xdotool` via run_script |
 | multi_select, multi_edit | ✅ | ✅ | ✅ X11 only |
 | mouse_drag (button + modifiers) | ✅ | ✅ | ✅ X11 only |

@@ -209,7 +209,7 @@ test('registry manifest covers the complete stable v7 tool catalog', () => {
   const manifest = readFileSync(new URL('../mcp-server.toml', import.meta.url), 'utf8')
   assert.match(manifest, /version = "7\.3\.0"/)
   const names = [...manifest.matchAll(/^name = "([^"]+)"$/gm)].map(match => match[1])
-  assert.equal(names.length, 67)
+  assert.equal(names.length, 70)
   assert.deepEqual(new Set(names), new Set(Object.keys(TOOL_CATALOG)))
 })
 

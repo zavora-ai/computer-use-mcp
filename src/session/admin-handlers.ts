@@ -286,7 +286,24 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 
   if (tool === 'scrape') {
     const url = requiredString(args, 'url')
-    if (args.use_dom) return { content: [{ type: 'text', text: 'use_dom mode requires a browser tab open with the URL. This feature is not yet implemented.' }], isError: true }
+    // Never implemented, and advertised anyway, so agents spend a call discovering
+    // that. Reading a live tab's DOM needs a channel into the browser — a debug
+    // port or an automation server — which this package does not own. Point at the
+    // tool that does rather than reporting an absence.
+    if (args.use_dom) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'use_dom is not implemented: this server has no channel into a running '
+            + 'browser tab. For a page behind a login or rendered by script, drive the '
+            + 'browser with a browser-automation MCP server (for example @playwright/mcp), '
+            + 'which reads the DOM and acts by selector. Use scrape without use_dom to '
+            + 'fetch the URL over HTTP, and desktop tools only for what a browser cannot '
+            + 'do, such as native dialogs.',
+        }],
+        isError: true,
+      }
+    }
     try {
       const response = await (context.fetch ?? globalThis.fetch)(url, {
         headers: { 'User-Agent': 'computer-use-mcp/7.0.0' }, signal: AbortSignal.timeout(15_000),

@@ -24,9 +24,40 @@ measured on Chrome showing a web app, the window's tree held 37 nodes and exactl
 like Blender are the same.
 
 A page field returns `[]` rather than an error, so an agent can loop forever looking
-for it. **Two empty label searches means stop searching and read the screen.** Note
-what *is* exposed: browser furniture — toolbar buttons, tabs, and dialogs such as
-"Save password?" — so `find_element` and `click_element` still work for those.
+for it. **Two empty label searches means stop searching.** Note what *is* exposed:
+browser furniture — toolbar buttons, tabs, and dialogs such as "Save password?" — so
+`find_element` and `click_element` still work for those.
+
+## In a browser, ask the page — do not estimate
+
+**`browser_find` returns a control's position in logical screen coordinates, ready to
+click.** No scale, no offset, no reading positions off a downscaled image:
+
+```
+browser_find { selector: "input[type=email]" }
+  → matches[0] = { x: 622, y: 501, rect: {…}, label, enabled, in_viewport }
+left_click { coordinate: [622, 501] }
+type "someone@example.com"
+```
+
+That is the whole technique, and it is exact. Signing into a dashboard this way worked
+on the first attempt. The same task by estimating coordinates from a screenshot took
+more than thirty calls and never succeeded.
+
+`browser_page_text` reads the page's text when you need to know what it says rather
+than where something is.
+
+Both need `COMPUTER_USE_BROWSER_DOM=true`, because a browser holds live sessions and
+its DOM can carry tokens and personal data. If they refuse, the error names the
+variable. If no transport is available it names the browser setting or debug port that
+would provide one — read it rather than falling back to pixels, because the fallback
+is the expensive path.
+
+`browser_tabs` needs nothing at all, and answers "what is open" and "did my navigation
+work" without a capture.
+
+**Order of preference in a browser:** `browser_find` → keyboard → pixels. Reach for the
+next one only when the previous cannot do it.
 
 ## Work from what is on screen, not from a remembered recipe
 

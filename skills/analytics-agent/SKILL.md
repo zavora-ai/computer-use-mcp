@@ -60,7 +60,8 @@ So the boundary is sharp, and worth committing to memory:
 | Target | Approach |
 |---|---|
 | Browser furniture — toolbar, tabs, and its dialogs like "Save password?" | `find_element` + `click_element`, which work well |
-| Anything inside the page — fields, charts, filters, links | pixels: `screenshot`, then `left_click` and `type` |
+| Anything inside the page — fields, filters, links | **`browser_find`**, which returns the element's screen coordinates ready to click |
+| A chart drawn on a canvas, with no element behind it | pixels: `screenshot`, then `left_click` |
 
 `find_element` for a page field returns `[]`, not an error, so an agent can loop
 looking for a field that will never appear. If two label searches inside a page come
@@ -144,6 +145,7 @@ after you filtered it, the filter did not take.
 | A link with filters applied | `bi_dashboard_url` |
 | Logging in, filtering, drilling, zooming, showing | computer use, by coordinates |
 | A browser dialog in the way | `find_element` + `click_element` |
+| Where a control is, inside the page | `browser_find` — exact coordinates, no estimation |
 
 `bi_get_dashboard` lists each chart's drillable dimensions. Those names are the
 drill paths — use them instead of guessing column names.
