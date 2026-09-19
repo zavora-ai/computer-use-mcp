@@ -68,15 +68,60 @@ mod macos {
         }
     }
 
-    fn panel_origin_for_pointer(x: f64, y: f64) -> NSPoint {
+    /// Height of the primary display — `[NSScreen screens][0]`, the one whose
+    /// bottom-left corner is AppKit's global origin. Not `mainScreen`, which is
+    /// whichever display currently holds keyboard focus and moves with it.
+    fn primary_screen_height() -> f64 {
         unsafe {
             let screen_cls = Class::get("NSScreen").unwrap();
-            let screen: *mut Object = msg_send![screen_cls, mainScreen];
-            let frame: NSRect = msg_send![screen, frame];
-            NSPoint {
-                x: x - POINTER_SIZE / 2.0,
-                y: frame.size.height - y - POINTER_SIZE / 2.0,
+            let screens: *mut Object = msg_send![screen_cls, screens];
+            let count: usize = msg_send![screens, count];
+            let screen: *mut Object = if count > 0 {
+                msg_send![screens, objectAtIndex: 0usize]
+            } else {
+                msg_send![screen_cls, mainScreen]
+            };
+            if screen.is_null() {
+                return 0.0;
             }
+            let frame: NSRect = msg_send![screen, frame];
+            frame.size.height
+        }
+    }
+
+    /// Convert a CoreGraphics global point (origin at the top-left of the primary
+    /// display, y down) into the AppKit frame origin of a panel centred on it
+    /// (origin at the bottom-left of the primary display, y up). Both spaces are
+    /// anchored to the primary display, so the flip uses its height; a point on a
+    /// second display above or beside it lands correctly because the offset is
+    /// preserved rather than re-based on the focused display.
+    fn panel_origin(primary_height: f64, x: f64, y: f64) -> NSPoint {
+        NSPoint {
+            x: x - POINTER_SIZE / 2.0,
+            y: primary_height - y - POINTER_SIZE / 2.0,
+        }
+    }
+
+    fn panel_origin_for_pointer(x: f64, y: f64) -> NSPoint {
+        panel_origin(primary_screen_height(), x, y)
+    }
+
+    #[cfg(test)]
+    mod origin_tests {
+        use super::{panel_origin, POINTER_SIZE};
+
+        #[test]
+        fn flips_against_the_primary_display_height() {
+            let origin = panel_origin(900.0, 100.0, 200.0);
+            assert_eq!(origin.x, 100.0 - POINTER_SIZE / 2.0);
+            assert_eq!(origin.y, 900.0 - 200.0 - POINTER_SIZE / 2.0);
+        }
+
+        #[test]
+        fn keeps_points_on_a_display_above_the_primary() {
+            // A display arranged above the primary has negative CG y.
+            let origin = panel_origin(900.0, 50.0, -100.0);
+            assert_eq!(origin.y, 900.0 + 100.0 - POINTER_SIZE / 2.0);
         }
     }
 

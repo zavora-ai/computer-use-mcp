@@ -93,3 +93,31 @@ test('extracted scripting handler preserves output and cancellation signal', asy
   assert.equal(result.content[0].text, 'one')
   assert.equal(observedSignal, controller.signal)
 })
+
+// ── run_script: a refused Apple event is a permission, not a script bug ──────
+
+test('run_script names the Automation permission when osascript reports -1743', async () => {
+  const ctx = context(native(), {
+    runScript: async () => ({
+      stdout: '', code: 1, timedOut: false,
+      stderr: 'execution error: Not authorized to send Apple events to Finder. (-1743)\n',
+    }),
+  })
+  const result = await handleAccessibilityTool('run_script', {
+    language: 'applescript', script: 'tell application "Finder" to count windows',
+  }, ctx)
+  assert.equal(result.isError, true)
+  const text = result.content[0].text
+  assert.match(text, /\(-1743\)/)
+  assert.match(text, /automation_permission_denied/)
+  assert.match(text, /control Finder in System Settings > Privacy & Security > Automation/)
+})
+
+test('run_script leaves an ordinary script failure untouched', async () => {
+  const ctx = context(native(), {
+    runScript: async () => ({ stdout: '', stderr: 'syntax error: Expected end of line (-2741)\n', code: 1, timedOut: false }),
+  })
+  const result = await handleAccessibilityTool('run_script', { language: 'applescript', script: 'tell' }, ctx)
+  assert.equal(result.isError, true)
+  assert.equal(result.content[0].text, 'syntax error: Expected end of line (-2741)')
+})

@@ -13,6 +13,24 @@ export interface DoctorCheck {
   remediation?: string[]
 }
 
+/**
+ * Read a TCC permission through the native module when the binary exposes it.
+ * Older binaries do not, and an unsupported platform reports `supported: false`;
+ * both return undefined so the caller falls back to behavioural checks.
+ */
+function nativePermission(
+  native: NativeModule,
+  permission: 'accessibility' | 'display_capture',
+): { granted: boolean } | undefined {
+  try {
+    const status = native.getNativePermissionStatus?.(permission)
+    if (!status || !status.supported) return undefined
+    return { granted: status.granted }
+  } catch {
+    return undefined
+  }
+}
+
 /** Run host diagnostics with every external dependency supplied explicitly. */
 export async function runDoctor(options: {
   native: NativeModule
@@ -67,12 +85,22 @@ export async function runDoctor(options: {
       remediation: ['Run npm run build for source checkouts, or reinstall @zavora-ai/computer-use-mcp for your platform.'],
     })
   }
+  // macOS reports permission through TCC. A capture can still return an image
+  // without Screen Recording access — the desktop wallpaper with every window
+  // missing — so the permission itself is the fact, not the image payload.
+  const captureTrust = isMacos ? nativePermission(options.native, 'display_capture') : undefined
   try {
     const shot = options.native.takeScreenshot(320, undefined, 80, undefined, undefined)
+    const captureDenied = captureTrust?.granted === false
     add({
-      id: 'display_capture', status: shot.base64 ? 'pass' : 'fail',
-      summary: shot.base64 ? `Captured ${shot.width}x${shot.height}.` : 'Screenshot returned no image payload.',
-      details: { width: shot.width, height: shot.height, mimeType: shot.mimeType },
+      id: 'display_capture', status: captureDenied || !shot.base64 ? 'fail' : 'pass',
+      summary: captureDenied
+        ? `Screen Recording is not granted to this host process; captured ${shot.width}x${shot.height} but application windows are omitted.`
+        : shot.base64 ? `Captured ${shot.width}x${shot.height}.` : 'Screenshot returned no image payload.',
+      details: {
+        width: shot.width, height: shot.height, mimeType: shot.mimeType,
+        ...(captureTrust ? { screenRecordingGranted: captureTrust.granted } : {}),
+      },
       remediation: isMacos
         ? ['Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
         : ['Run from an interactive desktop session. If using RDP/VMs, ensure Desktop Duplication or GDI capture is available.'],
@@ -113,14 +141,24 @@ export async function runDoctor(options: {
       remediation: ['Ensure the agent host can access the user clipboard and is running in an interactive desktop session.'],
     })
   }
+  // Frontmost-app and window enumeration need no Accessibility grant on macOS,
+  // so they cannot stand in for it: the UI tree, element actions and input
+  // injection are all refused without AXIsProcessTrusted. Ask TCC directly.
+  const axTrust = isMacos ? nativePermission(options.native, 'accessibility') : undefined
   try {
     const frontmost = options.native.getFrontmostApp()
     const windows = options.native.listWindows(frontmost?.bundleId)
+    const axDenied = axTrust?.granted === false
     add({
       id: isWindows ? 'ui_automation' : 'accessibility',
-      status: frontmost ? 'pass' : 'warn',
-      summary: frontmost ? `Frontmost app detected: ${frontmost.bundleId}.` : 'No frontmost app detected.',
-      details: { frontmost, topLevelWindows: windows.length },
+      status: axDenied ? 'fail' : frontmost ? 'pass' : 'warn',
+      summary: axDenied
+        ? `Accessibility is not granted to this host process${frontmost ? ` (frontmost app: ${frontmost.bundleId})` : ''}; UI tree, element and input tools will be refused.`
+        : frontmost ? `Frontmost app detected: ${frontmost.bundleId}.` : 'No frontmost app detected.',
+      details: {
+        frontmost, topLevelWindows: windows.length,
+        ...(axTrust ? { accessibilityGranted: axTrust.granted } : {}),
+      },
       remediation: isMacos
         ? ['Open System Settings > Privacy & Security > Accessibility and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
         : ['UI Automation is built into Windows. If controls are missing, run the agent at the same integrity level as the target app.'],

@@ -398,6 +398,54 @@ mod macos {
         main_window_for_pid(pid_for_bundle(bundle_id)? as i64)
     }
 
+    /// Name the reason a capture failed. Without Screen Recording, `screencapture`
+    /// exits non-zero and prints nothing, which used to surface as the bare string
+    /// "screencapture failed" — nothing an agent or a person could act on.
+    pub(crate) fn capture_failure_reason(
+        screen_recording_granted: bool,
+        code: Option<i32>,
+        stderr: &str,
+    ) -> String {
+        if !screen_recording_granted {
+            return "screen_recording_permission_denied: Screen Recording is not granted to this host process, so screencapture produced nothing. Enable your terminal, IDE or agent host in System Settings > Privacy & Security > Screen & System Audio Recording, then restart it.".to_string();
+        }
+        let detail = stderr.trim();
+        match (code, detail.is_empty()) {
+            (Some(code), true) => format!("screencapture exited with status {code}"),
+            (Some(code), false) => format!("screencapture exited with status {code}: {detail}"),
+            (None, true) => "screencapture was terminated by a signal".to_string(),
+            (None, false) => format!("screencapture was terminated by a signal: {detail}"),
+        }
+    }
+
+    #[cfg(test)]
+    mod capture_failure_tests {
+        use super::capture_failure_reason;
+
+        #[test]
+        fn names_the_permission_before_anything_else() {
+            let reason = capture_failure_reason(false, Some(1), "");
+            assert!(reason.starts_with("screen_recording_permission_denied:"));
+            assert!(reason.contains("Screen & System Audio Recording"));
+        }
+
+        #[test]
+        fn reports_exit_status_and_stderr_when_permitted() {
+            assert_eq!(
+                capture_failure_reason(true, Some(1), ""),
+                "screencapture exited with status 1"
+            );
+            assert_eq!(
+                capture_failure_reason(true, Some(2), "  could not create image from display  \n"),
+                "screencapture exited with status 2: could not create image from display"
+            );
+            assert_eq!(
+                capture_failure_reason(true, None, ""),
+                "screencapture was terminated by a signal"
+            );
+        }
+    }
+
     #[napi]
     pub fn take_screenshot(
         width: Option<u32>,
@@ -428,12 +476,19 @@ mod macos {
         }
         args.push(tmp.clone());
 
-        let status = Command::new("screencapture")
+        // `.output()` rather than `.status()`: the child must not inherit this
+        // process's stdio, because on a stdio transport stdout *is* the MCP
+        // channel, and anything a child prints there corrupts the JSON-RPC stream.
+        let output = Command::new("screencapture")
             .args(&args)
-            .status()
+            .output()
             .map_err(|e| napi::Error::from_reason(format!("screencapture: {e}")))?;
-        if !status.success() {
-            return Err(napi::Error::from_reason("screencapture failed"));
+        if !output.status.success() {
+            return Err(napi::Error::from_reason(capture_failure_reason(
+                crate::permissions::screen_capture_granted(),
+                output.status.code(),
+                &String::from_utf8_lossy(&output.stderr),
+            )));
         }
 
         if let Some(w) = width {

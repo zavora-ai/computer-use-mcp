@@ -192,7 +192,9 @@ export interface NativeModule {
     generation: number
     observerLatencyMs?: number
   }
-  // Mouse
+  // Mouse and keyboard. On macOS every call below throws
+  // `accessibility_permission_denied` when the process is not trusted for
+  // Accessibility, because macOS would otherwise discard the event with no error.
   mouseMove(x: number, y: number): void
   mouseClickAdditive?(x: number, y: number, button: string, count: number): void
   mouseClick(x: number, y: number, button: string, count: number): void  // throws on invalid button

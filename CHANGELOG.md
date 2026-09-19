@@ -67,6 +67,36 @@ parameters repeated on every input tool.
   unhandled promise rejections are logged to stderr instead of ending the process; the stdio entry check also accepts
   the real path of the module (bin symlinks).
 
+- **macOS permission failures are named and refused rather than silent** (contributed by
+  [@swiftkimani](https://github.com/swiftkimani), [#34](https://github.com/zavora-ai/computer-use-mcp/pull/34)):
+  - **Input was silently dropped without Accessibility.** macOS discards `CGEventPost`
+    from a process that is not trusted for Accessibility and reports nothing, so
+    `left_click`, `type`, `key`, `scroll` and every drag tool returned success while
+    nothing happened on screen. Reproduced by running the native module under launchd
+    as an untrusted process: `mouseMove` left the cursor exactly where it was. Every
+    input entry point now refuses with `accessibility_permission_denied` and names
+    the setting to enable.
+  - **`doctor` passed Accessibility and Screen Recording it did not have.** The
+    Accessibility check detected the frontmost app, which needs no permission, and
+    the capture check accepted any image, which on some releases is a windowless
+    wallpaper. Both now ask TCC through the native module, so `ok: false` means what
+    it says. A native binary without the probe keeps the behavioural checks.
+  - **`screencapture failed` now says why.** A capture that fails without Screen
+    Recording returns `screen_recording_permission_denied` with the setting to
+    enable; any other failure carries the exit status and stderr. The child no
+    longer inherits the server's stdio, so nothing it prints can reach the MCP
+    stdout channel.
+  - **`run_script` names Automation.** An Apple event refused with `-1743` appends
+    `automation_permission_denied` and the application to allow, instead of leaving
+    the agent to rewrite a script that was never the problem.
+  - **The native pointer overlay flipped against the focused display.** The
+    CoreGraphics-to-AppKit conversion used `NSScreen.mainScreen`, which follows
+    keyboard focus; both coordinate spaces are anchored to the primary display, so
+    the dot landed in the wrong place on a second monitor. It now uses the primary
+    display's height.
+  - In 7.6.0 the same check covers the paths added since the fix was written: `delivery: "pid"` clicks, scrolls,
+    keys and text, and `type mode: "keys"`.
+
 ### Added (from the 2026-10-09 review)
 
 - **`dist/launch.js`, the self-checking launcher** (now the package `bin`). It imports only Node built-ins, checks that
