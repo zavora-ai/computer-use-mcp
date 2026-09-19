@@ -155,6 +155,15 @@ this server. See [the release notes](docs/releases/v7.5.0.md).
 - `key` had no name for the grave/backtick key, and `type` could only send Unicode text, so a
   game's console could not be opened.
 
+### Documentation
+
+- **Cursor setup, and which app owns the macOS permissions.** `AGENTS.md` gains a
+  Cursor section (`~/.cursor/mcp.json` or a project's `.cursor/mcp.json`, the
+  approval prompt, profiles through `env`). It also states the rule the fixes
+  above make visible: macOS attributes Accessibility, Screen Recording and
+  Automation to the app that launches the server, so an IDE host must be granted
+  them itself, and `doctor` has to run from inside that host to report them.
+
 ## v7.4.0 (2026-09-12)
 
 Read the browser the person is already signed into, watch what a run costs, stop it,

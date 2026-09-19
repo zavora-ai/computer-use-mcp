@@ -114,13 +114,14 @@ Add this to your agent's MCP server configuration:
 
 For a client with a different configuration format, use `npx` as the command and
 `-y @zavora-ai/computer-use-mcp` as its arguments. See [agent configuration](AGENTS.md)
-for client-specific examples. No model API key is needed by the MCP server itself.
+for Cursor, Claude Desktop, Codex and programmatic examples. No model API key is
+needed by the MCP server itself.
 
 Before using desktop tools:
 
 | Platform | Setup |
 |---|---|
-| macOS 14+ | Grant the host app (the terminal or agent that launches the server) Accessibility and Screen Recording access; Input Monitoring lets the user-active guard see when you are typing or moving the mouse. App scripting may also request Automation access. Until Accessibility is granted, input tools refuse with `accessibility_permission_denied` rather than silently doing nothing. |
+| macOS 14+ | Grant the host app Accessibility and Screen Recording access. The host is the app that launches the server (your terminal, Cursor or Claude Desktop), not `node`. Input Monitoring lets the user-active guard see when you are typing or moving the mouse. App scripting may also request Automation access. Until Accessibility is granted, input tools refuse with `accessibility_permission_denied` rather than silently doing nothing. |
 | Windows | Run in a signed-in desktop session. Protected or elevated windows may need matching privileges. |
 | Linux | Use a graphical session with the required X11/Wayland utilities. Accessibility support needs AT-SPI. See [platform details](docs/ARCHITECTURE.md). |
 
