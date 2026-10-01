@@ -1,5 +1,53 @@
 # Changelog
 
+## v7.5.0 (2026-10-01)
+
+Work beside a person instead of over them, and read apps that draw their own UI. Every
+change came from building a game with Unreal and Blender, where the agent stopped using
+this server. See [the release notes](docs/releases/v7.5.0.md).
+
+### Added
+
+- **`read_window_text`** (macOS) — a window's text by on-device OCR (Apple Vision), each
+  line with its box in window points and screen points. Works where `get_ui_tree` is empty
+  (Unreal, Blender, games), on covered windows, without activating anything. No network.
+- **`click_text`** (macOS) — find text by OCR (`exact`, `contains` or `regex`, `nth` match)
+  and click its centre; returns what it matched.
+- **`wait_for_window`** — returns as soon as an app's window appears (optionally of a kind,
+  or with a title), or disappears with `gone: true`; polls every 250 ms, honours cancellation.
+- **Window kinds** — `list_windows` labels each window `main`, `document`, `dialog`, `panel`,
+  `toast` or `other` (AX subrole when available, geometry otherwise), with `area` and `kindSource`.
+- **`delivery: "pid"`** (macOS) on `key`, `type`, the click tools, `scroll` and `click_text`:
+  events go to the target process with `CGEventPostToPid` — no activation, no cursor movement.
+  `delivery: "auto"` (default) uses it while the user is active for apps where it was seen to
+  work. Outcomes are recorded per app and per input class and reported by `doctor` and
+  `get_app_capabilities`.
+- **User-active guard** — a call that would activate an app or post keyboard/mouse input within
+  `COMPUTER_USE_USER_IDLE_MS` (default 4000 ms) of physical input returns `user_active` (how long
+  ago, what it would have done, what to do) unless it passes `force: true`. Reads are never blocked.
+- **`type` `mode: "keys"`** — each character as a key-down/up of its virtual key, from the current
+  keyboard layout, so key bindings (a game console) receive it.
+- **Key names** — `grave`, `backtick`, `tilde`, `minus`, `semicolon` and the rest of the punctuation;
+  an unknown name is refused with the list of valid ones.
+- **`target_title`** on `screenshot`, `zoom`, `snapshot` and the OCR tools; `zoom` takes a target
+  window and a window-relative region.
+- `doctor` checks `agent_helper`, `user_active_guard` and `pid_delivery`.
+
+### Changed
+
+- Window screenshots on macOS 14+ use ScreenCaptureKit through a small Swift helper compiled on
+  first use (`~/Library/Caches/computer-use-mcp/`): the window alone, without its shadow, so the
+  reply states an exact image-to-screen mapping. `screencapture` remains the fallback.
+- `key` resolves names before acting: `page_down` reaches the native layer as `pagedown` and
+  `period` as `.` (previously silently ignored).
+
+### Fixed
+
+- `screenshot {target_app}` captured the app's frontmost layer-0 window — for the Unreal Editor a
+  352×81 notification toast — instead of its main window.
+- `key` had no name for the grave/backtick key, and `type` could only send Unicode text, so a
+  game's console could not be opened.
+
 ## v7.4.0 (2026-09-12)
 
 Read the browser the person is already signed into, watch what a run costs, stop it,

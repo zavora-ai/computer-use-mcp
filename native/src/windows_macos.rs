@@ -611,3 +611,129 @@ pub fn activate_window(window_id: u32, timeout_ms: Option<i32>) -> napi::Result<
         "reason": if raised { serde_json::Value::Null } else { serde_json::json!("raise_failed") },
     }))
 }
+
+/// Read a CFString attribute from an AX element.
+fn ax_string_attr(element: AXUIElementRef, name: &str) -> Option<String> {
+    let key = CFString::new(name);
+    let mut value: RawCFTypeRef = std::ptr::null();
+    let err =
+        unsafe { AXUIElementCopyAttributeValue(element, key.as_concrete_TypeRef(), &mut value) };
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    extern "C" {
+        fn CFGetTypeID(cf: RawCFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+    }
+    let is_string = unsafe { CFGetTypeID(value) == CFStringGetTypeID() };
+    if !is_string {
+        unsafe { CFRelease(value) };
+        return None;
+    }
+    let s: CFString = unsafe { TCFType::wrap_under_create_rule(value as CFStringRef) };
+    Some(s.to_string())
+}
+
+/// Read a CFBoolean attribute from an AX element.
+fn ax_bool_attr(element: AXUIElementRef, name: &str) -> Option<bool> {
+    let key = CFString::new(name);
+    let mut value: RawCFTypeRef = std::ptr::null();
+    let err =
+        unsafe { AXUIElementCopyAttributeValue(element, key.as_concrete_TypeRef(), &mut value) };
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    extern "C" {
+        fn CFGetTypeID(cf: RawCFTypeRef) -> usize;
+        fn CFBooleanGetTypeID() -> usize;
+    }
+    let result = unsafe {
+        if CFGetTypeID(value) == CFBooleanGetTypeID() {
+            let b: CFBoolean = TCFType::wrap_under_get_rule(value as _);
+            Some(bool::from(b))
+        } else {
+            None
+        }
+    };
+    unsafe { CFRelease(value) };
+    result
+}
+
+/// Read a CGPoint (type 1) or CGSize (type 2) AXValue attribute as (a, b).
+fn ax_pair_attr(element: AXUIElementRef, name: &str, value_type: u32) -> Option<(f64, f64)> {
+    let key = CFString::new(name);
+    let mut value: RawCFTypeRef = std::ptr::null();
+    let err =
+        unsafe { AXUIElementCopyAttributeValue(element, key.as_concrete_TypeRef(), &mut value) };
+    if err != K_AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+    let mut pair = [0f64; 2];
+    let ok = unsafe {
+        AXValueGetValue(
+            value,
+            value_type,
+            pair.as_mut_ptr() as *mut std::ffi::c_void,
+        )
+    };
+    unsafe { CFRelease(value) };
+    if ok {
+        Some((pair[0], pair[1]))
+    } else {
+        None
+    }
+}
+
+/// Accessibility facts about an app's windows, used to label window kinds.
+///
+/// Returns `[{title, role, subrole, modal, bounds}]` for each AXWindow of `pid`.
+/// Apps that draw their own UI (Unreal, Blender) often expose few or none; callers
+/// fall back to geometric heuristics. A short messaging timeout keeps a hung app
+/// from stalling the caller.
+#[napi]
+pub fn get_window_ax_info(pid: i32) -> napi::Result<serde_json::Value> {
+    extern "C" {
+        fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout: f32) -> AXError;
+        fn CFArrayGetCount(array: CFArrayRef) -> isize;
+        fn CFArrayGetValueAtIndex(array: CFArrayRef, idx: isize) -> RawCFTypeRef;
+    }
+    let ax_app = unsafe { AXUIElementCreateApplication(pid) };
+    if ax_app.is_null() {
+        return Ok(serde_json::json!([]));
+    }
+    unsafe { AXUIElementSetMessagingTimeout(ax_app, 0.4) };
+    let key = CFString::new("AXWindows");
+    let mut windows: RawCFTypeRef = std::ptr::null();
+    let err =
+        unsafe { AXUIElementCopyAttributeValue(ax_app, key.as_concrete_TypeRef(), &mut windows) };
+    if err != K_AX_ERROR_SUCCESS || windows.is_null() {
+        unsafe { CFRelease(ax_app as *const _) };
+        return Ok(serde_json::json!([]));
+    }
+    let array = windows as CFArrayRef;
+    let count = unsafe { CFArrayGetCount(array) }.max(0) as usize;
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count.min(64) {
+        let win = unsafe { CFArrayGetValueAtIndex(array, i as isize) } as AXUIElementRef;
+        if win.is_null() {
+            continue;
+        }
+        let position = ax_pair_attr(win, "AXPosition", 1);
+        let size = ax_pair_attr(win, "AXSize", 2);
+        out.push(serde_json::json!({
+            "title": ax_string_attr(win, "AXTitle"),
+            "role": ax_string_attr(win, "AXRole"),
+            "subrole": ax_string_attr(win, "AXSubrole"),
+            "modal": ax_bool_attr(win, "AXModal"),
+            "bounds": match (position, size) {
+                (Some((x, y)), Some((w, h))) => serde_json::json!({ "x": x, "y": y, "width": w, "height": h }),
+                _ => serde_json::Value::Null,
+            },
+        }));
+    }
+    unsafe {
+        CFRelease(windows);
+        CFRelease(ax_app as *const _);
+    }
+    Ok(serde_json::json!(out))
+}

@@ -315,14 +315,47 @@ mod macos {
         cf_num.to_i64()
     }
 
-    fn window_id_for_bundle(bundle_id: &str) -> Option<u32> {
-        let pid = pid_for_bundle(bundle_id)? as i64;
+    unsafe fn dict_get_raw(dict: CFDictionaryRef, key: &str) -> RawCFTypeRef {
+        let cf_key = CFString::new(key);
+        CFDictionaryGetValue(dict, cf_key.as_concrete_TypeRef() as RawCFTypeRef)
+    }
+
+    unsafe fn dict_get_f64(dict: CFDictionaryRef, key: &str) -> Option<f64> {
+        let val = dict_get_raw(dict, key);
+        if val.is_null() {
+            return None;
+        }
+        let cf_num: CFNumber = TCFType::wrap_under_get_rule(val as *const _);
+        cf_num
+            .to_f64()
+            .or_else(|| cf_num.to_i64().map(|n| n as f64))
+    }
+
+    unsafe fn dict_has_title(dict: CFDictionaryRef) -> bool {
+        let val = dict_get_raw(dict, "kCGWindowName");
+        if val.is_null() {
+            return false;
+        }
+        let title: CFString =
+            TCFType::wrap_under_get_rule(val as core_foundation::string::CFStringRef);
+        !title.to_string().trim().is_empty()
+    }
+
+    /// Pick the app's main window: the largest titled, layer-0, on-screen window.
+    ///
+    /// This used to return the first layer-0 window in front-to-back order, which for
+    /// the Unreal Editor was a 352x81 notification toast sitting above the editor. Score
+    /// by (has a title, area) and let ties go to the earlier, frontmost entry. Window
+    /// titles need Screen Recording permission; without it every title is empty and the
+    /// choice falls back to the largest window, which is still the main one.
+    fn main_window_for_pid(pid: i64) -> Option<u32> {
         unsafe {
             let array_ref = CGWindowListCopyWindowInfo(1 << 0, 0);
             if array_ref.is_null() {
                 return None;
             }
             let count = CFArrayGetCount(array_ref) as usize;
+            let mut best: Option<((bool, f64), u32)> = None;
             for i in 0..count {
                 let dict = CFArrayGetValueAtIndex(array_ref, i as isize) as CFDictionaryRef;
                 if dict_get_i64(dict, "kCGWindowLayer") != Some(0) {
@@ -331,14 +364,38 @@ mod macos {
                 if dict_get_i64(dict, "kCGWindowOwnerPID") != Some(pid) {
                     continue;
                 }
-                if let Some(wid) = dict_get_i64(dict, "kCGWindowNumber") {
-                    CFRelease(array_ref as *const _);
-                    return Some(wid as u32);
+                if dict_get_f64(dict, "kCGWindowAlpha").unwrap_or(1.0) <= 0.0 {
+                    continue;
+                }
+                let Some(wid) = dict_get_i64(dict, "kCGWindowNumber") else {
+                    continue;
+                };
+                let bounds = dict_get_raw(dict, "kCGWindowBounds") as CFDictionaryRef;
+                let area = if bounds.is_null() {
+                    0.0
+                } else {
+                    dict_get_f64(bounds, "Width").unwrap_or(0.0)
+                        * dict_get_f64(bounds, "Height").unwrap_or(0.0)
+                };
+                let score = (dict_has_title(dict), area);
+                // Strictly greater: an equal score keeps the earlier (frontmost) window.
+                let better = match &best {
+                    None => true,
+                    Some((current, _)) => {
+                        score.0 && !current.0 || (score.0 == current.0 && score.1 > current.1)
+                    }
+                };
+                if better {
+                    best = Some((score, wid as u32));
                 }
             }
             CFRelease(array_ref as *const _);
+            best.map(|(_, wid)| wid)
         }
-        None
+    }
+
+    fn window_id_for_bundle(bundle_id: &str) -> Option<u32> {
+        main_window_for_pid(pid_for_bundle(bundle_id)? as i64)
     }
 
     #[napi]

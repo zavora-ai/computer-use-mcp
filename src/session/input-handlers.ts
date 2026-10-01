@@ -1,8 +1,14 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process'
-import type { NativeModule } from '../native.js'
+import type { AXBounds, NativeModule } from '../native.js'
 import { ok, type ToolResult } from '../result.js'
+import { StructuredToolError } from './errors.js'
 import type { FocusController } from './focus.js'
-import type { TargetStateController } from './target-state.js'
+import type { ResolvedTarget, TargetStateController } from './target-state.js'
+import { charToUsCombo, explainNativeKeyError, normalizeHeldKeys, normalizeKeyCombo } from './keys.js'
+import type { MacosHelper } from './macos-helper.js'
+import { inputClassFor, type PidDeliveryStore, type PidOutcome } from './pid-delivery.js'
+import type { UserActivityGuard } from './user-activity.js'
+import { resolveAppWindow } from './window-select.js'
 
 type ExecFile = typeof defaultExecFileSync
 
@@ -12,6 +18,32 @@ const INPUT_TOOLS = new Set([
   'cursor_position', 'scroll', 'type', 'key', 'hold_key',
   'read_clipboard', 'write_clipboard', 'multi_select', 'multi_edit',
 ])
+
+/** Tools that neither post input nor activate anything. */
+const NON_PHYSICAL_TOOLS = new Set(['cursor_position', 'read_clipboard', 'write_clipboard'])
+
+/** v7.5 (R5): tools whose input can be posted to the target process instead. */
+export const PID_DELIVERY_TOOLS = new Set([
+  'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'scroll', 'type', 'key',
+])
+
+/**
+ * Where a call's input goes. `hid`: the HID event tap, i.e. the frontmost app, after
+ * focusing the target per focus_strategy, moving the real cursor for pointer events.
+ * `pid`: CGEventPostToPid to the target process, no activation, no cursor movement.
+ */
+export type InputRoute =
+  | { mode: 'hid' }
+  | {
+    mode: 'pid'
+    pid: number
+    bundleId?: string
+    windowId?: number
+    bounds?: AXBounds
+    /** Explicit delivery:"pid" with target_window_id: coordinates are window-relative. */
+    windowRelative: boolean
+    reason: 'requested' | 'user_active'
+  }
 
 /**
  * Does this look like text an agent meant to type, rather than a key combination?
@@ -44,6 +76,9 @@ export class InputHandler {
   readonly #platform: NodeJS.Platform
   readonly #sleep: (milliseconds: number) => Promise<void>
   readonly #execFile: ExecFile
+  readonly #guard: UserActivityGuard | undefined
+  readonly #pidStore: PidDeliveryStore | undefined
+  readonly #helper: MacosHelper | undefined
 
   constructor(options: {
     native: NativeModule
@@ -52,6 +87,12 @@ export class InputHandler {
     platform?: NodeJS.Platform
     sleep(milliseconds: number): Promise<void>
     execFile?: ExecFile
+    /** v7.5 (R4): refuse HID input and activation while the user is active. */
+    guard?: UserActivityGuard
+    /** v7.5 (R5): what pid delivery did for each app. */
+    pidStore?: PidDeliveryStore
+    /** v7.5: captures the target before/after a first pid delivery to verify it. */
+    helper?: MacosHelper
   }) {
     this.#native = options.native
     this.#targets = options.targets
@@ -59,6 +100,178 @@ export class InputHandler {
     this.#platform = options.platform ?? process.platform
     this.#sleep = options.sleep
     this.#execFile = options.execFile ?? defaultExecFileSync
+    this.#guard = options.guard
+    this.#pidStore = options.pidStore
+    this.#helper = options.helper
+  }
+
+  /** Can this platform/native module post input to a process? */
+  pidDeliverySupported(): boolean {
+    return this.#platform === 'darwin' && typeof this.#native.mouseClickToPid === 'function'
+      && typeof this.#native.keyPressToPid === 'function' && typeof this.#native.typeTextToPid === 'function'
+  }
+
+  /**
+   * Decide where a physical-input call goes (R4 + R5).
+   *
+   * - delivery "pid": post to the target process; refused when impossible.
+   * - delivery "hid": the old path, subject to the user-active guard unless force.
+   * - delivery "auto" (default): the old path while the user is idle; while the
+   *   user is active, pid delivery for an app recorded as accepting it, otherwise
+   *   `user_active`. `force: true` always takes the old path.
+   */
+  route(tool: string, args: Record<string, unknown>, wouldDo: string): InputRoute {
+    const requested = args.delivery === 'pid' || args.delivery === 'hid' ? args.delivery : 'auto'
+    const force = args.force === true
+    const pidTool = PID_DELIVERY_TOOLS.has(tool) || tool === 'click_text'
+    if (requested === 'pid') {
+      if (!pidTool) {
+        throw new StructuredToolError(`${tool} has no pid delivery`, {
+          error: 'pid_delivery_unsupported', tool,
+          remediation: ['Pid delivery covers key, type, the click tools, scroll and click_text.'],
+        })
+      }
+      return this.#pidRoute(tool, args, 'requested')
+    }
+    if (requested === 'hid' || force || !this.#guard) {
+      this.#guard?.check({ tool, wouldDo, force, pidPossible: pidTool && this.pidDeliverySupported() })
+      return { mode: 'hid' }
+    }
+    const activity = this.#guard.activity()
+    if (!activity.active) return { mode: 'hid' }
+    if (pidTool && this.pidDeliverySupported()) {
+      const resolved = this.#targets.resolve(args)
+      const bundleId = resolved.bundleId ?? (resolved.windowId !== undefined ? this.#native.getWindow(resolved.windowId)?.bundleId ?? undefined : undefined)
+      if (bundleId && this.#pidStore?.knownGood(bundleId, inputClassFor(tool))) {
+        // Coordinates stay screen coordinates: the caller did not ask for pid.
+        return { ...this.#pidRoute(tool, args, 'user_active'), windowRelative: false } as InputRoute
+      }
+    }
+    this.#guard.check({ tool, wouldDo, pidPossible: pidTool && this.pidDeliverySupported() })
+    return { mode: 'hid' }
+  }
+
+  #pidRoute(tool: string, args: Record<string, unknown>, reason: 'requested' | 'user_active'): InputRoute {
+    if (!this.pidDeliverySupported()) {
+      throw new StructuredToolError('pid delivery is unavailable', {
+        error: 'pid_delivery_unsupported', tool, platform: this.#platform,
+        remediation: [this.#platform === 'darwin'
+          ? 'The native module predates pid delivery; rebuild it (npm run build:native) or reinstall the package.'
+          : 'Pid delivery (CGEventPostToPid) is macOS only; use delivery "hid" with the target focused.'],
+      })
+    }
+    const resolved: ResolvedTarget = this.#targets.resolve(args)
+    let pid: number | undefined
+    let windowId = resolved.windowId
+    let bounds: AXBounds | undefined
+    let bundleId = resolved.bundleId
+    if (windowId !== undefined) {
+      const window = this.#native.getWindow(windowId)
+      pid = window?.pid
+      bounds = window?.bounds
+      bundleId = window?.bundleId ?? bundleId
+    } else if (bundleId) {
+      pid = this.#native.listRunningApps().find(app => app.bundleId === bundleId)?.pid
+      const title = typeof args.target_title === 'string' && args.target_title ? args.target_title : undefined
+      const window = resolveAppWindow(this.#native, bundleId, title)
+      windowId = window?.windowId
+      bounds = window?.bounds
+    }
+    if (pid === undefined) {
+      throw new StructuredToolError('pid delivery needs a running target', {
+        error: 'pid_target_missing', tool, target_app: bundleId ?? null, target_window_id: windowId ?? null,
+        remediation: ['Pass target_app (a running app) or target_window_id so the input has a process to go to.'],
+      })
+    }
+    return {
+      mode: 'pid', pid, bundleId, windowId, bounds, reason,
+      windowRelative: reason === 'requested' && typeof args.target_window_id === 'number',
+    }
+  }
+
+  /**
+   * Post pid-delivered input, verifying it the first time for an app (and until a
+   * change is seen): the target window is captured twice before (to rule out a
+   * window that is changing on its own) and once after, and the outcome recorded.
+   */
+  async #deliverPid(route: Extract<InputRoute, { mode: 'pid' }>, tool: string, act: () => void): Promise<PidOutcome | undefined> {
+    const store = this.#pidStore
+    const helper = this.#helper
+    const bundleId = route.bundleId
+    const inputClass = inputClassFor(tool)
+    const verify = store && bundleId && !store.knownGood(bundleId, inputClass) && helper?.supportsCapture() && route.windowId !== undefined
+    if (!verify) {
+      act()
+      if (store && bundleId && !store.observation(bundleId, inputClass)) {
+        store.record(bundleId, inputClass, { outcome: 'unverified', tool, at: new Date().toISOString() })
+      }
+      return undefined
+    }
+    const shot = async () => {
+      try { return (await helper!.capture({ windowId: route.windowId!, width: 480, format: 'jpeg', quality: 60 })).hash } catch { return undefined }
+    }
+    const first = await shot()
+    await this.#sleep(250)
+    const before = await shot()
+    act()
+    await this.#sleep(250)
+    const after = await shot()
+    const outcome: PidOutcome = !first || !before || !after ? 'unverified'
+      : first !== before ? 'unverified'
+        : before !== after ? 'changed' : 'no_visible_change'
+    store.record(bundleId, inputClass, {
+      outcome, tool, at: new Date().toISOString(),
+      ...(first && before && first !== before ? { detail: 'the window was changing on its own' } : {}),
+    })
+    return outcome
+  }
+
+  #pidNote(route: Extract<InputRoute, { mode: 'pid' }>, outcome: PidOutcome | undefined): string {
+    return ` (delivery: pid to ${route.bundleId ?? `pid ${route.pid}`}`
+      + (route.reason === 'user_active' ? ', because the user is active' : '')
+      + (outcome ? `; verification: ${outcome}` : '') + ')'
+  }
+
+  /** Describe a call for a user_active refusal. */
+  #wouldDo(tool: string, args: Record<string, unknown>): string {
+    const at = Array.isArray(args.coordinate) ? ` at (${args.coordinate.join(', ')})` : ''
+    const target = typeof args.target_app === 'string' ? ` in ${args.target_app}`
+      : typeof args.target_window_id === 'number' ? ` in window ${args.target_window_id}` : ' in the frontmost app'
+    const what = tool === 'type' ? 'type text' : tool === 'key' ? `press ${String(args.text)}` : tool.replace(/_/g, ' ')
+    return `${what}${at}${target}`
+  }
+
+  /**
+   * Click at a point. `screen: true` means the point is in screen coordinates even
+   * for an explicit pid delivery with target_window_id (click_text uses this).
+   */
+  async clickAt(
+    point: { x: number; y: number; screen?: boolean },
+    button: string,
+    count: number,
+    tool: string,
+    args: Record<string, unknown>,
+    route?: InputRoute,
+  ): Promise<ToolResult> {
+    const chosen = route ?? this.route(tool, args, this.#wouldDo(tool, { ...args, coordinate: [point.x, point.y] }))
+    const resolved = this.#targets.resolve(args)
+    if (chosen.mode === 'pid') {
+      let { x, y } = point
+      if (chosen.windowRelative && !point.screen && chosen.bounds) { x += chosen.bounds.x; y += chosen.bounds.y }
+      const outcome = await this.#deliverPid(chosen, tool, () => {
+        this.#native.mouseClickToPid!(chosen.pid, x, y, button, count, chosen.windowId)
+      })
+      if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
+      return ok(`Clicked (${Math.round(x)}, ${Math.round(y)})${this.#pidNote(chosen, outcome)}`)
+    }
+    await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
+    const { x, y } = point
+    this.#validateCoordinates(x, y)
+    this.#native.mouseMove(x, y)
+    await this.#sleep(50)
+    this.#native.mouseClick(x, y, button, count)
+    this.#targets.trackClick(resolved)
+    return ok(`Clicked (${x}, ${y})`)
   }
 
   async handle(
@@ -82,20 +295,16 @@ export class InputHandler {
     const number = (key: string, fallback: number): number =>
       typeof args[key] === 'number' ? args[key] : fallback
     const target = () => this.#targets.resolve(args)
+    // The route below already applied the user-active guard, so focusing is forced.
     const focus = async (resolved: { bundleId?: string; windowId?: number }) => {
-      await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args))
+      await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
     }
+    // v7.5: decide once where this call's input goes (and refuse while the user is active).
+    const route: InputRoute = NON_PHYSICAL_TOOLS.has(tool) ? { mode: 'hid' } : this.route(tool, args, this.#wouldDo(tool, args))
 
     const click = async (button: string, count: number): Promise<ToolResult> => {
-      const resolved = target()
-      await focus(resolved)
       const [x, y] = coordinate()
-      this.#validateCoordinates(x, y)
-      this.#native.mouseMove(x, y)
-      await this.#sleep(50)
-      this.#native.mouseClick(x, y, button, count)
-      this.#targets.trackClick(resolved)
-      return ok(`Clicked (${x}, ${y})`)
+      return this.clickAt({ x, y }, button, count, tool, args, route)
     }
 
     if (tool === 'left_click') return click('left', 1)
@@ -152,10 +361,20 @@ export class InputHandler {
 
     if (tool === 'scroll') {
       const resolved = target()
-      await focus(resolved)
       const [x, y] = coordinate()
       const direction = string('direction')
       const amount = number('amount', 3)
+      if (route.mode === 'pid') {
+        if (!this.#native.mouseScrollToPid) throw new Error('This native module has no mouseScrollToPid; rebuild it')
+        const sx = route.windowRelative && route.bounds ? route.bounds.x + x : x
+        const sy = route.windowRelative && route.bounds ? route.bounds.y + y : y
+        const deltaX = direction === 'left' ? -amount : direction === 'right' ? amount : 0
+        const deltaY = direction === 'up' ? -amount : direction === 'down' ? amount : 0
+        const outcome = await this.#deliverPid(route, tool, () => this.#native.mouseScrollToPid!(route.pid, sx, sy, deltaY, deltaX, route.windowId))
+        if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
+        return ok(`Scrolled ${direction} ${amount}${this.#pidNote(route, outcome)}`)
+      }
+      await focus(resolved)
       this.#native.mouseMove(x, y)
       await this.#sleep(15)
       const deltaX = typeof args.delta_x === 'number' ? args.delta_x : direction === 'left' ? -amount : direction === 'right' ? amount : 0
@@ -167,8 +386,9 @@ export class InputHandler {
 
     if (tool === 'type') {
       const resolved = target()
-      await focus(resolved)
       const text = string('text')
+      if (route.mode === 'pid') return this.#typeToPid(route, text, args, resolved)
+      await focus(resolved)
       const caretPosition = typeof args.caret_position === 'string' ? args.caret_position : 'idle'
       if (caretPosition === 'start' || caretPosition === 'end') {
         this.#native.keyPress(caretPosition === 'start' ? 'home' : 'end')
@@ -180,14 +400,16 @@ export class InputHandler {
         this.#native.keyPress('delete')
         await this.#sleep(30)
       }
-      if (text.length > 100 || text.includes('\n')) await this.#pasteText(text)
+      let summary = 'Typed'
+      if (args.mode === 'keys') summary = await this.#typeKeys(text, signal)
+      else if (text.length > 100 || text.includes('\n')) await this.#pasteText(text)
       else this.#native.typeText(text)
       if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
       if (args.press_enter === true || args.press_enter === 'true') {
         this.#native.keyPress('return')
         await this.#sleep(30)
       }
-      return ok('Typed')
+      return ok(summary)
     }
 
     if (tool === 'key') {
@@ -205,20 +427,36 @@ export class InputHandler {
             `long or multi-line text through the clipboard.`,
         )
       }
+      // v7.5: resolve names ("grave", "tilde", "minus") before focusing anything,
+      // and refuse an unknown one with the list of valid names.
+      const normalized = normalizeKeyCombo(combo, this.#platform)
       const resolved = target()
+      if (route.mode === 'pid') {
+        const repeat = args.repeat !== undefined ? number('repeat', 1) : undefined
+        const outcome = await this.#deliverPid(route, tool, () => {
+          try { this.#native.keyPressToPid!(route.pid, normalized, repeat) } catch (error) { throw explainNativeKeyError(error) }
+        })
+        if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
+        return ok(`Pressed ${args.text}${this.#pidNote(route, outcome)}`)
+      }
       await focus(resolved)
-      this.#native.keyPress(combo, args.repeat !== undefined ? number('repeat', 1) : undefined)
+      try {
+        this.#native.keyPress(normalized, args.repeat !== undefined ? number('repeat', 1) : undefined)
+      } catch (error) { throw explainNativeKeyError(error) }
       if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
       return ok(`Pressed ${args.text}`)
     }
 
     if (tool === 'hold_key') {
-      const resolved = target()
-      await focus(resolved)
       if (!Array.isArray(args.keys) || !args.keys.every(key => typeof key === 'string')) {
         throw new Error('Invalid keys: expected string[]')
       }
-      this.#native.holdKey(args.keys, number('duration', 1) * 1000)
+      const keys = normalizeHeldKeys(args.keys, this.#platform)
+      const resolved = target()
+      await focus(resolved)
+      try {
+        this.#native.holdKey(keys, number('duration', 1) * 1000)
+      } catch (error) { throw explainNativeKeyError(error) }
       if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
       return ok('Held')
     }
@@ -352,6 +590,60 @@ export class InputHandler {
     }
     if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
     return ok(`Edited ${edits.length} fields`)
+  }
+
+  async #typeToPid(
+    route: Extract<InputRoute, { mode: 'pid' }>,
+    text: string,
+    args: Record<string, unknown>,
+    resolved: ResolvedTarget,
+  ): Promise<ToolResult> {
+    const native = this.#native
+    let summary = 'Typed'
+    const outcome = await this.#deliverPid(route, 'type', () => {
+      const caret = typeof args.caret_position === 'string' ? args.caret_position : 'idle'
+      if (caret === 'start' || caret === 'end') native.keyPressToPid!(route.pid, caret === 'start' ? 'home' : 'end')
+      if (args.clear === true || args.clear === 'true') {
+        native.keyPressToPid!(route.pid, 'cmd+a')
+        native.keyPressToPid!(route.pid, 'delete')
+      }
+      // No clipboard paste here: cmd+v would land in whatever the user has focused.
+      if (args.mode === 'keys' && native.typeKeysToPid) {
+        const counts = native.typeKeysToPid(route.pid, text)
+        summary = `Typed ${counts.keys} key${counts.keys === 1 ? '' : 's'}`
+          + (counts.unicode ? ` and ${counts.unicode} character(s) as text` : '') + ` (layout: ${counts.layout})`
+      } else native.typeTextToPid!(route.pid, text)
+      if (args.press_enter === true || args.press_enter === 'true') native.keyPressToPid!(route.pid, 'return')
+    })
+    if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
+    return ok(`${summary}${this.#pidNote(route, outcome)}`)
+  }
+
+  /**
+   * `type mode:"keys"`: every character as a key-down/key-up of its virtual key,
+   * so apps that bind keys rather than read text (a game console on the grave key)
+   * receive them. macOS uses the native layout-aware table; elsewhere, or with an
+   * older native module, each character goes through `keyPress` with its US-ANSI
+   * combo, and characters no key produces are sent as text.
+   */
+  async #typeKeys(text: string, signal?: AbortSignal): Promise<string> {
+    if (this.#native.typeKeys) {
+      const counts = this.#native.typeKeys(text)
+      return `Typed ${counts.keys} key${counts.keys === 1 ? '' : 's'}`
+        + (counts.unicode ? ` and ${counts.unicode} character(s) as text` : '')
+        + ` (layout: ${counts.layout})`
+    }
+    let keys = 0
+    let unicode = 0
+    for (const char of text) {
+      this.#checkAbort(signal, 'type aborted mid-text')
+      if (char === '\r') continue
+      const combo = charToUsCombo(char)
+      if (combo) { this.#native.keyPress(combo); keys++ }
+      else { this.#native.typeText(char); unicode++ }
+      await this.#sleep(4)
+    }
+    return `Typed ${keys} key${keys === 1 ? '' : 's'}${unicode ? ` and ${unicode} character(s) as text` : ''} (layout: us_ansi)`
   }
 
   #validateCoordinates(x: number, y: number): void {

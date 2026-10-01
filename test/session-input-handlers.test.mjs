@@ -255,10 +255,13 @@ test('key still accepts every real combination, including awkward ones', async (
   ]
   const f = fixture()
   for (const text of combos) await f.handler.handle('key', { text })
+  // v7.5: names the native maps never knew are resolved to the key they mean
+  // (`page_down` → `pagedown`, `period` → `.`); every other combo is unchanged.
+  const resolved = combos.map(combo => ({ page_down: 'pagedown', period: '.' })[combo] ?? combo)
   assert.deepEqual(
     f.native.calls.map(([kind, combo]) => kind === 'key' && combo),
-    combos,
-    'each combo should reach the keyboard unchanged',
+    resolved,
+    'each combo should reach the keyboard unchanged apart from resolved names',
   )
 })
 

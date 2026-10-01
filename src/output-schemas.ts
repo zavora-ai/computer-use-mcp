@@ -89,6 +89,9 @@ const WindowRecord = z.object({
   isOnScreen: z.boolean().optional(),
   isFocused: z.boolean().optional(),
   displayId: z.number().optional(),
+  kind: z.enum(['main', 'document', 'dialog', 'panel', 'toast', 'other']).optional(),
+  area: z.number().optional(),
+  kindSource: z.enum(['ax', 'heuristic']).optional(),
 }).passthrough()
 
 export const GetWindowOutput = WindowRecord

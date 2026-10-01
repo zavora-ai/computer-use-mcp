@@ -292,8 +292,14 @@ mod macos {
         CGEventSource::new(CGEventSourceStateID::Private).unwrap()
     }
 
-    fn post(event: CGEvent) {
-        event.post(CGEventTapLocation::HID);
+    /// Post at the HID tap (goes to the frontmost app and moves nothing else), or
+    /// straight to one process with `CGEventPostToPid` (no activation, no focus
+    /// change). Whether a given app acts on pid-posted events is up to the app.
+    fn deliver(event: CGEvent, pid: Option<i32>) {
+        match pid {
+            Some(pid) => event.post_to_pid(pid),
+            None => event.post(CGEventTapLocation::HID),
+        }
     }
 
     static KEY_MAP: OnceLock<HashMap<&'static str, CGKeyCode>> = OnceLock::new();
@@ -307,6 +313,7 @@ mod macos {
             m.insert("space", 49);
             m.insert("delete", 51);
             m.insert("backspace", 51);
+            m.insert("forwarddelete", 117);
             m.insert("escape", 53);
             m.insert("esc", 53);
             m.insert("command", 55);
@@ -330,6 +337,14 @@ mod macos {
             m.insert("f10", 109);
             m.insert("f11", 103);
             m.insert("f12", 111);
+            m.insert("f13", 105);
+            m.insert("f14", 107);
+            m.insert("f15", 113);
+            m.insert("f16", 106);
+            m.insert("f17", 64);
+            m.insert("f18", 79);
+            m.insert("f19", 80);
+            m.insert("f20", 90);
             m.insert("home", 115);
             m.insert("end", 119);
             m.insert("pageup", 116);
@@ -384,7 +399,10 @@ mod macos {
             m.insert(",", 43);
             m.insert(".", 47);
             m.insert("/", 44);
+            // kVK_ANSI_Grave: the key Unreal (and most games) bind the console to.
             m.insert("`", 50);
+            m.insert("grave", 50);
+            m.insert("backtick", 50);
             m
         })
     }
@@ -400,8 +418,7 @@ mod macos {
         }
     }
 
-    #[napi]
-    pub fn key_press(combo: String, repeat: Option<i32>) -> napi::Result<()> {
+    fn key_press_impl(combo: &str, repeat: Option<i32>, pid: Option<i32>) -> napi::Result<()> {
         let map = key_code_map();
         crate::activity::ensure_not_emergency_stopped()?;
         let repeat = repeat.unwrap_or(1);
@@ -426,10 +443,10 @@ mod macos {
             crate::activity::ensure_not_emergency_stopped()?;
             let down = CGEvent::new_keyboard_event(source(), code, true).unwrap();
             down.set_flags(flags);
-            post(down);
+            deliver(down, pid);
             let up = CGEvent::new_keyboard_event(source(), code, false).unwrap();
             up.set_flags(flags);
-            post(up);
+            deliver(up, pid);
             if i < repeat - 1 {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
@@ -438,7 +455,17 @@ mod macos {
     }
 
     #[napi]
-    pub fn type_text(text: String) {
+    pub fn key_press(combo: String, repeat: Option<i32>) -> napi::Result<()> {
+        key_press_impl(&combo, repeat, None)
+    }
+
+    /// Press a key combination in one process without activating it.
+    #[napi]
+    pub fn key_press_to_pid(pid: i32, combo: String, repeat: Option<i32>) -> napi::Result<()> {
+        key_press_impl(&combo, repeat, Some(pid))
+    }
+
+    fn type_text_impl(text: &str, pid: Option<i32>) {
         if crate::activity::emergency_stop_active() {
             return;
         }
@@ -449,11 +476,284 @@ mod macos {
             }
             let down = CGEvent::new_keyboard_event(source(), 0, true).unwrap();
             down.set_string_from_utf16_unchecked(chunk);
-            post(down);
+            deliver(down, pid);
             let up = CGEvent::new_keyboard_event(source(), 0, false).unwrap();
-            post(up);
+            deliver(up, pid);
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
+    }
+
+    #[napi]
+    pub fn type_text(text: String) {
+        type_text_impl(&text, None)
+    }
+
+    /// Type Unicode text into one process without activating it.
+    #[napi]
+    pub fn type_text_to_pid(pid: i32, text: String) {
+        type_text_impl(&text, Some(pid))
+    }
+
+    // ── Character → key event table (`type mode:"keys"`) ──────────────────────
+
+    #[derive(Clone, Copy)]
+    struct KeyStroke {
+        code: CGKeyCode,
+        shift: bool,
+        option: bool,
+    }
+
+    static CHAR_TABLE: OnceLock<(HashMap<char, KeyStroke>, &'static str)> = OnceLock::new();
+
+    #[allow(non_upper_case_globals)]
+    extern "C" {
+        fn pthread_main_np() -> i32;
+        fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut std::ffi::c_void;
+        fn TISGetInputSourceProperty(
+            source: *mut std::ffi::c_void,
+            key: *const std::ffi::c_void,
+        ) -> *const std::ffi::c_void;
+        static kTISPropertyUnicodeKeyLayoutData: *const std::ffi::c_void;
+        fn CFDataGetBytePtr(data: *const std::ffi::c_void) -> *const u8;
+        fn CFRelease(cf: *const std::ffi::c_void);
+        fn LMGetKbdType() -> u8;
+        fn UCKeyTranslate(
+            layout: *const u8,
+            virtual_key_code: u16,
+            key_action: u16,
+            modifier_key_state: u32,
+            keyboard_type: u32,
+            key_translate_options: u32,
+            dead_key_state: *mut u32,
+            max_string_length: usize,
+            actual_string_length: *mut usize,
+            unicode_string: *mut u16,
+        ) -> i32;
+    }
+
+    /// Keypad codes: never chosen for a character, so "1" is the main-row 1.
+    fn is_keypad(code: u16) -> bool {
+        matches!(code, 65 | 67 | 69 | 71 | 75 | 76 | 78 | 81..=92)
+    }
+
+    /// Reverse the current keyboard layout with UCKeyTranslate: for every virtual
+    /// key, with no modifier / shift / option / shift+option, record which single
+    /// character it produces. The first (least-modified) mapping wins.
+    ///
+    /// Text Input Sources must be read on the main thread (macOS 14 asserts it);
+    /// Node calls native functions on its main thread, but a worker thread would
+    /// not, so off the main thread the US-ANSI table is used instead.
+    fn layout_table() -> Option<HashMap<char, KeyStroke>> {
+        unsafe {
+            if pthread_main_np() == 0 {
+                return None;
+            }
+            let source = TISCopyCurrentKeyboardLayoutInputSource();
+            if source.is_null() {
+                return None;
+            }
+            let data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData);
+            if data.is_null() {
+                CFRelease(source);
+                return None;
+            }
+            let layout = CFDataGetBytePtr(data);
+            let kbd_type = LMGetKbdType() as u32;
+            let mut table: HashMap<char, KeyStroke> = HashMap::new();
+            // (modifierKeyState = EventModifiers >> 8): shift 0x02, option 0x08.
+            for (state, shift, option) in [
+                (0u32, false, false),
+                (2, true, false),
+                (8, false, true),
+                (10, true, true),
+            ] {
+                for code in 0u16..128 {
+                    if is_keypad(code) {
+                        continue;
+                    }
+                    let mut dead: u32 = 0;
+                    let mut len: usize = 0;
+                    let mut buf = [0u16; 4];
+                    // kUCKeyActionDown = 0, kUCKeyTranslateNoDeadKeysMask = 1
+                    let status = UCKeyTranslate(
+                        layout,
+                        code,
+                        0,
+                        state,
+                        kbd_type,
+                        1,
+                        &mut dead,
+                        4,
+                        &mut len,
+                        buf.as_mut_ptr(),
+                    );
+                    if status != 0 || len != 1 {
+                        continue;
+                    }
+                    if let Some(ch) = char::from_u32(buf[0] as u32) {
+                        if ch.is_control() {
+                            continue;
+                        }
+                        table.entry(ch).or_insert(KeyStroke {
+                            code,
+                            shift,
+                            option,
+                        });
+                    }
+                }
+            }
+            CFRelease(source);
+            if table.len() < 40 {
+                None
+            } else {
+                Some(table)
+            }
+        }
+    }
+
+    /// US-ANSI fallback: the physical keys for printable ASCII.
+    fn us_ansi_table() -> HashMap<char, KeyStroke> {
+        let map = key_code_map();
+        let mut table = HashMap::new();
+        let plain = "abcdefghijklmnopqrstuvwxyz0123456789-=[]\\;',./`";
+        for ch in plain.chars() {
+            let code = map[ch.to_string().as_str()];
+            table.insert(
+                ch,
+                KeyStroke {
+                    code,
+                    shift: false,
+                    option: false,
+                },
+            );
+        }
+        for ch in 'A'..='Z' {
+            let code = map[ch.to_ascii_lowercase().to_string().as_str()];
+            table.insert(
+                ch,
+                KeyStroke {
+                    code,
+                    shift: true,
+                    option: false,
+                },
+            );
+        }
+        let shifted = [
+            ('!', '1'),
+            ('@', '2'),
+            ('#', '3'),
+            ('$', '4'),
+            ('%', '5'),
+            ('^', '6'),
+            ('&', '7'),
+            ('*', '8'),
+            ('(', '9'),
+            (')', '0'),
+            ('_', '-'),
+            ('+', '='),
+            ('{', '['),
+            ('}', ']'),
+            ('|', '\\'),
+            (':', ';'),
+            ('"', '\''),
+            ('<', ','),
+            ('>', '.'),
+            ('?', '/'),
+            ('~', '`'),
+        ];
+        for (ch, base) in shifted {
+            let code = map[base.to_string().as_str()];
+            table.insert(
+                ch,
+                KeyStroke {
+                    code,
+                    shift: true,
+                    option: false,
+                },
+            );
+        }
+        table.insert(
+            ' ',
+            KeyStroke {
+                code: 49,
+                shift: false,
+                option: false,
+            },
+        );
+        table
+    }
+
+    fn char_table() -> &'static (HashMap<char, KeyStroke>, &'static str) {
+        CHAR_TABLE.get_or_init(|| match layout_table() {
+            Some(table) => (table, "current_layout"),
+            None => (us_ansi_table(), "us_ansi"),
+        })
+    }
+
+    fn type_keys_impl(text: &str, pid: Option<i32>) -> napi::Result<serde_json::Value> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        let (table, layout) = char_table();
+        let mut as_keys = 0u32;
+        let mut as_text = 0u32;
+        for ch in text.chars() {
+            crate::activity::ensure_not_emergency_stopped()?;
+            let stroke = match ch {
+                '\n' | '\r' => Some(KeyStroke {
+                    code: 36,
+                    shift: false,
+                    option: false,
+                }),
+                '\t' => Some(KeyStroke {
+                    code: 48,
+                    shift: false,
+                    option: false,
+                }),
+                _ => table.get(&ch).copied(),
+            };
+            if ch == '\r' {
+                continue;
+            }
+            match stroke {
+                Some(stroke) => {
+                    let mut flags = CGEventFlags::empty();
+                    if stroke.shift {
+                        flags |= CGEventFlags::CGEventFlagShift;
+                    }
+                    if stroke.option {
+                        flags |= CGEventFlags::CGEventFlagAlternate;
+                    }
+                    let down = CGEvent::new_keyboard_event(source(), stroke.code, true).unwrap();
+                    down.set_flags(flags);
+                    deliver(down, pid);
+                    let up = CGEvent::new_keyboard_event(source(), stroke.code, false).unwrap();
+                    up.set_flags(flags);
+                    deliver(up, pid);
+                    as_keys += 1;
+                }
+                None => {
+                    let mut buf = [0u8; 4];
+                    type_text_impl(ch.encode_utf8(&mut buf), pid);
+                    as_text += 1;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+        Ok(serde_json::json!({ "keys": as_keys, "unicode": as_text, "layout": layout }))
+    }
+
+    /// Type each character as the key-down/key-up of its virtual key (with shift or
+    /// option when the layout needs it), so apps that bind keys rather than read
+    /// text — a game console on the grave/tilde key — receive them. Characters the
+    /// layout cannot produce fall back to Unicode text.
+    #[napi]
+    pub fn type_keys(text: String) -> napi::Result<serde_json::Value> {
+        type_keys_impl(&text, None)
+    }
+
+    /// `type_keys`, delivered to one process without activating it.
+    #[napi]
+    pub fn type_keys_to_pid(pid: i32, text: String) -> napi::Result<serde_json::Value> {
+        type_keys_impl(&text, Some(pid))
     }
 
     #[napi]
@@ -471,7 +771,7 @@ mod macos {
                 .ok_or_else(|| napi::Error::from_reason(format!("Unknown key: {k}")))?;
             let down = CGEvent::new_keyboard_event(source(), code, true).unwrap();
             down.set_flags(flag);
-            post(down);
+            deliver(down, None);
             pressed.push((code, flag));
         }
 
@@ -482,7 +782,7 @@ mod macos {
         for (code, flags) in pressed.into_iter().rev() {
             let up = CGEvent::new_keyboard_event(source(), code, false).unwrap();
             up.set_flags(flags);
-            post(up);
+            deliver(up, None);
         }
         sleep_result
     }

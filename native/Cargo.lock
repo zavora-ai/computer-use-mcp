@@ -61,6 +61,7 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "core-graphics-types",
+ "foreign-types",
  "image",
  "libc",
  "napi",

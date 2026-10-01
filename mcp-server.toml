@@ -1,6 +1,6 @@
 server_id = "computer_use_mcp"
 display_name = "Computer Use"
-version = "7.4.0"
+version = "7.5.0"
 domain = "desktop-automation"
 sdk_version = "2.0.0"
 risk_level = "high"
@@ -498,6 +498,27 @@ credential_bindings = []
 [[tools]]
 name = "discover_applications"
 description = "Discover installed and running applications by name with optional capabilities"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "read_window_text"
+description = "Read a window's text with on-device OCR, with line boxes in window and screen points"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "click_text"
+description = "Find text in a window by OCR and click it"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "wait_for_window"
+description = "Wait for an app's window to appear or disappear"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []
