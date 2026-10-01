@@ -705,6 +705,90 @@ mod macos {
         post(event);
     }
 
+    // ── Pid delivery (v7.5): post to one process, never move the real cursor ──
+
+    /// kCGMouseEventWindowUnderMousePointer and ...ThatCanHandleThisEvent. Cocoa
+    /// routes a mouse event by these fields, so a pid-posted click lands in the
+    /// intended window even when another app's window covers that point.
+    const FIELD_WINDOW_UNDER_POINTER: u32 = 91;
+    const FIELD_WINDOW_THAT_CAN_HANDLE: u32 = 92;
+
+    fn tag_window(event: &CGEvent, window_id: Option<u32>) {
+        if let Some(window_id) = window_id {
+            event.set_integer_value_field(FIELD_WINDOW_UNDER_POINTER, window_id as i64);
+            event.set_integer_value_field(FIELD_WINDOW_THAT_CAN_HANDLE, window_id as i64);
+        }
+    }
+
+    /// Click at screen point (x, y) by posting the events to `pid` only.
+    #[napi]
+    pub fn mouse_click_to_pid(
+        pid: i32,
+        x: f64,
+        y: f64,
+        button: String,
+        count: i32,
+        window_id: Option<u32>,
+    ) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        let point = CGPoint::new(x, y);
+        let (btn, down_type, up_type, _) = button_events(&button)?;
+        let moved = CGEvent::new_mouse_event(
+            source(),
+            CGEventType::MouseMoved,
+            point,
+            CGMouseButton::Left,
+        )
+        .map_err(|_| napi::Error::from_reason("Could not create mouse event"))?;
+        tag_window(&moved, window_id);
+        moved.post_to_pid(pid);
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        for i in 1..=count.max(1) {
+            crate::activity::ensure_not_emergency_stopped()?;
+            let down = CGEvent::new_mouse_event(source(), down_type, point, btn)
+                .map_err(|_| napi::Error::from_reason("Could not create mouse event"))?;
+            down.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
+            tag_window(&down, window_id);
+            down.post_to_pid(pid);
+            let up = CGEvent::new_mouse_event(source(), up_type, point, btn)
+                .map_err(|_| napi::Error::from_reason("Could not create mouse event"))?;
+            up.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
+            tag_window(&up, window_id);
+            up.post_to_pid(pid);
+            if i < count {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+        }
+        Ok(())
+    }
+
+    /// Scroll at screen point (x, y) by posting the event to `pid` only.
+    #[napi]
+    pub fn mouse_scroll_to_pid(
+        pid: i32,
+        x: f64,
+        y: f64,
+        dy: i32,
+        dx: i32,
+        window_id: Option<u32>,
+    ) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        let event = CGEvent::new_scroll_event(source(), ScrollEventUnit::LINE, 2, dy, dx, 0)
+            .map_err(|_| napi::Error::from_reason("Could not create scroll event"))?;
+        {
+            use foreign_types::ForeignType;
+            extern "C" {
+                fn CGEventSetLocation(event: *mut std::ffi::c_void, location: CGPoint);
+            }
+            unsafe {
+                CGEventSetLocation(event.as_ptr() as *mut std::ffi::c_void, CGPoint::new(x, y))
+            };
+        }
+        tag_window(&event, window_id);
+        event.post_to_pid(pid);
+        Ok(())
+    }
+
     #[napi]
     pub fn cursor_position() -> napi::Result<serde_json::Value> {
         let event = CGEvent::new(source()).unwrap();

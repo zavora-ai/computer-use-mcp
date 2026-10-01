@@ -14,7 +14,7 @@ import { loadNative, type NativeModule } from './native.js'
 import { MUTATING_TOOLS } from './tool-catalog.js'
 import { sleep, sleepAbortable, defaultSpawnBounded } from './session/spawn.js'
 import type { SpawnBounded } from './session/spawn.js'
-import { FocusError, WindowNotFoundError } from './session/errors.js'
+import { FocusError, StructuredToolError, WindowNotFoundError } from './session/errors.js'
 import type { FocusFailure } from './session/errors.js'
 import {
   createLockPumpController,
@@ -38,6 +38,10 @@ import { InputHandler } from './session/input-handlers.js'
 import { ScriptingService } from './session/scripting-service.js'
 import { OpenAiCompatibilityHandler } from './session/openai-handler.js'
 import { handleCoreTool } from './session/core-handlers.js'
+import { handleAgentDesktopTool } from './session/agent-desktop-handlers.js'
+import { createMacosHelper, type MacosHelper } from './session/macos-helper.js'
+import { defaultPidDeliveryPath, PidDeliveryStore } from './session/pid-delivery.js'
+import { createUserActivityGuard, type UserActivityGuard } from './session/user-activity.js'
 import {
   errJson,
   type ToolResult,
@@ -146,6 +150,15 @@ export interface SessionOptions {
   profile?: string
   /** Live MCP client roots. Undefined preserves legacy behavior for clients without roots support. */
   getClientRoots?: () => readonly string[] | undefined
+  /**
+   * v7.5: the macOS ScreenCaptureKit/Vision helper. Defaults to the compiled-on-first-use
+   * helper on macOS with the real native module; `null` disables it. Tests inject a fake.
+   */
+  macosHelper?: MacosHelper | null
+  /** v7.5: where pid delivery outcomes are kept. Defaults to the cache file (memory with an injected native). */
+  pidDeliveryStore?: PidDeliveryStore
+  /** v7.5: the user-active guard. Defaults to one over the native physical-input clock. */
+  userActivityGuard?: UserActivityGuard
 }
 
 const IS_WINDOWS = process.platform === 'win32'
@@ -191,6 +204,15 @@ export function createSession(opts: SessionOptions = {}): Session {
   const dispose = () => { if (closeRequested && references === 0) { closed = true; process.removeListener('exit', forceRelease) } }
   const defaultProvider = opts.provider ?? process.env.COMPUTER_USE_PROVIDER ?? 'auto'
 
+  // v7.5 agent desktop: OCR/capture helper, pid delivery records, user-active guard.
+  const macosHelper: MacosHelper | undefined = opts.macosHelper === null ? undefined
+    : opts.macosHelper ?? (process.platform === 'darwin' && opts.native == null ? createMacosHelper() : undefined)
+  const pidStore = opts.pidDeliveryStore ?? new PidDeliveryStore(opts.native == null ? defaultPidDeliveryPath() : undefined)
+  const userGuard = opts.userActivityGuard ?? createUserActivityGuard({ native: n })
+  // Start the native input monitor now: it counts its own start as input, so a
+  // first reading taken at the first tool call would refuse that call.
+  userGuard.activity()
+
   const virtualPointer = new VirtualPointerController(n)
   const spacesHandler = new SpacesHandler({ native: n, spawnBounded, sleep })
   const screenshotHandler = new ScreenshotHandler({
@@ -199,6 +221,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     pointer: virtualPointer,
     visionEnabled,
     defaultProvider,
+    ...(macosHelper ? { helper: macosHelper } : {}),
   })
 
   const legacyPolicy = createLegacyPolicyRuntime({
@@ -216,12 +239,15 @@ export function createSession(opts: SessionOptions = {}): Session {
 
   // ── Target resolution ───────────────────────────────────────────────────
 
-  const focus = createFocusController({ native: n, sleep })
+  const focus = createFocusController({ native: n, sleep, guard: userGuard })
   const inputHandler = new InputHandler({
     native: n,
     targets: targetController,
     focus,
     sleep,
+    guard: userGuard,
+    pidStore,
+    ...(macosHelper ? { helper: macosHelper } : {}),
   })
   const scripting = new ScriptingService({ native: n, spawnBounded })
   const runScriptHelper = scripting.runScript.bind(scripting)
@@ -251,6 +277,19 @@ export function createSession(opts: SessionOptions = {}): Session {
       policyStatus,
       auditEnabled,
       auditLogPath,
+      agentDesktop: async () => {
+        const availability = macosHelper ? await macosHelper.ensure() : null
+        return {
+          helper: availability
+            ? availability.ok
+              ? { ok: true, path: availability.path, sck: macosHelper!.supportsCapture() }
+              : { ok: false, reason: availability.reason, remediation: availability.remediation }
+            : null,
+          guard: userGuard.status(),
+          pidDelivery: pidStore.all() as unknown as Array<Record<string, unknown>>,
+          pidSupported: inputHandler.pidDeliverySupported(),
+        }
+      },
     })
   }
 
@@ -386,9 +425,19 @@ export function createSession(opts: SessionOptions = {}): Session {
         sleep,
         sleepAbortable,
         runScript: runScriptHelper,
+        guard: userGuard,
         ...(signal ? { signal } : {}),
       })
       if (windowResult) return windowResult
+      const agentDesktopResult = await handleAgentDesktopTool(tool, args, {
+        native: n,
+        targets: targetController,
+        input: inputHandler,
+        sleepAbortable,
+        ...(macosHelper ? { helper: macosHelper } : {}),
+        ...(signal ? { signal } : {}),
+      })
+      if (agentDesktopResult) return agentDesktopResult
       const accessibilityContext = {
         native: n,
         targets: targetController,
@@ -397,6 +446,7 @@ export function createSession(opts: SessionOptions = {}): Session {
         sleep,
         runScript: runScriptHelper,
         getAppDictionary,
+        pidDelivery: (bundleId: string) => pidStore.get(bundleId) ?? null,
         ...(signal ? { signal } : {}),
       }
       const linuxResult = process.platform === 'linux' && !opts.native
@@ -413,7 +463,7 @@ export function createSession(opts: SessionOptions = {}): Session {
       if (accessibilityResult) return accessibilityResult
       const spacesResult = await spacesHandler.handle(tool, args)
       if (spacesResult) return spacesResult
-      const screenshotResult = screenshotHandler.handle(tool, args)
+      const screenshotResult = await screenshotHandler.handleAsync(tool, args, signal)
       if (screenshotResult) return screenshotResult
       const inputResult = await inputHandler.handle(tool, args, signal)
       if (inputResult) return inputResult
@@ -430,6 +480,8 @@ export function createSession(opts: SessionOptions = {}): Session {
     } catch (err: unknown) {
       if (err instanceof FocusError) {
         result = { content: [{ type: 'text', text: focusFailureText(err.details) }], isError: true }
+      } else if (err instanceof StructuredToolError) {
+        result = errJson(err.details)
       } else if (err instanceof WindowNotFoundError) {
         // For input tools with invalid target_window_id, return FocusFailure
         const front = n.getFrontmostApp()

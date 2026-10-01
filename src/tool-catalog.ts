@@ -112,7 +112,7 @@ const NONE_READ = (tier: ProfileName = 'core', extra?: Partial<ToolMeta>): ToolM
 const NONE_MUT = (tier: ProfileName = 'core', extra?: Partial<ToolMeta>): ToolMeta =>
   m('none', true, { requiresFocus: false, tier, ...extra })
 
-/** Appendix A + B — all 64 tools */
+/** Appendix A + B — every tool (73 in v7.5) */
 export const TOOL_CATALOG: Record<string, ToolMeta> = {
   doctor: NONE_READ('core'),
   policy_status: NONE_READ('core'),
@@ -187,6 +187,10 @@ export const TOOL_CATALOG: Record<string, ToolMeta> = {
   browser_tabs: NONE_READ('full', { openWorldHint: true }),
   browser_page_text: NONE_READ('full', { openWorldHint: true }),
   browser_find: NONE_READ('full', { openWorldHint: true }),
+  // v7.5 agent desktop
+  read_window_text: NONE_READ('core'),
+  click_text: CG_MUT('core'),
+  wait_for_window: NONE_READ('core', { idempotentHint: false }),
 }
 
 /** Tools that acquire the session lock (derived from catalog mutates flag). */

@@ -208,6 +208,19 @@ export interface NativeModule {
   // Keyboard
   keyPress(combo: string, repeat?: number): void   // throws on unknown key
   typeText(text: string): void
+  /**
+   * v7.5: type each character as its virtual key's down/up (shift/option as the
+   * layout needs), falling back to Unicode text for characters the layout lacks.
+   * macOS only; optional because older binaries and other platforms lack it.
+   */
+  typeKeys?(text: string): { keys: number; unicode: number; layout: string }
+  // ── v7.5 pid delivery (macOS): post to one process, no activation, no cursor move ──
+  keyPressToPid?(pid: number, combo: string, repeat?: number): void
+  typeTextToPid?(pid: number, text: string): void
+  typeKeysToPid?(pid: number, text: string): { keys: number; unicode: number; layout: string }
+  /** Screen-point click posted to `pid`; `windowId` tags the event for routing. */
+  mouseClickToPid?(pid: number, x: number, y: number, button: string, count: number, windowId?: number): void
+  mouseScrollToPid?(pid: number, x: number, y: number, dy: number, dx: number, windowId?: number): void
   holdKey(keys: string[], durationMs: number): void // throws on unknown key
   // Apps
   activateApp(bundleId: string, timeoutMs?: number): { bundleId: string; activated: boolean; displayName?: string }
@@ -220,6 +233,14 @@ export interface NativeModule {
     reason: string | null
   }
   listWindows(bundleId?: string): Array<WindowRecord>
+  /** v7.5 (macOS): AX title/role/subrole/modal/bounds for each AXWindow of `pid`. */
+  getWindowAxInfo?(pid: number): Array<{
+    title: string | null
+    role: string | null
+    subrole: string | null
+    modal: boolean | null
+    bounds: AXBounds | null
+  }>
   listRunningApps(): Array<{ bundleId: string; displayName: string; pid: number; isHidden: boolean }>
   hideApp(bundleId: string): boolean
   unhideApp(bundleId: string): boolean

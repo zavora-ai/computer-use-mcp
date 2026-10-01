@@ -18,6 +18,8 @@ export interface AccessibilityHandlerContext {
   sleep(milliseconds: number): Promise<void>
   runScript(language: string, script: string, timeoutMs: number, signal?: AbortSignal): Promise<SpawnResult>
   getAppDictionary(bundleId: string, suite?: string): Promise<DictionaryResult>
+  /** v7.5 (R5): what pid delivery did for an app the last time it was tried. */
+  pidDelivery?(bundleId: string): unknown
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string {
@@ -132,7 +134,7 @@ export async function handleAccessibilityTool(
   if (['click_element', 'set_value', 'press_button', 'fill_form'].includes(tool)) {
     const target = context.targets.resolve({ window_id: args.window_id })
     if (target.windowId == null) throw new Error(`${tool} requires window_id`)
-    await context.focus.ensure(target, context.focus.strategyFor(tool, args))
+    await context.focus.ensure(target, context.focus.strategyFor(tool, args), { tool, force: args.force === true })
 
     if (tool === 'click_element') {
       const role = stringArg(args, 'role')
@@ -219,7 +221,7 @@ export async function handleAccessibilityTool(
     const menu = stringArg(args, 'menu')
     const item = stringArg(args, 'item')
     const submenu = typeof args.submenu === 'string' ? args.submenu : undefined
-    await context.focus.ensure({ bundleId }, context.focus.strategyFor(tool, args))
+    await context.focus.ensure({ bundleId }, context.focus.strategyFor(tool, args), { tool, force: args.force === true })
     const result = native.pressMenuItem(bundleId, menu, item, submenu)
     if (result.pressed) {
       context.targets.update({ bundleId }, 'activation')
@@ -281,6 +283,7 @@ export async function handleAccessibilityTool(
       accessible: windows.length > 0, topLevelCount: windows.length,
       running: Boolean(running), hidden: running?.isHidden ?? false,
     })
+    const pidDelivery = context.pidDelivery ? { pidDelivery: context.pidDelivery(bundleId) ?? null } : {}
     const dictionary = await context.getAppDictionary(bundleId)
     const scriptable = !('error' in dictionary)
     return okJson({
@@ -291,6 +294,7 @@ export async function handleAccessibilityTool(
       topLevelCount: windows.length,
       running: Boolean(running),
       hidden: running?.isHidden ?? false,
+      ...pidDelivery,
     })
   }
 
