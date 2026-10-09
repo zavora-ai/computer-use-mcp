@@ -47,7 +47,9 @@ test('wait with an already-aborted signal returns immediately', async () => {
   const start = Date.now()
   const r = await session.dispatch('wait', { duration: 30 }, ctrl.signal)
   const elapsed = Date.now() - start
-  assert.ok(elapsed < 500, `pre-aborted wait should return immediately, took ${elapsed}ms`)
+  // "Immediately" against a 30 s request: the same bound as the mid-flight test. A real session's first dispatch on a
+  // loaded CI runner (Windows x64: 777 ms on 2026-10-09) is dominated by native start-up, not by waiting.
+  assert.ok(elapsed < 3000, `pre-aborted wait should return immediately, took ${elapsed}ms`)
   assert.match(r.content.find(c => c.type === 'text').text, /cancel/i)
 })
 
