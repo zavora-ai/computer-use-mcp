@@ -107,6 +107,15 @@ parameters repeated on every input tool.
 - **Non-destructive TypeScript build:** `build:ts` compiles into `dist.next` and swaps it in, so a server starting
   mid-build still finds `dist/`.
 
+### Documentation
+
+- **Cursor setup, and which app owns the macOS permissions** (contributed by [@swiftkimani](https://github.com/swiftkimani), [#34](https://github.com/zavora-ai/computer-use-mcp/pull/34)). `AGENTS.md` gains a
+  Cursor section (`~/.cursor/mcp.json` or a project's `.cursor/mcp.json`, the
+  approval prompt, profiles through `env`). It also states the rule the fixes
+  above make visible: macOS attributes Accessibility, Screen Recording and
+  Automation to the app that launches the server, so an IDE host must be granted
+  them itself, and `doctor` has to run from inside that host to report them.
+
 ## v7.5.0 (2026-10-01; shipped as part of v7.6.0, never published on its own)
 
 Work beside a person instead of over them, and read apps that draw their own UI. Every
@@ -154,15 +163,6 @@ this server. See [the release notes](docs/releases/v7.5.0.md).
   352×81 notification toast — instead of its main window.
 - `key` had no name for the grave/backtick key, and `type` could only send Unicode text, so a
   game's console could not be opened.
-
-### Documentation
-
-- **Cursor setup, and which app owns the macOS permissions.** `AGENTS.md` gains a
-  Cursor section (`~/.cursor/mcp.json` or a project's `.cursor/mcp.json`, the
-  approval prompt, profiles through `env`). It also states the rule the fixes
-  above make visible: macOS attributes Accessibility, Screen Recording and
-  Automation to the app that launches the server, so an IDE host must be granted
-  them itself, and `doctor` has to run from inside that host to report them.
 
 ## v7.4.0 (2026-09-12)
 
