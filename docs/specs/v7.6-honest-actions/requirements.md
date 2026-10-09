@@ -108,11 +108,13 @@ sentence per tool and parameter, so the list costs little in hosts that load it 
 - **`approval_token` is not in any schema.** It is accepted in `tools/call` `_meta["computer-use/approval_token"]` and,
   for compatibility, as an undeclared argument. Policy behaviour is unchanged.
 - **One `click`** `{coordinate?, button: left|right|middle, count: 1|2|3}` with the existing targeting; `left_click`,
-  `right_click`, `middle_click`, `double_click` and `triple_click` stay callable as aliases and are listed only in `full`.
+  `right_click`, `middle_click`, `double_click` and `triple_click` stay callable as thin aliases (a line each in the list,
+  in every profile that lists `click`, so existing agents keep working).
 - **Session target:** `set_target {app | window_id | title}` and `get_target`; input tools may omit targeting when one is
   set; `screenshot` gains `full_screen` and `display_id` (R4).
-- **Metadata:** two `_meta` fields per tool by default (`focusRequired`, `mutates`); output schemas only when the client
-  declared `structuredContent`; results carry a one-line text summary plus `structuredContent`, not the same JSON twice.
+- **Metadata:** two `_meta` fields per tool by default (`focusRequired`, `mutates`). Built in 7.6.0. Deferred to the next
+  release: output schemas only when the client declared `structuredContent`, and a one-line text summary plus
+  `structuredContent` instead of the same JSON twice (output schemas still follow `COMPUTER_USE_STRUCTURED_CONTENT`).
 - **Payloads:** `read_window_text` returns `screen` rectangles and the window origin once; `get_app_capabilities`
   reports what the accessibility tree contains (`nodes`, `hasControls`) instead of `accessible: true`.
 - **Instructions** are generated per platform from the catalog and describe the current release (route order with OCR

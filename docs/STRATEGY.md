@@ -1,7 +1,44 @@
 # Computer-use strategy implementation
 
+*Written for 7.2. Annotated for 7.6.0 on 2026-10-09: the text below is still accurate for what it describes, and the two
+sections directly under this note say what has changed since.*
+
+## Current surface (7.6.0)
+
+The tool list is what a model sees first, and 7.6 changed it. The default profile is `desktop` (core plus the OCR and wait
+tools and `agent_pointer`): on macOS 39 tools and 45,942 bytes on the wire (about 12k tokens), against 73 tools and
+112,727 bytes for the default list before 7.6; `COMPUTER_USE_PROFILE=full` lists 76 tools and 84,037 bytes. A tool that does not exist
+on the running platform is neither listed nor callable. There is one `click {button, count}` (the five older click names
+remain callable as aliases), `set_target` / `get_target` for an explicit session target, and three waits
+(`wait_for_window`, `wait_for_text`, `wait_for_stable`) that replace sleep-and-screenshot loops. The server instructions are
+generated per platform and profile from the catalog and put OCR (`read_window_text`, `click_text`) ahead of coordinates for
+apps that draw their own UI. `approval_token` is passed in the call's `_meta`, not in a schema. The 7.2 services described
+below (desktop broker, Tasks, browser backend, runtime) are unchanged by this. Detail: [CHANGELOG](../CHANGELOG.md) v7.6.0,
+[the design review](reviews/2026-10-09-design-second-pass.md), [ARCHITECTURE](ARCHITECTURE.md#current-surface-760),
+[EFFICIENCY](EFFICIENCY.md#current-surface-760).
+
+## Status of the planned work after the 2026-10-09 design pass
+
+The [v7.6 spec](specs/v7.6-honest-actions/requirements.md) (R0 to R7) is the plan that followed the 2026-10-09 reviews.
+
+| Item | Status in 7.6.0 |
+|---|---|
+| R0 the four defects (first-call `user_active`, `process_kill` broadcast, `hold_key` cap, start-up on bad env) | Delivered, with the capture-helper serialisation and the self-checking launcher |
+| R3 `wait_for_text`, `wait_for_stable` | Delivered (macOS). `wait_for_stable` hashes the whole window; `region` is accepted but reported `regionApplied: false`. The `verify` parameter on clicks is not built |
+| R4 `screenshot full_screen` | Delivered. `display_id` on `screenshot`, unchanged-frame replies, `format: "path"` are not built |
+| R7 the tool surface (profile, platforms, shared parameters, `approval_token` in `_meta`, one `click`, `set_target`, two `_meta` fields, generated instructions, `job`, byte budgets) | Delivered, apart from "output schemas only when the client declared `structuredContent`" and the single text summary, which are not built. The click aliases are listed in every profile that lists `click`, not only in `full` |
+| R1 honest action results (`delivery`, `route`, `effect`, typed `no_effect` and friends) | Still planned |
+| R2 `capture_id` binding of pixel clicks, `stale_ref` tokens | Still planned |
+| R5 correctness fixes from the review (redaction, `resize_window` by id, lock wait, OpenAI coordinate scaling) | Still planned |
+| R6 unattended safety (hard-blocked key chords, `no_approver`, gating `read_clipboard` / `scrape`) | Still planned |
+
+Superseded: the host-side lazy discovery described under "Observe, act, verify" and in EFFICIENCY was aimed at a
+73-tool default list. The 7.6 default list is 59% smaller, so hosts that load it verbatim need it less; the helpers remain
+available for hosts that embed the server.
+
 The strategy is implemented as fixes to the existing server plus opt-in host
-services. The original 64 tool names and input schemas remain available;
+services. The original 64 tool names remain callable (the click variants as aliases of `click` since 7.6; the input
+schemas of the shared targeting parameters were shortened and `approval_token` left the schemas in 7.6);
 `discover_applications` adds installed-app discovery to the core profile.
 Enabling a desktop broker adds six tools; enabling a browser backend adds ten.
 These services ship in v7.2. See the release notes for validation limits;
@@ -270,8 +307,10 @@ certification, and matched-model OSWorld-style trials remain release gates.
 These environmental validations are distinct from implemented code. Current
 results do not establish that this repository exceeds OpenAI computer use.
 
-The local `measure:efficiency` fixture reports 78,256 JSON characters for the full
+The local `measure:efficiency` fixture reported (on 7.1) 78,256 JSON characters for the full
 catalog versus 9,499 for five selected tools (88% less), and 15,440 versus 5,902
-characters for its compact tree (62% less). Repeated retained images emit zero
+characters for its compact tree (62% less). On 7.6.0 the same script prints 77,319 versus 9,385 for six selected
+tools out of 76; it measures the in-process list, not the wire (45,942 bytes for `desktop`, 84,037 for `full`; see
+EFFICIENCY). Repeated retained images emit zero
 new image blocks. These are synthetic payload measurements, not tokenizer,
 latency, task-success or OpenAI benchmark results.

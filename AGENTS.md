@@ -8,14 +8,45 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `skills/computer-use-scripting` — AppleScript / PowerShell first
 - `skills/computer-use-recovery` — FocusFailure recovery
 - `skills/computer-use-windows-admin` — filesystem / registry / process
+- `skills/blender-agent` — Blender through its own MCP, this server only for what has no API
 
 **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
-**Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools; `full` lists everything)
+**Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools and `agent_pointer`; `full` lists everything)
+
+**Current surface (7.6.0):**
+- **Default list.** On macOS the default `desktop` profile lists 39 tools and 45,942 bytes on the wire (about 12k tokens);
+  `COMPUTER_USE_PROFILE=full` lists 76 tools and 84,037 bytes (112,727 before 7.6). Tool counts by profile on macOS:
+  core 36, desktop 39, scripting 42, windows-admin 49, ax 57, full 76 (Windows 34/35/38/47/53/74, Linux 34/35/38/39/53/66).
+  Byte budgets are under test (`desktop` 48,000, `full` 88,000).
+- **Only tools that exist here are listed.** The catalog gives each tool `platforms` and a `job` (`observe`, `act`,
+  `semantic`, `script`, `admin`, `browser`, `spaces`, `meta`). `registry` and `notification` are Windows-only;
+  `read_window_text`, `click_text`, `wait_for_text` and `wait_for_stable` are macOS-only; the Spaces tools are macOS and
+  Windows. A tool that does not exist on the running platform is neither listed nor callable (before 7.6 it was listed
+  and returned `platform_unsupported`).
+- **One `click`.** `click {coordinate, button: left|right|middle, count: 1|2|3}` plus the usual targeting and `delivery`.
+  `left_click`, `right_click`, `middle_click`, `double_click` and `triple_click` remain callable (and listed) as thin
+  aliases of it; they still accept `target_app`, `target_window_id`, `delivery` and `force`. Examples here use `click`.
+- **Session target.** `set_target {app | window_id | title | clear}` and `get_target` make the target explicit, so input and
+  capture tools can omit targeting; `screenshot full_screen: true` captures the whole screen even when a target is set.
+- **Waits.** `wait_for_window`, `wait_for_text` (OCR: text appears, or `gone: true`) and `wait_for_stable` (the window
+  stops changing) replace sleep-and-screenshot loops. `wait` is still there for a plain delay.
+- **Server instructions are generated** per platform and profile from the catalog (`src/instructions.ts`). They give the
+  route order (the app's own API, scripting, accessibility, OCR for self-drawn apps, coordinates last), the user-active
+  guard and `delivery`, the waits and the session target. They no longer tell hosts to prefer the accessibility tree,
+  which is empty on Unreal, Blender and games. `get_tool_guide(task)` picks the route for a task.
+- **Requirements.** Node 20 or later. macOS 14 or later for the ScreenCaptureKit capture and the OCR tools. The
+  user-active guard reads physical input through an event tap that needs **Input Monitoring** for the host app;
+  without it the guard allows every call and `doctor` says its clock is unavailable.
 
 **v7 environment & behaviors:**
 - **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` terminates its subprocess tree through a POSIX process group or recursive Windows `taskkill`).
 - **Progress:** long `filesystem` searches emit `notifications/progress` when a progress token is present.
 - **Argument validation:** arguments are validated against the advertised input schema at the MCP boundary. Schema defaults are applied before the handler runs, and malformed input returns a structured `invalid_arguments` result listing each offending path — not a JSON-RPC fault. Retry with corrected arguments.
+- **v7.6 wire format:** shared targeting parameters (`target_app`, `target_window_id`, `target_title`, `focus_strategy`, `force`, `delivery`) are one sentence each in the schemas; the guidance is in the server instructions and `get_tool_guide`. `approval_token` is in no tool schema (see *Approval flow* below). Each tool carries two `_meta` fields (`computer-use/focusRequired`, `computer-use/mutates`); `get_tool_metadata` returns the full set, and `COMPUTER_USE_FULL_WIRE_META=true` puts all seven back on the wire.
+- **v7.6 result shapes:** `read_window_text` lines carry `box` (window points) and the result carries `screen_origin` once, so a screen point is `screen_origin + box` (the per-line `screen` rectangle is gone). `get_app_capabilities` reports `accessibility: { nodes, hasControls }`, and `accessible` now means `hasControls` (before, any app with a window said `accessible: true`).
+- **v7.6 capture helper:** window capture and OCR run through a Swift ScreenCaptureKit helper. Two captures at once used to hang, so helper runs are serialised within a server and across servers (an advisory lock at `~/Library/Caches/computer-use-mcp/helper.lock`; a call waits for a live holder, takes the lock over from a dead one, and gives up with `helper_busy`). A helper killed by the timeout is reported as `helper_timeout`; the helper itself gives up on a stalled capture after 10 s with `sck_timeout`.
+- **v7.6 fixes worth knowing:** the user-active guard no longer refuses the first input call of a fresh server (its clock is seeded from the system's HID idle counter). `process_kill` refuses `pid` below 2 and matches `name` exactly; an ambiguous name returns `ambiguous_name` unless `all: true`. `hold_key` is capped at 10 s. Empty or non-numeric `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS` and `COMPUTER_USE_TASK_POLL_INTERVAL_MS` fall back to their defaults with a stderr note instead of ending start-up.
+- **v7.6 launcher:** `dist/launch.js` is the package `bin`. It imports only Node built-ins, checks that `node_modules`, `dist/server.js` and the native addon exist, and when one is missing prints the fix (`npm ci`, `npm run build:ts`, `npm run build:native`) to stderr and exits 2, instead of the host seeing "connection closed" with no reason. `npm run build:ts` builds into `dist.next` and swaps it in, so a server starting mid-build still finds `dist/`.
 
 ## Default security posture
 
@@ -36,7 +67,30 @@ required.
 
 Harden with the variables below before granting a model desktop access on a
 machine that holds anything you care about. `doctor` reports the effective
-posture, and `policy_status` returns it as structured data.
+posture, and `policy_status` returns it as structured data. These defaults did
+not change in 7.6; the one change is where an approval token goes (below).
+
+### Approval flow
+
+When a call needs approval (`COMPUTER_USE_REQUIRE_APPROVAL`, `COMPUTER_USE_REQUIRE_APPROVAL_FOR`,
+`COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL`, the sensitive-app gate), it goes one of two ways:
+
+1. **Host elicitation:** the server asks the host, and the person approves in the host's own UI.
+2. **A shared token, for headless runs:** the operator sets `COMPUTER_USE_APPROVAL_TOKEN`, and the host (not the model)
+   repeats the call with the token in the call's `_meta`:
+
+```json
+{ "method": "tools/call",
+  "params": { "name": "run_script",
+              "arguments": { "language": "applescript", "script": "tell application \"Finder\" to activate" },
+              "_meta": { "computer-use/approval_token": "<the configured token>" } } }
+```
+
+Since 7.6 no tool schema lists `approval_token`, so a model never sees a credential-shaped field on every mutating tool. The token
+is still read from an undeclared `approval_token` argument for existing hosts, and the in-process SDK helpers that take
+an `approvalToken` (for example `openaiComputer`) still send it as an argument. `COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN=true`
+puts the field back in the schemas. A result that needs approval says so and names the fix; the token is compared in
+constant time.
 
 ### Access control and approval
 
@@ -48,7 +102,7 @@ posture, and `policy_status` returns it as structured data.
 | `COMPUTER_USE_REQUIRE_APPROVAL=true` | Every mutating tool requires approval. |
 | `COMPUTER_USE_REQUIRE_APPROVAL_FOR` | Comma-separated tool names that always require approval. |
 | `COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL=true` | Require approval for `run_script`, `process_kill --kill`, `registry` set/delete, and `filesystem` write/copy/move/delete. |
-| `COMPUTER_USE_APPROVAL_TOKEN` | Shared secret for headless approval; pass it as the `approval_token` argument. Compared in constant time. Without it, approval needs host elicitation. |
+| `COMPUTER_USE_APPROVAL_TOKEN` | Shared secret for headless approval. Since 7.6 pass it in the call's `_meta["computer-use/approval_token"]`; it is no longer in any tool schema, and an undeclared `approval_token` argument still works for compatibility. Compared in constant time. Without it, approval needs host elicitation. |
 | `COMPUTER_USE_FS_ROOTS` | Confine `filesystem` to comma-separated absolute roots, checked on both `path` and `destination` after `..`/symlink resolution. Unset = unrestricted. |
 | `COMPUTER_USE_SCRIPT_ENV_ALLOWLIST` | Comma-separated env names a model-authored script may inherit. Secret-shaped and high-risk variables are stripped by default; supervisor/remote authority is never inheritable, even through this list. |
 | `COMPUTER_USE_AUDIT_LOG` | Path to a JSONL audit log, or `true`/`false`. Defaults on to `~/.computer-use-mcp/audit.jsonl`. Sensitive argument values are dropped, not hashed. |
@@ -58,22 +112,24 @@ posture, and `policy_status` returns it as structured data.
 
 | Variable | Effect |
 |---|---|
-| `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6). Bounds the maximum exposed tool surface. |
+| `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6; on macOS 39 tools against 76 for `full`). Bounds the maximum exposed tool surface. Profiles nest: core, then desktop, then ax, scripting or windows-admin, then full. |
 | `COMPUTER_USE_ACTIVE_PROFILE` | Starting profile within that bound; may be narrowed at runtime but never widened past `COMPUTER_USE_PROFILE`. |
 | `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: separately installed platform package → bundled binary). |
+| `COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN=true` | v7.6: advertise `approval_token` on every mutating tool's schema again, as before 7.6 (off by default; the token is accepted in `_meta` either way). |
+| `COMPUTER_USE_FULL_WIRE_META=true` | v7.6: put all seven `computer-use/*` `_meta` fields on every listed tool, as before 7.6 (default: `focusRequired` and `mutates` only; `get_tool_metadata` always returns the full set). |
 | `COMPUTER_USE_LEGACY_FOCUS_TAG=true` | Restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`). |
 | `COMPUTER_USE_STRUCTURED_CONTENT=false` | Legacy text-only results (omits `structuredContent` + `outputSchema`). |
 | `COMPUTER_USE_PREPARE_KEEP_VISIBLE` | Comma-separated bundle IDs that `focus_strategy: "prepare_display"` must not hide. Defaults to the target plus the terminal. |
 | `COMPUTER_USE_SPACES_BACKEND` | `auto \| yabai \| mission_control \| cgs` — virtual-desktop backend selection on macOS. |
 | `COMPUTER_USE_PROVIDER`, `COMPUTER_USE_WIDTH`, `COMPUTER_USE_QUALITY`, `COMPUTER_USE_VISION` | Screenshot defaults: provider preset, width, JPEG quality (`0` = PNG), and whether vision is enabled. |
-| `COMPUTER_USE_USER_IDLE_MS` | v7.5: refuse to activate an app or post keyboard/mouse input within this many ms of the user's last physical input (default `4000` on macOS; `0` disables; Windows and Linux only when set). Such a call returns `user_active` unless it passes `force: true` or uses `delivery: "pid"`. |
+| `COMPUTER_USE_USER_IDLE_MS` | v7.5: refuse to activate an app or post keyboard/mouse input within this many ms of the user's last physical input (default `4000` on macOS; `0` disables; Windows and Linux only when set). Such a call returns `user_active` unless it passes `force: true` or uses `delivery: "pid"`. The guard needs Input Monitoring for the host app; without it the guard allows everything and `doctor` reports the clock as unavailable. |
 
 ### Hosting and runtime
 
 | Variable | Effect |
 |---|---|
 | `COMPUTER_USE_HTTP_HOST`, `COMPUTER_USE_HTTP_PORT` | Bind address and port for `computer-use-mcp-http` (default `127.0.0.1:3100`). The bundled runner refuses any non-loopback host. |
-| `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS`, `COMPUTER_USE_TASK_POLL_INTERVAL_MS` | Tasks-extension concurrency per owner (16), record TTL (1h), and poll hint (1s). |
+| `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS`, `COMPUTER_USE_TASK_POLL_INTERVAL_MS` | Tasks-extension concurrency per owner (16), record TTL (1h), and poll hint (1s). An empty or non-numeric value falls back to the default with a stderr note (7.6). |
 | `COMPUTER_USE_PRINCIPAL_ID`, `COMPUTER_USE_SESSION_ID` | Identity labels for audit records in host-managed deployments. |
 | `COMPUTER_USE_SUPERVISOR_*`, `COMPUTER_USE_REMOTE_*` | Control-plane configuration for the optional supervisor and remote packages. Never inherited by scripts.
 
@@ -102,6 +158,8 @@ Desktop computer use should be your **last resort**. Always prefer more precise 
 4. **Desktop computer use** — this package, for native desktop apps, simulators, installers, modal dialogs, and UI-only workflows
 
 Desktop control works for anything on screen, but structured tools are faster, more reliable, and easier to recover from.
+The server's own instructions (generated per platform and profile since 7.6) say the same: the app's own API or MCP
+server first, this server for what has no API.
 
 ## Quick setup for any agent
 
@@ -163,7 +221,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
 import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
 
-// Start the MCP server in-process
+// Start the MCP server in-process. The default profile is `desktop` (39 tools on macOS, about 12k tokens of
+// schemas); pass createComputerUseServer({ profile: 'full' }) for every tool.
 const server = createComputerUseServer()
 const mcpClient = await connectInProcess(server)
 
@@ -178,7 +237,7 @@ async function runAgent(task: string) {
 
   while (true) {
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5',
+      model: 'claude-opus-5-5',
       max_tokens: 4096,
       tools: tools.map(t => ({
         name: t.name,
@@ -296,7 +355,7 @@ const tools = (await mcpClient.listTools()).map(t =>
   })
 )
 
-const model = new ChatAnthropic({ model: 'claude-opus-4-5' }).bindTools(tools)
+const model = new ChatAnthropic({ model: 'claude-opus-5-5' }).bindTools(tools)
 // Use with LangGraph agent executor as normal
 ```
 
@@ -312,7 +371,8 @@ const guide = JSON.parse((await client.getToolGuide('rename a file in Finder'))
 
 const caps = JSON.parse((await client.getAppCapabilities('com.apple.Finder'))
   .content.find(c => c.type === 'text')!.text)
-// → { scriptable: true, accessible: true, ... }
+// → { scriptable: true, accessible: true, accessibility: { nodes, hasControls }, ... }
+//   `accessible` means the tree has real controls (hasControls), not just that the app has a window.
 
 await client.runScript('applescript',
   'tell application "Finder" to set name of file "old.txt" of desktop to "new.txt"')
@@ -340,13 +400,14 @@ await client.runScript('powershell', 'Get-ChildItem C:\\Users\\Me\\Desktop | Sor
 **macOS:**
 1. **Scripting (`run_script`)** — AppleScript / JXA. Best for Mail, Safari, Finder, Numbers, Music, Messages, Notes, Calendar.
 2. **Accessibility (`click_element`, `set_value`, `select_menu_item`, `fill_form`)** — Works for most GUI apps that expose AX.
-3. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works.
+3. **OCR (`read_window_text`, `click_text`, `wait_for_text`)** — For apps that draw their own UI (Unreal, Blender, games, Electron canvases), where the accessibility tree is empty. On-device, covered windows too.
+4. **Coordinates (`click`, `type`, `key`)** — Fallback when nothing else works.
 
 **Windows:**
 1. **Built-in tools (`filesystem`, `registry`, `process_kill`)** — Direct operations without GUI interaction.
 2. **PowerShell (`run_script`)** — System automation, COM objects, .NET calls.
 3. **Accessibility (`click_element`, `set_value`, `fill_form`)** — UI Automation for GUI apps.
-4. **Coordinates (`left_click`, `type`, `key`)** — Fallback when nothing else works.
+4. **Coordinates (`click`, `type`, `key`)** — Fallback when nothing else works. (The OCR tools are macOS-only; use `screenshot` and `zoom` on a self-drawn app.)
 
 ### Applications with no accessible controls
 
@@ -357,11 +418,15 @@ nodes — the window, its three title-bar buttons, a group and the title text �
 painted in OpenGL. Its native macOS menu bar carries only Apple, Blender and
 Window. `discover_applications` reports `scriptable: false, accessible: false`.
 
-For these, every action is a coordinate or a keystroke read from pixels:
+For these, every action is a coordinate or a keystroke read from pixels. On macOS,
+start with OCR (see *Apps that draw their own UI* below): `read_window_text` returns the
+text on screen with boxes, and `click_text` clicks a label by what it says, so many
+dialogs and menus need no coordinates at all. When text is not enough:
 
 - `screenshot` and `zoom` to see. Capture the window, not the desktop, and read
   `get_window` bounds plus the returned image size to map image pixels back to
-  logical desktop coordinates — the capture is scaled.
+  logical desktop coordinates — the capture is scaled. With a session target set,
+  `screenshot` captures that window; pass `full_screen: true` for the whole screen.
 - `mouse_drag` for navigation. A 3D viewport orbits on a middle-button drag, pans
   on shift+middle and zooms on ctrl+middle; none of that is expressible with the
   single-button `left_click_drag`. Motion is interpolated because these
@@ -423,6 +488,8 @@ if (r.isError) {
 
 ### Virtual Desktops / Spaces
 
+The Spaces tools exist on macOS and Windows only; they are in the `windows-admin` and `full` profiles, not the default `desktop` one, and are neither listed nor callable on Linux.
+
 **macOS:** `list_spaces` and `get_active_space` are reliable read-only tools. Space creation via CGS is not exposed (silently no-ops on SIP-enabled Macs).
 
 **Windows:** Full virtual desktop lifecycle is supported:
@@ -480,7 +547,7 @@ const targetId = 12345  // from the list_windows response
 await client.key('command+v', undefined, { targetWindowId: targetId, focusStrategy: 'strict' })
 ```
 
-### Always specify `target_app` or `target_window_id`
+### Always specify `target_app` or `target_window_id`, or set the session target once
 
 Agents should explicitly target the app or window they want to control to avoid sending keystrokes to the wrong place:
 
@@ -493,6 +560,41 @@ await client.key('command+s', 'com.apple.TextEdit')
 await client.type('Hello', 'notepad.exe')
 await client.key('ctrl+s', 'notepad.exe')
 ```
+
+Since 7.6 you can name the target once with `set_target` and omit it on later input and capture calls. `get_target`
+shows it and whether the window is still on screen; `set_target {clear: true}` removes it.
+
+```typescript
+await client.callTool('set_target', { app: 'com.apple.TextEdit' })       // or { window_id } or { app, title }
+await client.callTool('click', { coordinate: [320, 240] })               // goes to TextEdit
+await client.callTool('click', { coordinate: [320, 240], button: 'right' })
+await client.callTool('click', { coordinate: [320, 240], count: 2 })     // double-click
+await client.callTool('get_target', {})
+await client.callTool('set_target', { clear: true })
+```
+
+`click` takes `button` (`left`, `right`, `middle`) and `count` (1, 2 or 3), plus the same targeting and `delivery`
+arguments as `key` and `type`. The older `left_click`, `right_click`, `middle_click`, `double_click` and `triple_click`
+are thin aliases of it: still listed, still accepting `target_app`, `target_window_id`, `delivery` and `force`. (The
+SDK helpers `client.click`, `client.doubleClick` and so on call those aliases.) An explicit `target_app` or
+`target_window_id` on a call always wins over the session target.
+
+### Wait for the thing, don't sleep
+
+Instead of `wait` plus a screenshot, let the server poll. None of these activates the app or moves the cursor.
+
+```typescript
+// A dialog appears (any platform)
+await client.callTool('wait_for_window', { target_app: 'com.epicgames.UnrealEditor', kind: 'dialog', timeout_ms: 15000 })
+// Text appears in a window, or goes away (macOS, OCR)
+await client.callTool('wait_for_text', { target_app: 'com.epicgames.UnrealEditor', text: 'Compiling', gone: true, timeout_ms: 60000 })
+// The window has stopped changing for 800 ms (macOS, two identical captures in a row)
+await client.callTool('wait_for_stable', { target_app: 'org.blenderfoundation.blender', quiet_ms: 800 })
+```
+
+`wait_for_stable` hashes the whole window: `region` is accepted but reported as `regionApplied: false` until the capture
+helper can crop, and `quiet_ms: 0` returns after one capture with its hash. On a timeout the error says what was last
+seen (the last lines read, or how many changes happened).
 
 ### Screenshot before acting
 Take a screenshot first to understand the current state before clicking or typing:
@@ -627,6 +729,11 @@ Windows paths, but only `registry` and `notification` are Windows-only —
 `filesystem`, `process_kill`, `resize_window`, `snapshot` and `scrape` all work
 on macOS and Linux too. See the platform table below.
 
+None of them is in the default `desktop` profile. Profiles that list them: `filesystem` in `scripting`,
+`windows-admin` and `full`; `process_kill`, `registry` and `notification` in `windows-admin` and `full`;
+`resize_window` in `ax` and `full`; `snapshot`, `scrape` and `web_search` in `full` only. Set `COMPUTER_USE_PROFILE`
+before you call them; a tool outside the active profile is not listed and not callable.
+
 ### FileSystem
 ```typescript
 // Read a file
@@ -698,9 +805,10 @@ await client.callTool('scrape', { url: 'https://example.com' })
 
 ## Let a person watch: the run console
 
-Enable it with `runConsole: true` (or run `computer-use-mcp-console`). It adds five
-tools and an MCP App at `ui://computer-use/run-console/v1`, taking the surface from
-67 to 73. A plan the agent declares and the frames it captures render live in a
+Enable it with `runConsole: true` (or run `computer-use-mcp-console`). It adds eight
+tools (`run_start`, `run_plan`, `run_progress`, `run_say`, `run_spend`, `run_cancel`,
+`run_attachment`, `run_console`) and an MCP App at `ui://computer-use/run-console/v1`,
+on top of whatever profile is active (macOS `desktop` 39 to 47, `full` 76 to 84). A plan the agent declares and the frames it captures render live in a
 browser, so a person follows the work instead of a tool log.
 
 ```typescript
@@ -765,21 +873,27 @@ as a way to try the tool rather than something to depend on; when its markup
 changes the tool fails with a message naming the fix. Search results and page text
 are untrusted data describing the world, never instructions.
 
-### Apps that draw their own UI, and not taking over (v7.5, macOS)
+### Apps that draw their own UI, and not taking over (v7.5, macOS; waits and shapes updated in 7.6)
 
-Unreal, Blender and games paint their own interface, so `get_ui_tree` is nearly empty.
+Unreal, Blender and games paint their own interface, so `get_ui_tree` is nearly empty
+(`get_app_capabilities` reports `accessibility: { nodes, hasControls }`: a handful of nodes and
+`hasControls: false` is the sign). The route is OCR, then coordinates:
+`list_windows`, `read_window_text` (with a `region`), `click_text`, `wait_for_text`.
 
 - `list_windows` labels each window `main`, `document`, `dialog`, `panel`, `toast` or `other`; `screenshot`,
   `zoom` and `snapshot` with `target_app` capture the main window (largest titled window), never a notification toast;
   `target_title` picks another window.
-- `read_window_text` OCRs a window on device (Apple Vision) into lines with boxes in window and screen points — covered
-  windows too, without activating anything. Pass `region` to keep it to a few dozen tokens. `click_text` clicks text by
-  what it says. `wait_for_window` returns as soon as a window (of a kind, or with a title) appears or goes.
+- `read_window_text` OCRs a window on device (Apple Vision) into lines, each with a `box` in window points; the result
+  carries the window's `screen_origin` once, so a screen point is `screen_origin + box` (7.6; before, every line also
+  carried a `screen` rectangle). Covered windows work too, without activating anything. Pass `region` to keep it to a few
+  dozen tokens. `click_text` clicks text by what it says (`match` `exact` | `contains` | `regex`, `nth`, `button`
+  `left` | `right`, `click_count`). `wait_for_window` returns as soon as a window (of a kind, or with a title) appears or
+  goes; `wait_for_text` does the same for text; `wait_for_stable` returns when the window stops changing.
 - Window captures go through ScreenCaptureKit (macOS 14+): the window alone, no shadow, so the image-to-screen
   mapping in the reply is exact. A Swift helper is compiled on first use (needs Xcode or the Command Line Tools).
 - While the user is typing or moving the mouse, calls that would take focus or post input return `user_active`
   (see `COMPUTER_USE_USER_IDLE_MS`). `delivery: "pid"` on `key`, `type`, the click tools, `scroll` and `click_text`
-  posts the events to the target process instead: no activation, no cursor movement. Apps differ in what they accept —
+  posts the events to the target process instead: no activation, no cursor movement. Never pass `force: true` unless the person asked for the action; prefer `delivery: "pid"`, a wait, or asking. Apps differ in what they accept —
   a background TextEdit takes keys but not clicks or menu shortcuts — and `get_app_capabilities` reports what worked.
 - `key` accepts `grave`/`` ` ``/`backtick`, `tilde` and named punctuation, and lists valid names when one is unknown;
   `type` with `mode: "keys"` sends real key events (a game console bound to the grave key needs them).
@@ -791,12 +905,12 @@ each image pixel is 2.5 real ones — and a form field is about 35 pixels tall. 
 a control's position from that puts clicks tens of pixels out, and the error grows with
 distance. The page already knows exactly where its controls are.
 
-**`browser_find` asks it, and returns logical screen coordinates ready for `left_click`.**
+**`browser_find` asks it, and returns logical screen coordinates ready for `click`.**
 
 ```typescript
 const found = JSON.parse(text(await client.callTool('browser_find', { selector: 'input[type=email]' })))
 const field = found.matches[0]     // { x, y, rect, label, enabled, in_viewport }
-await client.callTool('left_click', { coordinate: [field.x, field.y], target_window_id: winId })
+await client.callTool('click', { coordinate: [field.x, field.y], target_window_id: winId })
 await client.type('someone@example.com', undefined, { targetWindowId: winId })
 ```
 
@@ -830,7 +944,9 @@ usable controls.
 
 | Tool | macOS | Windows | Linux |
 |---|---|---|---|
-| screenshot, zoom, click, type, key, scroll, mouse_move | ✅ | ✅ | ✅ X11; Wayland needs `ydotool` |
+| screenshot, zoom, click (and its aliases), type, key, scroll, mouse_move | ✅ | ✅ | ✅ X11; Wayland needs `ydotool` |
+| read_window_text, click_text, wait_for_text, wait_for_stable (OCR, ScreenCaptureKit) | ✅ macOS 14+ | ❌ not listed | ❌ not listed |
+| wait_for_window, set_target, get_target | ✅ | ✅ | ✅ |
 | clipboard (read/write) | ✅ | ✅ | ✅ |
 | window management (list, activate, hide/unhide) | ✅ | ✅ | ✅ |
 | UI automation (get_ui_tree, find_element, click_element) | ✅ | ✅ | ✅ AT-SPI |
@@ -839,7 +955,7 @@ usable controls.
 | filesystem | ✅ | ✅ | ✅ |
 | registry, notification | ❌ Windows only | ✅ | ❌ Windows only |
 | process_kill | ✅ | ✅ | ✅ |
-| virtual desktops (list, create, destroy) | Read-only | Full lifecycle | ❌ |
+| virtual desktops (list, create, destroy) | Read-only | Full lifecycle | ❌ not listed |
 | snapshot (combined capture) | ✅ | ✅ | ✅ |
 | scrape, web_search | ✅ | ✅ | ✅ |
 | browser_tabs | ✅ | Needs a debug port | Needs a debug port |
@@ -849,6 +965,10 @@ usable controls.
 | mouse_drag (button + modifiers) | ✅ | ✅ | ✅ X11 only |
 | doctor, discover_applications, get_tool_guide, get_tool_metadata | ✅ | ✅ | ✅ |
 
-Tools that exist in the catalog but have no implementation on the running platform
-return a structured `platform_unsupported` result naming the supported platforms
-and the alternative to use, so the tool count is the same everywhere.
+Since 7.6 a tool that does not exist on the running platform is neither listed nor
+callable (`registry` and `notification` only on Windows; the OCR and `wait_for_*` text
+and stability tools only on macOS; Spaces on macOS and Windows), so the tool count
+differs by platform: the default `desktop` profile lists 39 tools on macOS and 35 on
+Windows and Linux, and `full` lists 76, 74 and 66. Before 7.6 such a tool was listed
+and answered `platform_unsupported`; `get_app_dictionary` and `list_menu_bar` (macOS-only in practice) are still listed on
+Windows and Linux and still answer it.

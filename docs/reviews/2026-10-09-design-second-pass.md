@@ -111,7 +111,8 @@ own `desktop-control` skill keep working.
    compatibility, still as an undeclared argument (the registry already parses with `passthrough`). Policy behaviour is
    unchanged; the model stops seeing a credential-shaped field on 40 tools.
 5. **One `click`:** `click {coordinate?, button: left|right|middle, count: 1|2|3, …targeting}`. `left_click`,
-   `right_click`, `middle_click`, `double_click`, `triple_click` remain callable as aliases and are listed only in `full`.
+   `right_click`, `middle_click`, `double_click`, `triple_click` remain callable as thin aliases, listed wherever `click`
+   is (the build kept them in every profile: a line each, and existing agents keep working).
 6. **An explicit session target:** `set_target {app | window_id | title}` and `get_target`, documenting the implicit
    target that already exists, so input tools can omit targeting; `screenshot` gains `full_screen` and `display_id`.
 7. **Metadata trimmed:** two `_meta` fields by default (`focusRequired`, `mutates`), the rest behind an option; output
