@@ -72,7 +72,8 @@ test('the cross-process lock waits for a live holder and takes over a dead one',
 })
 
 test('a helper killed by the timeout is reported as helper_timeout, not a silent exit 1', async () => {
-  const result = await defaultRunner('/bin/sleep', ['5'], { timeout: 100 })
+  // a sleeper that exists on every CI platform (Windows has no /bin/sleep)
+  const result = await defaultRunner(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { timeout: 100 })
   assert.equal(result.code, 1)
   assert.match(result.stderr, /timed out after 100 ms and was killed \(SIGTERM\)/)
   const f = fixture()

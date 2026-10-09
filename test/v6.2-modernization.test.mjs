@@ -84,8 +84,11 @@ test('priority tools return structuredContent', async () => {
     const front = await client.callTool('get_frontmost_app')
     assert.ok('app' in (front.structuredContent ?? {}))
 
-    const space = await client.callTool('get_active_space')
-    assert.ok('active_space_id' in (space.structuredContent ?? {}))
+    // v7.6 R7: Spaces tools exist on macOS and Windows only
+    if (!TOOL_CATALOG.get_active_space.platforms || TOOL_CATALOG.get_active_space.platforms.includes(process.platform)) {
+      const space = await client.callTool('get_active_space')
+      assert.ok('active_space_id' in (space.structuredContent ?? {}))
+    }
   } finally {
     await client.close()
   }

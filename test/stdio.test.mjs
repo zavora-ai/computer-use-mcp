@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { TOOL_CATALOG } from '../dist/tool-catalog.js'
 
 // v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
 process.env.COMPUTER_USE_PROFILE ??= 'full'
@@ -148,7 +149,9 @@ test('v5 tools are present in listTools', async () => {
   await withClient(async (client) => {
     const tools = (await client.listTools()).tools
     const names = new Set(tools.map(t => t.name))
-    for (const expected of V5_TOOL_NAMES) {
+    // v7.6 R7: tools that do not exist on this platform (Spaces on Linux) are not registered
+    const expectedHere = V5_TOOL_NAMES.filter(name => !TOOL_CATALOG[name].platforms || TOOL_CATALOG[name].platforms.includes(process.platform))
+    for (const expected of expectedHere) {
       assert.ok(names.has(expected), `tool "${expected}" should be present in listTools`)
     }
   })
