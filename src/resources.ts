@@ -10,7 +10,7 @@ import type { ToolRegistry } from './registry/registry.js'
 import type { Session } from './session.js'
 import { fsRoots, fsRootsViolation } from './session/fs-jail.js'
 import type { ProfileName } from './tool-catalog.js'
-import { TOOL_CATALOG, toolInProfile } from './tool-catalog.js'
+import { TOOL_CATALOG, toolAvailableOn, toolInProfile } from './tool-catalog.js'
 import { FILESYSTEM_RESOURCE_PREFIX } from './resource-links.js'
 
 export interface ResourceContext {
@@ -127,7 +127,8 @@ export function registerResources(server: McpServer, ctx: ResourceContext): void
       if (authorization.isError) throw new Error('Resource access denied')
       const activeProfile = ctx.getActiveProfile?.() ?? ctx.profile
       const tools = Object.entries(TOOL_CATALOG)
-        .filter(([, meta]) => toolInProfile(meta, ctx.profile) && toolInProfile(meta, activeProfile))
+        // v7.6 R7: only tools that exist on this platform are registered, so only they are listed here
+        .filter(([, meta]) => toolAvailableOn(meta, process.platform) && toolInProfile(meta, ctx.profile) && toolInProfile(meta, activeProfile))
         .map(([name, meta]) => ({ name, ...meta }))
       return textResource(uri.href, 'profile-tools', JSON.stringify({
         profile: activeProfile,

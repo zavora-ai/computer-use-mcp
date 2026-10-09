@@ -255,10 +255,13 @@ test('key still accepts every real combination, including awkward ones', async (
   ]
   const f = fixture()
   for (const text of combos) await f.handler.handle('key', { text })
+  // v7.5: names the native maps never knew are resolved to the key they mean
+  // (`page_down` → `pagedown`, `period` → `.`); every other combo is unchanged.
+  const resolved = combos.map(combo => ({ page_down: 'pagedown', period: '.' })[combo] ?? combo)
   assert.deepEqual(
     f.native.calls.map(([kind, combo]) => kind === 'key' && combo),
-    combos,
-    'each combo should reach the keyboard unchanged',
+    resolved,
+    'each combo should reach the keyboard unchanged apart from resolved names',
   )
 })
 
@@ -273,4 +276,22 @@ test('a long URL is truncated in the error rather than echoed whole', async () =
       return true
     },
   )
+})
+
+// ── v7.5.1: hold_key is capped ─────────────────────────────────────────────────
+// The native hold sleeps on the server thread, so an unbounded duration froze every other tool.
+
+test('hold_key caps the duration at MAX_HOLD_SECONDS and says so', async () => {
+  const { MAX_HOLD_SECONDS } = await import('../dist/session/input-handlers.js')
+  const f = fixture()
+  const result = await f.handler.handle('hold_key', { keys: ['shift'], duration: 600 })
+  const hold = f.native.calls.find(call => call[0] === 'hold')
+  assert.ok(hold, 'the native hold is called')
+  assert.equal(hold[2], MAX_HOLD_SECONDS * 1000)
+  assert.match(result.content[0].text, /capped from 600/)
+
+  f.native.calls.length = 0
+  const short = await f.handler.handle('hold_key', { keys: ['shift'], duration: 2 })
+  assert.equal(f.native.calls.find(call => call[0] === 'hold')[2], 2000)
+  assert.equal(short.content[0].text, 'Held')
 })

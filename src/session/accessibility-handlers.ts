@@ -1,6 +1,7 @@
-import type { NativeModule } from '../native.js'
+import type { AXElement, NativeModule, WindowRecord } from '../native.js'
 import { ok, okJson, platformUnsupported, type ToolResult } from '../result.js'
 import { lookupToolGuide } from './tool-guide.js'
+import { selectMainWindow } from './window-select.js'
 import type { FocusController } from './focus.js'
 import type { SpawnResult } from './spawn.js'
 import type { ScriptingDictionary } from './scripting-dictionary.js'
@@ -18,6 +19,53 @@ export interface AccessibilityHandlerContext {
   sleep(milliseconds: number): Promise<void>
   runScript(language: string, script: string, timeoutMs: number, signal?: AbortSignal): Promise<SpawnResult>
   getAppDictionary(bundleId: string, suite?: string): Promise<DictionaryResult>
+  /** v7.5 (R5): what pid delivery did for an app the last time it was tried. */
+  pidDelivery?(bundleId: string): unknown
+}
+
+/** AX nodes counted by get_app_capabilities' probe (walk depth 3, capped). */
+export const CAPABILITY_PROBE_DEPTH = 3
+export const CAPABILITY_PROBE_NODE_CAP = 200
+
+const CONTROL_ROLE = /button|text(?:field|area)|search ?field|check ?box|radio|menu|table|list|outline|combo ?box|pop ?up|slider|stepper/i
+// The window's own buttons: AXDescription is "close button" / "minimize button" / "zoom button" / "full screen button".
+const WINDOW_CHROME_LABEL = /^(?:close|minimi[sz]e|zoom|full[ -]?screen|exit full[ -]?screen)(?: button)?$/i
+
+export interface AccessibilityProbe {
+  /** AX nodes found walking the main window to depth 3, capped at 200. */
+  nodes: number
+  /** A button, text field, checkbox, menu, table or list beyond the window's own close/zoom/minimise buttons. */
+  hasControls: boolean
+  /** Set when the tree could not be read (permission, no window). */
+  error?: string
+}
+
+/** Count nodes and look for real controls in an AX tree, to a fixed depth and node cap. */
+export function probeAccessibilityTree(root: AXElement): AccessibilityProbe {
+  let nodes = 0
+  let hasControls = false
+  const walk = (node: AXElement, depth: number): void => {
+    if (nodes >= CAPABILITY_PROBE_NODE_CAP) return
+    nodes += 1
+    if (node !== root && !hasControls && typeof node.role === 'string' && CONTROL_ROLE.test(node.role)
+      && !(/button/i.test(node.role) && WINDOW_CHROME_LABEL.test(node.label ?? ''))) {
+      hasControls = true
+    }
+    if (depth >= CAPABILITY_PROBE_DEPTH || !Array.isArray(node.children)) return
+    for (const child of node.children) walk(child, depth + 1)
+  }
+  walk(root, 0)
+  return { nodes, hasControls }
+}
+
+function probeMainWindow(native: NativeModule, windows: WindowRecord[]): AccessibilityProbe {
+  const main = selectMainWindow(windows, {}) ?? windows[0]
+  if (!main) return { nodes: 0, hasControls: false, error: 'no_window' }
+  try {
+    return probeAccessibilityTree(native.getUiTree(main.windowId, CAPABILITY_PROBE_DEPTH))
+  } catch (error) {
+    return { nodes: 0, hasControls: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string {
@@ -132,7 +180,7 @@ export async function handleAccessibilityTool(
   if (['click_element', 'set_value', 'press_button', 'fill_form'].includes(tool)) {
     const target = context.targets.resolve({ window_id: args.window_id })
     if (target.windowId == null) throw new Error(`${tool} requires window_id`)
-    await context.focus.ensure(target, context.focus.strategyFor(tool, args))
+    await context.focus.ensure(target, context.focus.strategyFor(tool, args), { tool, force: args.force === true })
 
     if (tool === 'click_element') {
       const role = stringArg(args, 'role')
@@ -219,7 +267,7 @@ export async function handleAccessibilityTool(
     const menu = stringArg(args, 'menu')
     const item = stringArg(args, 'item')
     const submenu = typeof args.submenu === 'string' ? args.submenu : undefined
-    await context.focus.ensure({ bundleId }, context.focus.strategyFor(tool, args))
+    await context.focus.ensure({ bundleId }, context.focus.strategyFor(tool, args), { tool, force: args.force === true })
     const result = native.pressMenuItem(bundleId, menu, item, submenu)
     if (result.pressed) {
       context.targets.update({ bundleId }, 'activation')
@@ -281,16 +329,22 @@ export async function handleAccessibilityTool(
       accessible: windows.length > 0, topLevelCount: windows.length,
       running: Boolean(running), hidden: running?.isHidden ?? false,
     })
+    const pidDelivery = context.pidDelivery ? { pidDelivery: context.pidDelivery(bundleId) ?? null } : {}
     const dictionary = await context.getAppDictionary(bundleId)
     const scriptable = !('error' in dictionary)
+    // v7.6: an app that draws its own UI (Unreal, Blender) has a window and three buttons and
+    // nothing else; "has windows" is not "accessible". `accessible` now means real controls.
+    const accessibility = probeMainWindow(native, windows)
     return okJson({
       bundle_id: bundleId,
       scriptable,
       suites: scriptable ? dictionary.dict.suites.map(suite => suite.name) : [],
-      accessible: windows.length > 0,
+      accessible: accessibility.hasControls,
+      accessibility,
       topLevelCount: windows.length,
       running: Boolean(running),
       hidden: running?.isHidden ?? false,
+      ...pidDelivery,
     })
   }
 

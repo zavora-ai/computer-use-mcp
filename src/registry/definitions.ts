@@ -3,9 +3,13 @@ import { errJson, okJson } from '../result.js'
 import { TOOL_CATALOG, getToolMeta, toToolMetaPublic, type ToolMeta } from '../tool-catalog.js'
 import type { ToolRegistry } from './registry.js'
 
-const targetAppParam = z.string().optional().describe('App id: macOS bundle ID or Windows process name (auto-focuses before action)')
-const targetWindowIdParam = z.number().int().optional().describe('Window ID to target (CGWindowID on macOS, HWND on Windows). Takes precedence over target_app.')
-const focusStrategyParam = z.enum(['strict', 'best_effort', 'none', 'prepare_display']).optional().describe('Focus strategy: strict (fail if unconfirmed), best_effort (try and proceed), none (skip activation), prepare_display (hide every non-target app before acting — v5.2, defeats focus-stealing background apps)')
+// v7.6 R7: one sentence per shared parameter; the guidance lives in the server instructions and get_tool_guide.
+const targetAppParam = z.string().optional().describe('Target app: bundle ID (macOS) or process name (Windows).')
+const targetWindowIdParam = z.number().int().optional().describe('Target window ID (CGWindowID / HWND); overrides target_app.')
+const targetTitleParam = z.string().optional().describe('With target_app: the window whose title contains this text.')
+const forceParam = z.boolean().optional().describe('Override the user-active guard; only when the user asked for this action.')
+const deliveryParam = z.enum(['auto', 'hid', 'pid']).optional().describe('auto (default) | hid (frontmost app, moves the cursor) | pid (macOS: to the process, no focus or cursor change).')
+const focusStrategyParam = z.enum(['strict', 'best_effort', 'none', 'prepare_display']).optional().describe('strict | best_effort | none | prepare_display (hide other apps first).')
 export const approvalTokenParam = z.string().optional().describe('Policy approval token. Required only when COMPUTER_USE_APPROVAL_TOKEN / approval policy requires it.')
 // NOTE: use length-constrained z.array (not z.tuple). Zod tuples serialize to
 // JSON Schema as `items: [ ... ]`, which is valid in draft-07 but REJECTED by
@@ -20,6 +24,12 @@ const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
   target_app: targetAppParam,
   target_window_id: targetWindowIdParam,
   focus_strategy: focusStrategyParam,
+  force: forceParam,
+})
+const withDelivery = (schema: Record<string, ZodTypeAny>) => ({
+  ...withTargeting(schema),
+  target_title: targetTitleParam,
+  delivery: deliveryParam,
 })
 
 const PROVIDERS = ['anthropic', 'openai', 'openai-low', 'gemini', 'llama', 'grok', 'mistral', 'qwen', 'nova', 'deepseek-vl', 'deepseek-flash', 'phi', 'auto'] as const
@@ -87,26 +97,38 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       .describe('Override width in pixels. Omit to use provider-optimal default.'),
     quality: z.number().int().min(0).max(100).optional()
       .describe('Image quality. 1-100 = JPEG quality. 0 = PNG (lossless). Default: 80 (JPEG).'),
+    full_screen: z.boolean().optional().describe('Capture the whole screen even when a session target is set.'),
     target_app: z.string().optional()
-      .describe('Bundle ID of app to capture (window only). Omit for full screen.'),
+      .describe('Bundle ID of app to capture: its main window (largest titled window). Omit for full screen.'),
     target_window_id: targetWindowIdParam,
+    target_title: targetTitleParam,
     provider: z.enum(PROVIDERS).optional()
       .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, deepseek-flash=1280px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
     show_agent_pointer: z.boolean().optional()
       .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
   }, NONE_READ)
-  tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling.', {
+  tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling. With target_app or target_window_id the region is in that window\'s points, from its top-left. To read text, read_window_text is cheaper than an image.', {
     region: intArray(4)
-      .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect'),
+      .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect (window points when a target is given)'),
     quality: z.number().int().min(0).max(100).optional()
       .describe('Image quality. 0 = PNG (lossless, best for text). 1-100 = JPEG. Default: 0 (PNG).'),
+    target_app: z.string().optional().describe('Zoom into this app\'s main window (largest titled window)'),
+    target_window_id: targetWindowIdParam,
+    target_title: targetTitleParam,
   }, NONE_READ)
   // Pointer / keyboard — last resort; prefer click_element / press_button / set_value when possible.
-  tool('left_click', 'Left-click at coordinates (last resort — prefer click_element or press_button when the control is accessible). Requires target frontmost.', withTargeting(coord), CG_MUT)
-  tool('right_click', 'Right-click at coordinates (last resort — prefer accessibility when available). Requires target frontmost.', withTargeting(coord), CG_MUT)
-  tool('middle_click', 'Middle-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
-  tool('double_click', 'Double-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
-  tool('triple_click', 'Triple-click at coordinates (last resort). Requires target frontmost.', withTargeting(coord), CG_MUT)
+  tool('click', 'Click at [x, y] (logical pixels; window points with target_window_id and delivery pid). button left|right|middle, count 1|2|3. Last resort after click_element, press_button and click_text.', withDelivery({
+    ...coord,
+    button: z.enum(['left', 'right', 'middle']).optional().describe('Mouse button (default left).'),
+    count: z.number().int().min(1).max(3).optional().describe('Clicks: 1, 2 or 3 (default 1).'),
+  }), CG_MUT)
+  // v7.6 R7: the v7 click variants stay callable as thin aliases of click (the registry parses with passthrough, so
+  // target_app, target_window_id, delivery and force still work on them); they cost a line each in the list.
+  tool('left_click', 'Alias of click (button left, count 1). Prefer click.', coord, CG_MUT)
+  tool('right_click', 'Alias of click (button right). Prefer click.', coord, CG_MUT)
+  tool('middle_click', 'Alias of click (button middle). Prefer click.', coord, CG_MUT)
+  tool('double_click', 'Alias of click (count 2). Prefer click.', coord, CG_MUT)
+  tool('triple_click', 'Alias of click (count 3). Prefer click.', coord, CG_MUT)
   tool('mouse_move', 'Move OS cursor to coordinates (last resort — prefer agent_pointer for non-interrupting pointer). Requires target frontmost for subsequent clicks.', withTargeting(coord), CG_MUT)
   tool('left_click_drag', 'Click and drag', withTargeting({
     coordinate: numArray(2),
@@ -134,29 +156,40 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,
+    force: forceParam,
+    target_title: targetTitleParam,
+    delivery: deliveryParam,
   }, CG_MUT)
-  tool('type', 'Type text into the focused app. For form fields, prefer set_value or fill_form — accessibility-based writes are more reliable and need no click-to-focus.', {
+  tool('type', 'Type text into the focused app. For form fields, prefer set_value or fill_form — accessibility-based writes are more reliable and need no click-to-focus. mode "keys" sends real key events, for apps that bind keys (a game console on the grave/tilde key).', {
     text: z.string(),
+    mode: z.enum(['text', 'keys']).optional().describe('text (default): Unicode text, pasted when long or multi-line. keys: each character as the key-down/up of its virtual key (with shift as needed), never pasted'),
     clear: z.boolean().optional().describe('Clear existing text before typing (Ctrl+A, Delete)'),
     press_enter: z.boolean().optional().describe('Press Enter/Return after typing to submit'),
     caret_position: z.enum(['start', 'end', 'idle']).optional().describe('Move caret before typing: start (Home), end (End), idle (leave as-is)'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,
+    force: forceParam,
+    target_title: targetTitleParam,
+    delivery: deliveryParam,
   }, CG_MUT)
   tool('key', 'Press a key combination (e.g. "command+c", "return"). Tab and Shift+Tab navigate between form fields; keyboard shortcuts are usually faster than coordinate-based clicks.', {
-    text: z.string().describe('Key combo like "command+c" or "return"'),
+    text: z.string().describe('Key combo like "command+c", "return", "grave" (`), "tilde" or "shift+minus". Unknown names are refused with the list of valid ones'),
     repeat: z.number().int().positive().optional(),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,
+    force: forceParam,
+    target_title: targetTitleParam,
+    delivery: deliveryParam,
   }, CG_MUT)
   tool('hold_key', 'Hold keys for a duration', {
     keys: z.array(z.string()),
-    duration: z.number().positive().describe('Seconds'),
+    duration: z.number().positive().max(10).describe('Seconds (max 10: the hold runs on the server thread, so a long hold blocks every other tool)'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,
+    force: forceParam,
   }, CG_MUT)
   // Clipboard — touches pasteboard only, no focus dependency.
   tool('read_clipboard', 'Read clipboard contents', {}, NONE_READ)
@@ -164,9 +197,10 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   // App / window lifecycle — NSWorkspace/AX mutations.
   tool('open_application', 'Open and focus an app by id (macOS bundle ID or Windows process name)', {
     bundle_id: z.string().describe('App id: e.g. "com.apple.Safari" (macOS) or "notepad.exe" (Windows)'),
+    force: forceParam,
   }, AX_MUT)
   tool('get_frontmost_app', 'Get the currently frontmost app', {}, AX_READ)
-  tool('list_windows', 'List visible on-screen windows, optionally filtered by bundle ID', {
+  tool('list_windows', 'List visible on-screen windows, optionally filtered by bundle ID. Each window has a kind (main, document, dialog, panel, toast, other), so a notification toast is not mistaken for a blocking dialog', {
     bundle_id: z.string().optional().describe('Bundle ID to filter windows by'),
   }, AX_READ)
   tool('discover_applications', 'Find installed and running applications by name or ID before choosing an app. Supports Office suite queries. Returns stable IDs, targetApp when known, running state and optional bounded capability probes; never launches apps.', {
@@ -188,10 +222,12 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   tool('activate_app', 'Activate an app and return structured before/after diagnostics', {
     bundle_id: z.string().describe('macOS bundle ID'),
     timeout_ms: z.number().int().positive().optional().describe('Activation polling timeout in ms'),
+    force: forceParam,
   }, AX_MUT)
   tool('activate_window', 'Raise a specific window by CGWindowID', {
     window_id: z.number().int().describe('CGWindowID of the window to raise'),
     timeout_ms: z.number().int().positive().optional().describe('Activation polling timeout in ms'),
+    force: forceParam,
   }, AX_MUT)
   tool('resize_window', 'Resize and/or move a window. Omit window_name to target the foreground window.', {
     window_name: z.string().optional().describe('Window title or process name to target (omit for foreground)'),
@@ -208,6 +244,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     width: z.number().int().positive().optional().describe('Resize screenshot width'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
+    target_title: targetTitleParam,
   }, NONE_READ)
 
   // ── v5: Accessibility observation ───────────────────────────────────────
@@ -230,6 +267,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     role: z.string().describe('AX role of the element to click (e.g. AXButton)'),
     label: z.string().describe('Element label — matched against AXTitle/AXDescription'),
     focus_strategy: focusStrategyParam,
+    force: forceParam,
   }, AX_MUT)
   tool('set_value', 'Set a UI element\'s value directly (e.g. text field content). Avoids the click → type dance. Defaults to strict focus since it writes text.', {
     window_id: z.number().int().describe('CGWindowID of the window containing the element'),
@@ -237,11 +275,13 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     label: z.string().describe('Element label'),
     value: z.string().describe('New value to set'),
     focus_strategy: focusStrategyParam,
+    force: forceParam,
   }, AX_MUT)
   tool('press_button', 'Press a button by its label. Shortcut over click_element for role=AXButton.', {
     window_id: z.number().int().describe('CGWindowID of the window containing the button'),
     label: z.string().describe('Button label'),
     focus_strategy: focusStrategyParam,
+    force: forceParam,
   }, AX_MUT)
   tool('select_menu_item', 'Select an app menu item programmatically — walks AXMenuBar. Returns list of available menus on miss.', {
     bundle_id: z.string().describe('Bundle ID of the app'),
@@ -249,6 +289,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     item: z.string().describe('Menu item title (e.g. "New")'),
     submenu: z.string().optional().describe('Submenu title when the item is nested'),
     focus_strategy: focusStrategyParam,
+    force: forceParam,
   }, AX_MUT)
   tool('fill_form', 'Set multiple UI element values in a single call — collapses click+type loops into one tool call. Partial failures are reported per field without aborting the batch.', {
     window_id: z.number().int().describe('CGWindowID of the form window'),
@@ -258,6 +299,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       value: z.string(),
     })).describe('Ordered list of fields to fill'),
     focus_strategy: focusStrategyParam,
+    force: forceParam,
   }, AX_MUT)
 
   // ── v5: Scripting bridge ────────────────────────────────────────────────
@@ -280,9 +322,70 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   tool('get_tool_guide', 'Recommend the best automation approach for a task. Call this BEFORE committing to screenshot-and-click — it suggests scripting or accessibility paths when they exist.', {
     task_description: z.string().describe('Natural-language description of the task to automate'),
   }, NONE_READ)
-  tool('get_app_capabilities', 'Discover what automation approaches work for an app: scriptable? accessible? running? hidden?', {
+  tool('get_app_capabilities', 'Discover what automation approaches work for an app: scriptable? accessible? running? hidden? On macOS also whether pid delivery worked for it the last time it was tried.', {
     bundle_id: z.string().describe('Bundle ID to probe'),
   }, AX_READ)
+
+  // ── v7.5: agent desktop (OCR, click by text, waiting for windows) ───────
+  const ocrTarget = {
+    target_app: z.string().optional().describe('App whose main window (largest titled window) to read'),
+    target_window_id: targetWindowIdParam,
+    target_title: targetTitleParam,
+    region: numArray(4).optional().describe('[x, y, width, height] in window points from the window\'s top-left; omit for the whole window'),
+    languages: z.array(z.string()).max(8).optional().describe('Recognition languages in priority order, e.g. ["en-US"]; default: automatic'),
+    fast: z.boolean().optional().describe('Faster, less accurate recognition'),
+  }
+  tool('read_window_text', 'macOS. Read the text in a window with on-device OCR (Apple Vision), with each line\'s box in window points (screen point = the result\'s screen_origin + box). Works on apps that draw their own UI (Unreal, Blender) where get_ui_tree is empty, on covered windows, without activating anything, and costs a few dozen tokens instead of an image. No network.', {
+    ...ocrTarget,
+    min_confidence: z.number().min(0).max(1).optional().describe('Drop lines recognised with lower confidence (0-1)'),
+  }, NONE_READ)
+  tool('click_text', 'macOS. Find text in a window by OCR and click the centre of it. Returns what it matched. Subject to the user-active guard; delivery "pid" clicks without activating the app or moving the cursor.', {
+    text: z.string().min(1).describe('Text to find'),
+    match: z.enum(['exact', 'contains', 'regex']).optional().default('contains').describe('exact: the whole line; contains: a case-insensitive substring; regex: a case-insensitive JavaScript regular expression'),
+    nth: z.number().int().min(1).optional().default(1).describe('Which match, in reading order (1 = first)'),
+    button: z.enum(['left', 'right']).optional().default('left'),
+    click_count: z.number().int().min(1).max(3).optional().default(1).describe('2 for a double-click'),
+    ...ocrTarget,
+    focus_strategy: focusStrategyParam,
+    force: forceParam,
+    delivery: deliveryParam,
+  }, CG_MUT)
+  tool('wait_for_window', 'Wait until a window of an app appears (or, with gone: true, disappears), polling every 250 ms. Returns its id, kind, title and bounds as soon as it matches. Use instead of sleeping and taking screenshots while an app opens a dialog or finishes loading.', {
+    target_app: z.string().describe('App id: macOS bundle ID or Windows process name'),
+    kind: z.enum(['main', 'document', 'dialog', 'panel', 'toast', 'other']).optional().describe('Only a window of this kind'),
+    title: z.string().optional().describe('Only a window whose title contains this text (case-insensitive)'),
+    timeout_ms: z.number().int().min(0).max(120_000).optional().default(10_000).describe('Give up after this long'),
+    gone: z.boolean().optional().default(false).describe('Wait for the matching window to disappear instead'),
+  }, NONE_READ)
+
+  // v7.6 R3: waits that replace sleep-and-screenshot loops (macOS: OCR and ScreenCaptureKit)
+  tool('wait_for_text', 'macOS. Wait until text appears in a window (or, with gone: true, disappears), polling the on-device OCR (default every 500 ms, minimum 200). Returns the matched line with its box in window points and its screen point, as soon as it matches; on timeout an error listing the last lines read. Does not activate the app or move the cursor. Use instead of sleeping and taking screenshots.', {
+    text: z.string().min(1).describe('Text to wait for'),
+    match: z.enum(['exact', 'contains', 'regex']).optional().default('contains').describe('exact: the whole line; contains: a case-insensitive substring; regex: a case-insensitive JavaScript regular expression'),
+    gone: z.boolean().optional().default(false).describe('Wait for the text to disappear instead'),
+    timeout_ms: z.number().int().min(0).max(120_000).optional().default(10_000).describe('Give up after this long'),
+    poll_ms: z.number().int().min(200).max(120_000).optional().default(500).describe('Time between OCR polls'),
+    min_confidence: z.number().min(0).max(1).optional().describe('Ignore lines recognised with lower confidence (0-1)'),
+    ...ocrTarget,
+  }, NONE_READ)
+  tool('wait_for_stable', 'macOS. Wait until a window has stopped changing: it is captured repeatedly (ScreenCaptureKit, covered windows fine) and returns when consecutive captures have been identical for quiet_ms. Use after a click or load, before reading or clicking, instead of sleeping. Does not activate the app or move the cursor. On timeout returns an error with the number of changes seen.', {
+    target_app: ocrTarget.target_app,
+    target_window_id: ocrTarget.target_window_id,
+    target_title: ocrTarget.target_title,
+    region: ocrTarget.region,
+    quiet_ms: z.number().int().min(0).max(120_000).optional().default(800).describe('How long the window must stay unchanged'),
+    timeout_ms: z.number().int().min(0).max(120_000).optional().default(10_000).describe('Give up after this long'),
+    poll_ms: z.number().int().min(50).max(120_000).optional().default(250).describe('Time between captures'),
+  }, NONE_READ)
+
+  // v7.6 R7: the session target made explicit (input tools may omit targeting once one is set)
+  tool('set_target', 'Set the session target window for input and capture tools so they can omit target_app / target_window_id. Pass app (bundle ID), window_id, or app plus title; clear: true removes it.', {
+    app: z.string().optional().describe('Bundle ID (macOS) or process name (Windows)'),
+    window_id: z.number().int().optional().describe('Window ID; overrides app'),
+    title: z.string().optional().describe('With app: the window whose title contains this text'),
+    clear: z.boolean().optional().default(false),
+  }, NONE_READ)
+  tool('get_target', 'Show the session target window (set by set_target or by the last activation, click or keystroke) and whether it is still on screen.', {}, NONE_READ)
 
   // ── v5: Agent Spaces ────────────────────────────────────────────────────
   // macOS Space mutation uses best-effort backends selected by
@@ -345,7 +448,8 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     {
       mode: z.enum(['list', 'kill']).describe('Operation mode'),
       name: z.string().optional().describe('Process name to filter/kill'),
-      pid: z.number().int().optional().describe('Process ID to kill'),
+      pid: z.number().int().min(2).optional().describe('Process ID to kill (2 or more: 0, 1 and negative pids address process groups or every process)'),
+      all: z.boolean().optional().default(false).describe('With name: kill every matching process instead of refusing when more than one matches'),
       force: z.boolean().optional().default(false).describe('Force kill without graceful close'),
       sort_by: z.enum(['memory', 'cpu', 'name']).optional().default('memory').describe('Sort field for list'),
       limit: z.number().int().optional().default(20).describe('Max processes to list'),
@@ -381,6 +485,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       target_app: targetAppParam,
       target_window_id: targetWindowIdParam,
       focus_strategy: focusStrategyParam,
+    force: forceParam,
     }, CG_MUT)
 
   // MultiEdit tool — batch click+type
@@ -392,6 +497,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       target_app: targetAppParam,
       target_window_id: targetWindowIdParam,
       focus_strategy: focusStrategyParam,
+    force: forceParam,
     }, CG_MUT)
 
   // Scrape tool — fetch web page content

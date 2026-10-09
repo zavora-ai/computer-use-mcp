@@ -1,6 +1,6 @@
 {
   "name": "@zavora-ai/computer-use-mcp",
-  "version": "7.4.0",
+  "version": "7.6.0",
   "description": "MCP server + client for cross-platform desktop control (macOS + Windows + Linux) \u2014 screenshot, mouse, keyboard, clipboard, app management. Backed by Rust NAPI native module.",
   "author": "James Karanja Maina <james@zavora.ai> (https://zavora.ai)",
   "license": "MIT",
@@ -22,7 +22,7 @@
     "linux"
   ],
   "bin": {
-    "computer-use-mcp": "dist/server.js",
+    "computer-use-mcp": "dist/launch.js",
     "computer-use-mcp-http": "dist/http.js",
     "computer-use-mcp-console": "dist/run-console-host.js"
   },
@@ -114,6 +114,10 @@
     "docs/EFFICIENCY.md",
     "docs/releases/v7.1.0.md",
     "dist/entrypoint.d.ts",
+    "dist/launch.js",
+    "dist/launch.d.ts",
+    "dist/env.js",
+    "dist/env.d.ts",
     "dist/entrypoint.js",
     "computer-use-napi.darwin-arm64.node",
     "computer-use-napi.darwin-x64.node",
@@ -191,6 +195,8 @@
     "workers",
     "docs/releases/v7.2.0.md",
     "docs/releases/v7.4.0.md",
+    "docs/releases/v7.5.0.md",
+    "docs/releases/v7.6.0.md",
     "docs/assets/architecture.svg",
     "docs/assets/astra-painting.png",
     "docs/assets/blender-console-live.png",
@@ -208,7 +214,7 @@
     "build:native:win": "cd native && cargo build --release && copy target\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-x64.node",
     "build:native:win:arm64": "cd native && cargo build --release --target aarch64-pc-windows-msvc && copy target\\aarch64-pc-windows-msvc\\release\\computer_use_napi.dll ..\\computer-use-napi.win32-arm64.node",
     "build:native:linux": "cd native && cargo build --release && cp target/release/libcomputer_use_napi.so ../computer-use-napi.linux-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/').node && cp target/release/libcomputer_use_napi.so ../computer-use-napi.node",
-    "build:ts": "node scripts/clean-dist.mjs && tsc",
+    "build:ts": "node scripts/build-ts.mjs",
     "lint": "eslint src",
     "build": "npm run build:native && npm run build:ts",
     "prepare:packages": "node scripts/prepare-platform-packages.mjs",

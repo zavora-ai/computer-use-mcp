@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { TOOL_CATALOG } from '../dist/tool-catalog.js'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
@@ -80,13 +84,13 @@ test('activate_window schema includes window_id and timeout_ms parameters', asyn
   })
 })
 
-// ── Server version is 7.4.0 ─────────────────────────────────────────────────
+// ── Server version is 7.5.0 ─────────────────────────────────────────────────
 
-test('server reports version 7.4.0', async () => {
+test('server reports version 7.5.0', async () => {
   await withClient(async (client) => {
     const info = client.getServerVersion()
     assert.ok(info, 'server version info should be available after connect')
-    assert.equal(info.version, '7.4.0', 'server version should be 7.4.0')
+    assert.equal(info.version, '7.6.0', 'server version should be 7.6.0')
     assert.equal(info.name, 'computer-use', 'server name should be computer-use')
   })
 })
@@ -96,7 +100,8 @@ test('server reports version 7.4.0', async () => {
 
 test('Property 3 (example-based): all input tools include target_window_id and focus_strategy in schemas', async () => {
   const INPUT_TOOLS = [
-    'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
+    // v7.6 R7: click carries the schema; left_click and the other variants are thin aliases of it
+    'click',
     'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up',
     'scroll', 'type', 'key', 'hold_key',
   ]
@@ -144,7 +149,9 @@ test('v5 tools are present in listTools', async () => {
   await withClient(async (client) => {
     const tools = (await client.listTools()).tools
     const names = new Set(tools.map(t => t.name))
-    for (const expected of V5_TOOL_NAMES) {
+    // v7.6 R7: tools that do not exist on this platform (Spaces on Linux) are not registered
+    const expectedHere = V5_TOOL_NAMES.filter(name => !TOOL_CATALOG[name].platforms || TOOL_CATALOG[name].platforms.includes(process.platform))
+    for (const expected of expectedHere) {
       assert.ok(names.has(expected), `tool "${expected}" should be present in listTools`)
     }
   })

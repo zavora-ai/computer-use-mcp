@@ -19,6 +19,7 @@ import {
   TOOL_CATALOG,
   getToolMeta,
   toMcpAnnotations,
+  toolAvailableOn,
   toolInProfile,
   type ProfileName,
   type ToolMeta,
@@ -52,6 +53,12 @@ export interface ToolRegistryOptions {
   requestStateCodec?: RequestStateCodec<McpRequestState>
   /** Initial enabled subset. `profile` remains the immutable maximum authority. */
   activeProfile?: ProfileName
+  /** v7.6 R7: the platform whose tools are registered (default: this process's). A tool not for it is neither listed nor callable. */
+  platform?: NodeJS.Platform
+  /** v7.6 R7: advertise `approval_token` in every mutating tool's schema as before 7.6 (default false: the token is accepted in `_meta` and as an undeclared argument). */
+  advertiseApprovalToken?: boolean
+  /** v7.6 R7: send all seven `computer-use/*` fields in each tool's `_meta` (default false: focusRequired and mutates only). */
+  fullWireMeta?: boolean
   /** Transport/host authorization checked immediately before every tool handler. */
   authorizeToolCall?: (context: {
     definition: ToolDefinition
@@ -267,15 +274,21 @@ export class ToolRegistry {
   registerAll(server: McpServer): void {
     this.assertComplete()
 
+    const platform = this.#options.platform ?? process.platform
     for (const definition of this.#definitions.values()) {
       const meta = definition.meta
+      // v7.6 R7: a tool that doesn't exist on this platform is not registered at all (it used to be listed and fail
+      // with platform_unsupported at call time).
+      if (!toolAvailableOn(meta, platform)) continue
       if (!this.#withinMaximum(definition)) continue
 
       this.#registeredMeta.set(definition.name, meta)
       const description = this.#options.legacyFocusTag
         ? `${definition.description} [focusRequired: ${meta.focusRequired}]`
         : definition.description
-      const inputSchema = meta.mutates
+      // v7.6 R7: the approval token is no longer advertised on 40 schemas. It is still accepted: the registry parses
+      // arguments with passthrough, and `_meta["computer-use/approval_token"]` on the call is copied into the arguments.
+      const inputSchema = meta.mutates && this.#options.advertiseApprovalToken
         ? { ...definition.inputSchema, approval_token: this.#options.approvalTokenSchema }
         : definition.inputSchema
       const outputSchema = this.#options.structuredContent
@@ -290,7 +303,8 @@ export class ToolRegistry {
         'computer-use/physicalInput': meta.physicalInput,
         'computer-use/tier': meta.tier,
       }
-      const wireMeta = definition.wireMetaShape === 'legacy_minimal'
+      // v7.6 R7: two fields by default (7 KB less in tools/list); get_tool_metadata still returns the full set.
+      const wireMeta = definition.wireMetaShape === 'legacy_minimal' || !this.#options.fullWireMeta
         ? {
             'computer-use/focusRequired': meta.focusRequired,
             'computer-use/mutates': meta.mutates,
@@ -328,6 +342,10 @@ export class ToolRegistry {
             }
           }
           args = validated.data
+          // v7.6 R7: an approval token passed in the call's _meta (not in the model-visible arguments).
+          const callMeta = (extra as { mcpReq?: { params?: { _meta?: Record<string, unknown> } }; _meta?: Record<string, unknown> })
+          const metaToken = callMeta.mcpReq?.params?._meta?.['computer-use/approval_token'] ?? callMeta._meta?.['computer-use/approval_token']
+          if (typeof metaToken === 'string' && typeof args.approval_token !== 'string') args = { ...args, approval_token: metaToken }
           const capabilities = modernClientCapabilities(extra)
           const hash = argsHash(definition.name, args)
           const echoedState = extra.mcpReq.requestState<McpRequestState>()

@@ -142,6 +142,22 @@ const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
   ] as ToolGuidePattern[] : []),
   // ── Cross-platform entries ─────────────────────────────────────────────
   {
+    pattern: /\b(unreal|blender|game|viewport|godot|unity|slate|custom[- ]drawn|self[- ]drawn|ocr)\b/i,
+    approach: 'coordinate' as AutomationApproach,
+    toolSequence: ['list_windows', 'read_window_text', 'click_text'],
+    explanation:
+      'Apps that draw their own UI (Unreal, Blender, games) expose almost no accessibility tree. list_windows labels the main window, dialogs and toasts; read_window_text OCRs a window (covered or not, without activating it) into lines with window boxes (screen = screen_origin + box); wait_for_text waits for a line to appear or go; click_text clicks text by what it says. On macOS, delivery: "pid" sends input without taking focus while the user works; key accepts "grave"/"tilde" and type mode "keys" sends real key events for consoles.',
+    fallbackSequence: ['screenshot', 'zoom', 'click'],
+    platform: 'darwin',
+  },
+  {
+    pattern: /\bwait\b.*\b(window|dialog|popup|modal|load|open|appear|close|disappear)/i,
+    approach: 'accessibility' as AutomationApproach,
+    toolSequence: ['wait_for_window'],
+    explanation:
+      'wait_for_window returns as soon as a window of the app appears (optionally of a kind such as dialog, or with a title), or disappears with gone: true. Cheaper and faster than sleeping and taking screenshots.',
+  },
+  {
     pattern: /\b(fill|enter|type)\b.*\b(form|field|input)\b/i,
     approach: 'accessibility',
     toolSequence: ['get_ui_tree', 'fill_form'],
@@ -172,9 +188,9 @@ const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
   {
     pattern: /\b(text|value|number|label|title|heading|content|status|what\s*does\s*it\s*say|read\s*the|what\s*is\s*written|what\s*does.*say)\b/i,
     approach: 'accessibility' as AutomationApproach,
-    toolSequence: ['get_ui_tree', 'zoom'],
+    toolSequence: ['get_ui_tree', 'read_window_text', 'zoom'],
     explanation:
-      'To read text on screen: first try get_ui_tree which returns element labels and values as structured data (fastest, no image needed). If the text is in an image or non-accessible element, use zoom with a tight region around the text for a full-resolution lossless PNG crop.',
+      'To read text on screen: first try get_ui_tree which returns element labels and values as structured data (fastest, no image needed). If the text is in an image or non-accessible element, read_window_text (macOS) returns it as OCR lines with boxes, no image; otherwise use zoom with a tight region around the text for a full-resolution lossless PNG crop.',
   },
   {
     pattern: /\b(screenshot|see|show|look|observe|capture|screen)\b/i,
@@ -225,10 +241,12 @@ export function lookupToolGuide(
           'doctor', 'policy_status', 'get_tool_guide', 'get_tool_metadata', 'get_app_capabilities',
           'screenshot', 'zoom', 'get_display_size', 'list_displays', 'list_windows', 'get_window',
           'get_frontmost_app', 'cursor_position', 'read_clipboard', 'write_clipboard',
-          'left_click', 'double_click', 'right_click', 'mouse_move', 'scroll', 'type', 'key',
+          'click', 'left_click', 'double_click', 'right_click', 'mouse_move', 'scroll', 'type', 'key',
           'hold_key', 'wait', 'open_application', 'activate_app', 'activate_window',
+          'read_window_text', 'click_text', 'wait_for_window', 'wait_for_text', 'wait_for_stable',
+          'set_target', 'get_target', 'agent_pointer',
         ])
-        if (profile === 'core') {
+        if (profile === 'core' || profile === 'desktop') {
           const missing = entry.toolSequence.filter(t => !coreish.has(t))
           if (missing.length) {
             result.unavailableInProfile = missing

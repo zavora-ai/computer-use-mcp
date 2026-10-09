@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 import fc from 'fast-check'
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { createSession } from '../dist/session.js'
@@ -253,7 +256,8 @@ test('mouse tools expose target_app in the MCP schema and preserve it in calls',
 
   try {
     const tools = (await client.listTools()).tools
-    for (const name of ['left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up']) {
+    // v7.6 R7: click carries the targeting schema; the five v7 variants are thin aliases that still accept target_app (checked below)
+    for (const name of ['click', 'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up']) {
       const tool = tools.find(entry => entry.name === name)
       assert.ok(tool)
       assert.ok(tool.inputSchema?.properties?.target_app)
@@ -437,9 +441,10 @@ test('Property 2: Target resolution precedence — window ID over app over sessi
 // Feature: v4-window-aware-desktop-control, Property 3: Input tool schema completeness
 // **Validates: Requirements 6.1, 7.1, 16.2**
 
-test('Property 3: Input tool schema completeness — all 13 input tools include target_window_id and focus_strategy', async () => {
+test('Property 3: Input tool schema completeness — all 9 input tools include target_window_id and focus_strategy', async () => {
   const inputToolNames = [
-    'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
+    // v7.6 R7: click carries the schema; left_click and the other variants are thin aliases of it
+    'click',
     'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up',
     'scroll', 'type', 'key', 'hold_key',
   ]

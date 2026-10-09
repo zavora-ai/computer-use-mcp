@@ -3,6 +3,9 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 import { createSession } from '../dist/session.js'
@@ -41,7 +44,7 @@ test('profile nesting: core ⊆ scripting ⊆ windows-admin ⊆ full and core �
   const winadmin = new Set(toolsIn('windows-admin'))
   const full = new Set(toolsIn('full'))
 
-  assert.equal(full.size, 70, 'full profile exposes all 70 tools')
+  assert.equal(full.size, Object.keys(TOOL_CATALOG).length, 'full profile exposes every catalog tool (78 in v7.6)')
 
   for (const t of core) {
     assert.ok(ax.has(t), `core tool ${t} must be in ax`)
@@ -125,7 +128,8 @@ test('all six computer:// resources are listed and readable', async () => {
     const profileTools = await client.readResource('computer://profile/tools')
     const pj = JSON.parse(profileTools.contents[0].text)
     assert.equal(pj.profile, 'full')
-    assert.equal(pj.count, 70)
+    // v7.6 R7: tools that do not exist on this platform are not registered
+    assert.equal(pj.count, Object.values(TOOL_CATALOG).filter(meta => !meta.platforms || meta.platforms.includes(process.platform)).length)
   } finally {
     await client.close()
   }

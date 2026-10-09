@@ -3,6 +3,9 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'

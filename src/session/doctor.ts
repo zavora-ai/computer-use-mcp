@@ -29,6 +29,13 @@ export async function runDoctor(options: {
   auditEnabled: boolean
   auditLogPath: string
   execFileSync?: typeof defaultExecFileSync
+  /** v7.5: agent-desktop state — helper build, user-active guard, pid delivery records. */
+  agentDesktop?: () => Promise<{
+    helper?: { ok: boolean; path?: string; reason?: string; remediation?: string; sck?: boolean } | null
+    guard?: Record<string, unknown>
+    pidDelivery?: Array<Record<string, unknown>>
+    pidSupported?: boolean
+  }>
 }): Promise<Record<string, unknown>> {
   const platform = options.platform ?? process.platform
   const isMacos = platform === 'darwin'
@@ -196,6 +203,55 @@ export async function runDoctor(options: {
       id: 'native_agent_pointer_overlay', status: 'warn', summary: failure(error),
       remediation: ['Rebuild or reinstall the native module. The virtual pointer state and screenshot overlay remain available as a fallback.'],
     })
+  }
+
+  if (options.agentDesktop) {
+    try {
+      const state = await options.agentDesktop()
+      if (!isMacos) {
+        add({ id: 'agent_helper', status: 'skip', summary: 'The ScreenCaptureKit/Vision helper (read_window_text, click_text) is macOS only.' })
+      } else if (state.helper) {
+        add({
+          id: 'agent_helper', status: state.helper.ok ? 'pass' : 'warn',
+          summary: state.helper.ok
+            ? `Agent helper ready${state.helper.sck ? ' (ScreenCaptureKit window capture + Vision OCR)' : ' (Vision OCR; window capture needs macOS 14)'}.`
+            : `Agent helper unavailable: ${state.helper.reason}`,
+          details: state.helper.path ? { path: state.helper.path } : undefined,
+          remediation: [state.helper.remediation ?? 'Install the Xcode Command Line Tools (xcode-select --install) so swiftc can build the helper.'],
+        })
+      }
+      if (state.guard) {
+        const clock = state.guard.clockAvailable
+        add({
+          id: 'user_active_guard',
+          status: state.guard.enabled === false ? 'skip' : clock ? 'pass' : 'warn',
+          summary: state.guard.enabled === false
+            ? 'User-active guard disabled (COMPUTER_USE_USER_IDLE_MS=0).'
+            : clock
+              ? `Refusing focus changes and HID input within ${String(state.guard.thresholdMs)} ms of physical input (last input ${String(state.guard.msSinceInput)} ms ago).`
+              : 'The physical-input clock is unavailable, so the user-active guard cannot tell when the user is working and allows every call.',
+          details: state.guard,
+          remediation: ['On macOS, enable your agent host in System Settings > Privacy & Security > Input Monitoring, then restart it. Set COMPUTER_USE_USER_IDLE_MS to tune the threshold (0 disables).'],
+        })
+      }
+      if (isMacos) {
+        const records = state.pidDelivery ?? []
+        add({
+          id: 'pid_delivery', status: state.pidSupported ? 'pass' : 'warn',
+          summary: state.pidSupported
+            ? `Pid delivery available; observed for ${records.length} app(s): ${records.map(r => {
+              const keyboard = (r.keyboard as { outcome?: string } | undefined)?.outcome
+              const pointer = (r.pointer as { outcome?: string } | undefined)?.outcome
+              return `${String(r.bundleId)} (keyboard ${keyboard ?? 'untried'}, pointer ${pointer ?? 'untried'})`
+            }).join(', ') || 'none yet'}.`
+            : 'This native module has no pid delivery (CGEventPostToPid).',
+          details: { records },
+          remediation: ['Rebuild the native module (npm run build:native) or reinstall the package.'],
+        })
+      }
+    } catch (error) {
+      add({ id: 'agent_helper', status: 'warn', summary: failure(error) })
+    }
   }
 
   const count = (status: DoctorStatus) => checks.filter(check => check.status === status).length

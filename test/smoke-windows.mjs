@@ -4,7 +4,8 @@
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 
-const server = createComputerUseServer()
+// v7.6: the default profile is `desktop`; this smoke test exercises the scripting, admin and Spaces tools of the full surface
+const server = createComputerUseServer({ profile: 'full' })
 const client = await connectInProcess(server)
 
 let passed = 0

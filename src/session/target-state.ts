@@ -58,6 +58,11 @@ export class TargetStateController {
     return this.#state?.bundleId
   }
 
+  /** v7.6 R7: forget the session target (set_target clear: true). */
+  clear(): void {
+    this.#state = undefined
+  }
+
   update(target: ResolvedTarget, establishedBy: TargetState['establishedBy']): void {
     this.#state = {
       bundleId: target.bundleId,

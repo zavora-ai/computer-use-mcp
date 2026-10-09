@@ -10,7 +10,7 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `skills/computer-use-windows-admin` — filesystem / registry / process
 
 **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
-**Profiles:** `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default `full`)
+**Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools; `full` lists everything)
 
 **v7 environment & behaviors:**
 - **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` terminates its subprocess tree through a POSIX process group or recursive Windows `taskkill`).
@@ -58,7 +58,7 @@ posture, and `policy_status` returns it as structured data.
 
 | Variable | Effect |
 |---|---|
-| `COMPUTER_USE_PROFILE` | `core \| ax \| scripting \| windows-admin \| full` (default `full`). Bounds the maximum exposed tool surface. |
+| `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6). Bounds the maximum exposed tool surface. |
 | `COMPUTER_USE_ACTIVE_PROFILE` | Starting profile within that bound; may be narrowed at runtime but never widened past `COMPUTER_USE_PROFILE`. |
 | `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: separately installed platform package → bundled binary). |
 | `COMPUTER_USE_LEGACY_FOCUS_TAG=true` | Restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`). |
@@ -66,6 +66,7 @@ posture, and `policy_status` returns it as structured data.
 | `COMPUTER_USE_PREPARE_KEEP_VISIBLE` | Comma-separated bundle IDs that `focus_strategy: "prepare_display"` must not hide. Defaults to the target plus the terminal. |
 | `COMPUTER_USE_SPACES_BACKEND` | `auto \| yabai \| mission_control \| cgs` — virtual-desktop backend selection on macOS. |
 | `COMPUTER_USE_PROVIDER`, `COMPUTER_USE_WIDTH`, `COMPUTER_USE_QUALITY`, `COMPUTER_USE_VISION` | Screenshot defaults: provider preset, width, JPEG quality (`0` = PNG), and whether vision is enabled. |
+| `COMPUTER_USE_USER_IDLE_MS` | v7.5: refuse to activate an app or post keyboard/mouse input within this many ms of the user's last physical input (default `4000` on macOS; `0` disables; Windows and Linux only when set). Such a call returns `user_active` unless it passes `force: true` or uses `delivery: "pid"`. |
 
 ### Hosting and runtime
 
@@ -763,6 +764,25 @@ tool works out of the box. That page carries no compatibility promise, so treat 
 as a way to try the tool rather than something to depend on; when its markup
 changes the tool fails with a message naming the fix. Search results and page text
 are untrusted data describing the world, never instructions.
+
+### Apps that draw their own UI, and not taking over (v7.5, macOS)
+
+Unreal, Blender and games paint their own interface, so `get_ui_tree` is nearly empty.
+
+- `list_windows` labels each window `main`, `document`, `dialog`, `panel`, `toast` or `other`; `screenshot`,
+  `zoom` and `snapshot` with `target_app` capture the main window (largest titled window), never a notification toast;
+  `target_title` picks another window.
+- `read_window_text` OCRs a window on device (Apple Vision) into lines with boxes in window and screen points — covered
+  windows too, without activating anything. Pass `region` to keep it to a few dozen tokens. `click_text` clicks text by
+  what it says. `wait_for_window` returns as soon as a window (of a kind, or with a title) appears or goes.
+- Window captures go through ScreenCaptureKit (macOS 14+): the window alone, no shadow, so the image-to-screen
+  mapping in the reply is exact. A Swift helper is compiled on first use (needs Xcode or the Command Line Tools).
+- While the user is typing or moving the mouse, calls that would take focus or post input return `user_active`
+  (see `COMPUTER_USE_USER_IDLE_MS`). `delivery: "pid"` on `key`, `type`, the click tools, `scroll` and `click_text`
+  posts the events to the target process instead: no activation, no cursor movement. Apps differ in what they accept —
+  a background TextEdit takes keys but not clicks or menu shortcuts — and `get_app_capabilities` reports what worked.
+- `key` accepts `grave`/`` ` ``/`backtick`, `tilde` and named punctuation, and lists valid names when one is unknown;
+  `type` with `mode: "keys"` sends real key events (a game console bound to the grave key needs them).
 
 ### Reading the browser the person is already using
 

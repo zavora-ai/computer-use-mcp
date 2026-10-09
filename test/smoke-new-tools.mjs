@@ -7,7 +7,8 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
-const server = createComputerUseServer()
+// v7.6: the default profile is `desktop`; this smoke test exercises the admin and multi tools of the full surface
+const server = createComputerUseServer({ profile: 'full' })
 const client = await connectInProcess(server)
 
 let passed = 0, failed = 0

@@ -29,3 +29,17 @@ export class WindowNotFoundError extends Error {
     this.name = 'WindowNotFoundError'
   }
 }
+
+/**
+ * v7.5: a failure with a machine-readable payload. The dispatcher returns
+ * `details` as a structured error result (`errJson`) instead of `Error: <message>`,
+ * so an agent can branch on `error` and follow `hint`/`remediation`.
+ */
+export class StructuredToolError extends Error {
+  readonly details: Record<string, unknown>
+  constructor(message: string, details: Record<string, unknown>) {
+    super(message)
+    this.name = 'StructuredToolError'
+    this.details = details
+  }
+}

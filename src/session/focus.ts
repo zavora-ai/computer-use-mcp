@@ -1,15 +1,22 @@
 import type { NativeModule } from '../native.js'
 import { FocusError } from './errors.js'
 import type { FocusFailure } from './errors.js'
+import type { UserActivityGuard } from './user-activity.js'
 
 export type FocusStrategy = 'strict' | 'best_effort' | 'none' | 'prepare_display'
 
 export interface FocusController {
   beginDispatch(): void
   strategyFor(tool: string, args: Record<string, unknown>): FocusStrategy
+  /**
+   * v7.5: `options.force` skips the user-active guard (callers that already applied
+   * it pass force: true); without it, an activation that would change the frontmost
+   * app while the user is active throws `user_active`.
+   */
   ensure(
     target: { bundleId?: string; windowId?: number },
     strategy: FocusStrategy,
+    options?: { tool?: string; force?: boolean },
   ): Promise<{ hiddenBundleIds?: string[] }>
   hiddenBundleIds(): string[] | undefined
 }
@@ -26,6 +33,8 @@ export function createFocusController(options: {
   platform?: NodeJS.Platform
   env?: NodeJS.ProcessEnv
   sleep(milliseconds: number): Promise<void>
+  /** v7.5 (R4): refuse activation while the user is active. */
+  guard?: UserActivityGuard
 }): FocusController {
   const native = options.native
   const platform = options.platform ?? process.platform
@@ -79,8 +88,15 @@ export function createFocusController(options: {
         ? value
         : defaultStrategy(tool)
     },
-    async ensure(target, strategy) {
+    async ensure(target, strategy, ensureOptions) {
       if (strategy === 'none' || !target.bundleId) return {}
+      if (!ensureOptions?.force && options.guard && native.getFrontmostApp()?.bundleId !== target.bundleId) {
+        options.guard.check({
+          tool: ensureOptions?.tool ?? 'activation',
+          wouldDo: `activate ${target.bundleId}${strategy === 'prepare_display' ? ' and hide other apps' : ''}`,
+          pidPossible: false,
+        })
+      }
       let hiddenBundleIds: string[] | undefined
       if (strategy === 'prepare_display') {
         hiddenBundleIds = native.prepareDisplay(target.bundleId, keepVisibleBundles()).hiddenBundleIds

@@ -26,10 +26,11 @@ import {
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import { createSession, type Session, type SessionOptions } from './session.js'
 import { parseProfile, type FocusRequired, type ToolMeta, type ProfileName } from './tool-catalog.js'
-import { SERVER_INSTRUCTIONS } from './instructions.js'
+import { buildInstructions } from './instructions.js'
 import { registerPrompts } from './prompts.js'
 import { registerResources, authorizeResourceAccess } from './resources.js'
-import { isStdioEntrypoint } from './entrypoint.js'
+import { isModuleEntrypoint, isStdioEntrypoint } from './entrypoint.js'
+import { envPositiveInt } from './env.js'
 import { ToolRegistry } from './registry/registry.js'
 import { approvalTokenParam, defineV7Tools } from './registry/definitions.js'
 import { McpV71Controller } from './mcp-v7.1.js'
@@ -53,7 +54,7 @@ const FIXED_RESOURCES = new Set([
 ])
 
 const DESKTOP_STATE_MUTATIONS = new Set([
-  'openai_computer', 'left_click', 'right_click', 'middle_click', 'double_click',
+  'openai_computer', 'click', 'left_click', 'right_click', 'middle_click', 'double_click',
   'triple_click', 'mouse_move', 'left_click_drag', 'mouse_drag', 'left_mouse_down', 'left_mouse_up',
   'scroll', 'type', 'key', 'hold_key', 'open_application', 'hide_app', 'unhide_app',
   'activate_app', 'activate_window', 'resize_window', 'click_element', 'set_value',
@@ -83,10 +84,12 @@ const requestStateCodec = createRequestStateCodec<{
   },
 })
 
+// An empty or non-numeric value falls back to the default (with a stderr note) instead of throwing at import,
+// which used to kill the server before the transport opened.
 const taskManager = new McpTaskManager({
-  maxConcurrentPerOwner: Number(process.env.COMPUTER_USE_MAX_TASKS ?? 16),
-  ttlMs: Number(process.env.COMPUTER_USE_TASK_TTL_MS ?? 3_600_000),
-  pollIntervalMs: Number(process.env.COMPUTER_USE_TASK_POLL_INTERVAL_MS ?? 1_000),
+  maxConcurrentPerOwner: envPositiveInt('COMPUTER_USE_MAX_TASKS', 16),
+  ttlMs: envPositiveInt('COMPUTER_USE_TASK_TTL_MS', 3_600_000),
+  pollIntervalMs: envPositiveInt('COMPUTER_USE_TASK_POLL_INTERVAL_MS', 1_000),
 })
 
 export interface ServerOptions extends SessionOptions {
@@ -121,6 +124,12 @@ export interface ServerOptions extends SessionOptions {
   activeProfile?: ProfileName | string
   structuredContent?: boolean
   legacyFocusTag?: boolean
+  /** v7.6 R7 test seam: register the tools of this platform instead of the process's. */
+  platform?: NodeJS.Platform
+  /** v7.6 R7: advertise approval_token on mutating tools' schemas as before 7.6. */
+  advertiseApprovalToken?: boolean
+  /** v7.6 R7: all seven computer-use/* _meta fields per tool as before 7.6. */
+  fullWireMeta?: boolean
   /** Embedding hook for host-controlled dynamic v7 profile negotiation. */
   onRegistry?: (registry: ToolRegistry) => void
   /** Host/transport authorization invoked before every registered tool handler. */
@@ -165,7 +174,7 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
   const server = new McpServer(
     SERVER_INFO,
     {
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: buildInstructions(process.platform, activeProfile),
       capabilities: {
         logging: {},
         resources: { subscribe: true },
@@ -257,6 +266,9 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     activeProfile,
     structuredContent,
     legacyFocusTag,
+    ...(opts.platform ? { platform: opts.platform } : {}),
+    advertiseApprovalToken: opts.advertiseApprovalToken ?? (process.env.COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN === 'true'),
+    fullWireMeta: opts.fullWireMeta ?? (process.env.COMPUTER_USE_FULL_WIRE_META === 'true'),
     approvalTokenSchema: approvalTokenParam,
     session,
     requestStateCodec,
@@ -393,7 +405,7 @@ const TASK_PROTOCOL_METHODS = new Set(['tasks/get', 'tasks/update', 'tasks/cance
 const SERVER_INFO = {
   name: 'computer-use',
   title: 'Computer Use MCP',
-  version: '7.4.0',
+  version: '7.6.0',
   description: 'Cross-platform desktop control with policy-aware automation.',
   websiteUrl: 'https://github.com/zavora-ai/computer-use-mcp',
 }
@@ -467,7 +479,12 @@ async function handleHttpTaskExtension(request: Request, authInfo?: Parameters<t
   }
 }
 
-if (isStdioEntrypoint(process.argv[1])) {
+if (isStdioEntrypoint(process.argv[1]) || isModuleEntrypoint(import.meta.url, process.argv[1])) {
+  // A rejected promise nobody awaited used to end the process with no line in the log. Log it and keep serving;
+  // the request that caused it already received its error through the registry.
+  process.on('unhandledRejection', reason => {
+    console.error('[computer-use-mcp] unhandled rejection:', reason instanceof Error ? reason.stack ?? reason.message : String(reason))
+  })
   const handle = serveStdio(() => createComputerUseServer(), {
     legacy: 'serve',
     maxSubscriptions: 256,

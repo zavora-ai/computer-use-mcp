@@ -206,3 +206,45 @@ test('filesystem info computes path-independent byte digests for files and direc
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+// ── v7.5.1: process_kill guards ───────────────────────────────────────────────
+// kill(2) with pid 0, -1 or any negative number signals a process group or every process the user owns, and
+// `pkill name` without -x is an unanchored regex ("node" also matches "nodemon").
+
+test('process_kill refuses pids below 2 on POSIX instead of broadcasting a signal', async () => {
+  let killed = false
+  const original = process.kill
+  process.kill = () => { killed = true; return true }
+  try {
+    for (const pid of [-1, 0, 1]) {
+      const result = await handleAdminTool('process_kill', { mode: 'kill', pid }, context({ platform: 'darwin' }))
+      assert.equal(result.isError, true, `pid ${pid} must be refused`)
+      assert.equal(result.structuredContent.error, 'invalid_pid')
+    }
+    assert.equal(killed, false, 'process.kill must not be reached')
+  } finally {
+    process.kill = original
+  }
+})
+
+test('process_kill by name matches the exact name and refuses an ambiguous match unless all: true', async () => {
+  const invocations = []
+  const ctx = context({
+    platform: 'darwin',
+    spawnBounded: async (cmd, args) => {
+      invocations.push([cmd, args])
+      if (cmd === 'pgrep') return { stdout: '101\n202\n', stderr: '', code: 0, timedOut: false }
+      return { stdout: '', stderr: '', code: 0, timedOut: false }
+    },
+  })
+  const refused = await handleAdminTool('process_kill', { mode: 'kill', name: 'node' }, ctx)
+  assert.equal(refused.isError, true)
+  assert.equal(refused.structuredContent.error, 'ambiguous_name')
+  assert.deepEqual(invocations, [['pgrep', ['-x', 'node']]], 'nothing is killed on an ambiguous match')
+
+  invocations.length = 0
+  const killed = await handleAdminTool('process_kill', { mode: 'kill', name: 'node', all: true, force: true }, ctx)
+  assert.equal(killed.isError, undefined)
+  assert.deepEqual(invocations[1], ['pkill', ['-9', '-x', 'node']])
+  assert.match(killed.content[0].text, /2 processes named node/)
+})

@@ -225,7 +225,7 @@ export async function handleAdminTool(
     if (mode === 'kill') {
       const name = typeof args.name === 'string' ? args.name : undefined
       const pid = typeof args.pid === 'number' ? args.pid : undefined
-      if (!name && !pid) return { content: [{ type: 'text', text: 'name or pid required' }], isError: true }
+      if (!name && pid === undefined) return { content: [{ type: 'text', text: 'name or pid required' }], isError: true }
       if (isWindows) {
         const taskkillArgs = pid ? ['/PID', String(pid)] : ['/IM', name!]
         if (args.force) taskkillArgs.push('/F')
@@ -236,9 +236,23 @@ export async function handleAdminTool(
           : { content: [{ type: 'text', text: result.stderr || result.stdout }], isError: true }
       }
       const signal = args.force ? 'SIGKILL' : 'SIGTERM'
-      if (pid) { process.kill(pid, signal); return ok(`Sent ${signal} to PID ${pid}`) }
-      const result = await context.spawnBounded('pkill', [args.force ? '-9' : '-15', name!], 5_000)
-      return result.code === 0 ? ok(`Killed ${name}`)
+      if (pid !== undefined) {
+        // kill(2) with pid 0, -1 or a negative number signals a process group or every process the user owns.
+        if (!Number.isInteger(pid) || pid < 2) {
+          return errJson({ error: 'invalid_pid', pid, hint: `pid must be 2 or more (got ${pid}); 0, 1 and negative pids address process groups or every process` })
+        }
+        process.kill(pid, signal)
+        return ok(`Sent ${signal} to PID ${pid}`)
+      }
+      // Exact process-name match (-x): without it `name` is an unanchored regex and "node" would also kill "nodemon".
+      const matches = await context.spawnBounded('pgrep', ['-x', name!], 5_000)
+      const pids = matches.stdout.split('\n').map(line => line.trim()).filter(Boolean)
+      if (pids.length === 0) return { content: [{ type: 'text', text: 'No matching process' }], isError: true }
+      if (pids.length > 1 && !args.all) {
+        return errJson({ error: 'ambiguous_name', name, pids: pids.map(Number), hint: `${pids.length} processes are named ${name}; pass pid, or all: true to kill them all` })
+      }
+      const result = await context.spawnBounded('pkill', [args.force ? '-9' : '-15', '-x', name!], 5_000)
+      return result.code === 0 ? ok(`Sent ${signal} to ${pids.length} process${pids.length === 1 ? '' : 'es'} named ${name} (pids ${pids.join(', ')})`)
         : { content: [{ type: 'text', text: result.stderr || 'No matching process' }], isError: true }
     }
     return { content: [{ type: 'text', text: `Unknown process mode: ${mode}` }], isError: true }
