@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
@@ -86,7 +89,7 @@ test('server reports version 7.5.0', async () => {
   await withClient(async (client) => {
     const info = client.getServerVersion()
     assert.ok(info, 'server version info should be available after connect')
-    assert.equal(info.version, '7.5.0', 'server version should be 7.5.0')
+    assert.equal(info.version, '7.6.0', 'server version should be 7.6.0')
     assert.equal(info.name, 'computer-use', 'server name should be computer-use')
   })
 })
@@ -96,7 +99,8 @@ test('server reports version 7.5.0', async () => {
 
 test('Property 3 (example-based): all input tools include target_window_id and focus_strategy in schemas', async () => {
   const INPUT_TOOLS = [
-    'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
+    // v7.6 R7: click carries the schema; left_click and the other variants are thin aliases of it
+    'click',
     'mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up',
     'scroll', 'type', 'key', 'hold_key',
   ]

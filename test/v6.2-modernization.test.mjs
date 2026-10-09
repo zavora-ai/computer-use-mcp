@@ -2,6 +2,9 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
@@ -30,9 +33,10 @@ function createMockNative() {
   }
 }
 
-test('catalog has 73 tools and MUTATING_TOOLS matches mutates flag', () => {
+test('catalog has 78 tools and MUTATING_TOOLS matches mutates flag', () => {
   const names = Object.keys(TOOL_CATALOG)
-  assert.equal(names.length, 73, `expected 73 tools, got ${names.length}`)
+  // 73 in v7.5; v7.6 added click, set_target, get_target, wait_for_text and wait_for_stable
+  assert.equal(names.length, 78, `expected 78 tools, got ${names.length}`)
   for (const [name, meta] of Object.entries(TOOL_CATALOG)) {
     assert.equal(MUTATING_TOOLS.has(name), meta.mutates, `${name}: MUTATING_TOOLS vs mutates mismatch`)
   }

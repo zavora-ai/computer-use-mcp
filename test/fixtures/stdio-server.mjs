@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import { createComputerUseServer } from '../../dist/server.js'
 
 const server = createComputerUseServer({
+  profile: 'full',
   session: {
     async dispatch() {
       return { content: [{ type: 'text', text: 'ok' }] }

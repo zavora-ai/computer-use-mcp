@@ -277,3 +277,21 @@ test('a long URL is truncated in the error rather than echoed whole', async () =
     },
   )
 })
+
+// ── v7.5.1: hold_key is capped ─────────────────────────────────────────────────
+// The native hold sleeps on the server thread, so an unbounded duration froze every other tool.
+
+test('hold_key caps the duration at MAX_HOLD_SECONDS and says so', async () => {
+  const { MAX_HOLD_SECONDS } = await import('../dist/session/input-handlers.js')
+  const f = fixture()
+  const result = await f.handler.handle('hold_key', { keys: ['shift'], duration: 600 })
+  const hold = f.native.calls.find(call => call[0] === 'hold')
+  assert.ok(hold, 'the native hold is called')
+  assert.equal(hold[2], MAX_HOLD_SECONDS * 1000)
+  assert.match(result.content[0].text, /capped from 600/)
+
+  f.native.calls.length = 0
+  const short = await f.handler.handle('hold_key', { keys: ['shift'], duration: 2 })
+  assert.equal(f.native.calls.find(call => call[0] === 'hold')[2], 2000)
+  assert.equal(short.content[0].text, 'Held')
+})

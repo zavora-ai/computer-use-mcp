@@ -589,6 +589,11 @@ test('Feature: v5-accessible-ui-automation, Property 12: get_app_capabilities ac
   responses.set(`sdef /Applications/Mail.app`, { stdout: scriptableSdef, stderr: '', code: 0, timedOut: false })
 
   const spawnBounded = mockSpawnBounded(responses)
+  // v7.6: `accessible` means the window has real controls, not just that it exists.
+  native._setTree(1003, {
+    role: 'AXWindow', label: null, value: null, bounds: { x: 0, y: 0, width: 800, height: 600 }, actions: [],
+    children: [{ role: 'AXButton', label: 'Compose', value: null, bounds: { x: 0, y: 0, width: 10, height: 10 }, actions: ['AXPress'], children: [] }],
+  })
   const session = createSession({ native, spawnBounded })
 
   // Scriptable + running + has windows
@@ -596,7 +601,8 @@ test('Feature: v5-accessible-ui-automation, Property 12: get_app_capabilities ac
   const body1 = JSON.parse(r1.content[0].text)
   assert.equal(body1.scriptable, true)
   assert.deepEqual(body1.suites.sort(), ['Mail', 'Standard Suite'])
-  assert.equal(body1.accessible, true)  // 1003 exists for mail
+  assert.equal(body1.accessible, true)  // 1003 has a Compose button
+  assert.deepEqual(body1.accessibility, { nodes: 2, hasControls: true })
   assert.equal(body1.running, true)
   assert.equal(body1.hidden, false)
 

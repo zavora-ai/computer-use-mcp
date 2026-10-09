@@ -14,3 +14,4 @@ release-sbom.cdx.json
 *.tgz
 
 showcase-output/
+.DS_Store

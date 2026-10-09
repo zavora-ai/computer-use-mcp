@@ -146,8 +146,8 @@ const TOOL_GUIDE_TABLE: ToolGuidePattern[] = [
     approach: 'coordinate' as AutomationApproach,
     toolSequence: ['list_windows', 'read_window_text', 'click_text'],
     explanation:
-      'Apps that draw their own UI (Unreal, Blender, games) expose almost no accessibility tree. list_windows labels the main window, dialogs and toasts; read_window_text OCRs a window (covered or not, without activating it) into lines with screen boxes; click_text clicks text by what it says. On macOS, delivery: "pid" sends input without taking focus while the user works; key accepts "grave"/"tilde" and type mode "keys" sends real key events for consoles.',
-    fallbackSequence: ['screenshot', 'zoom', 'left_click'],
+      'Apps that draw their own UI (Unreal, Blender, games) expose almost no accessibility tree. list_windows labels the main window, dialogs and toasts; read_window_text OCRs a window (covered or not, without activating it) into lines with window boxes (screen = screen_origin + box); wait_for_text waits for a line to appear or go; click_text clicks text by what it says. On macOS, delivery: "pid" sends input without taking focus while the user works; key accepts "grave"/"tilde" and type mode "keys" sends real key events for consoles.',
+    fallbackSequence: ['screenshot', 'zoom', 'click'],
     platform: 'darwin',
   },
   {
@@ -241,11 +241,12 @@ export function lookupToolGuide(
           'doctor', 'policy_status', 'get_tool_guide', 'get_tool_metadata', 'get_app_capabilities',
           'screenshot', 'zoom', 'get_display_size', 'list_displays', 'list_windows', 'get_window',
           'get_frontmost_app', 'cursor_position', 'read_clipboard', 'write_clipboard',
-          'left_click', 'double_click', 'right_click', 'mouse_move', 'scroll', 'type', 'key',
+          'click', 'left_click', 'double_click', 'right_click', 'mouse_move', 'scroll', 'type', 'key',
           'hold_key', 'wait', 'open_application', 'activate_app', 'activate_window',
-          'read_window_text', 'click_text', 'wait_for_window',
+          'read_window_text', 'click_text', 'wait_for_window', 'wait_for_text', 'wait_for_stable',
+          'set_target', 'get_target', 'agent_pointer',
         ])
-        if (profile === 'core') {
+        if (profile === 'core' || profile === 'desktop') {
           const missing = entry.toolSequence.filter(t => !coreish.has(t))
           if (missing.length) {
             result.unavailableInProfile = missing

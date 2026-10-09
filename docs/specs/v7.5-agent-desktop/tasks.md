@@ -1,6 +1,6 @@
 # v7.5 "agent desktop": tasks
 
-Status: **pre-approved by James 2026-10-01; implemented, uncommitted on the branch**. Implements [design.md](design.md) and [requirements.md](requirements.md).
+Status: **pre-approved by James 2026-10-01; implemented on `feat/v7.5-agent-desktop` (`b97de7e`, PR #35)**. Implements [design.md](design.md) and [requirements.md](requirements.md).
 Work on branch `feat/v7.5-agent-desktop`. Commits as the user (existing git identity, no AI co-author trailer), only after
 the user confirms; then a PR with `gh`.
 

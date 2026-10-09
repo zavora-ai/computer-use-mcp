@@ -1,6 +1,6 @@
 server_id = "computer_use_mcp"
 display_name = "Computer Use"
-version = "7.5.0"
+version = "7.6.0"
 domain = "desktop-automation"
 sdk_version = "2.0.0"
 risk_level = "high"
@@ -519,6 +519,41 @@ credential_bindings = []
 [[tools]]
 name = "wait_for_window"
 description = "Wait for an app's window to appear or disappear"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "click"
+description = "Click at a coordinate with button and count (left_click and the other variants are aliases)"
+risk_class = "internal_write"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "set_target"
+description = "Set the session target window for input and capture tools"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_target"
+description = "Show the session target window"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "wait_for_text"
+description = "Wait until text appears in or disappears from a window (OCR)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "wait_for_stable"
+description = "Wait until a window stops changing"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []

@@ -11,7 +11,7 @@
 
 import { execFile, type ExecFileOptions } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +28,8 @@ export interface HelperCapture {
   frame: HelperFrame
   mimeType: string
   bytes: number
+  /** Set by a helper that cropped the capture to the requested region (window points). */
+  region?: unknown
 }
 
 export interface HelperOcrLine {
@@ -59,6 +61,8 @@ export interface MacosHelper {
     width?: number
     format?: 'png' | 'jpeg'
     quality?: number
+    /** Crop to this region, in window points from the window's top-left (helper `--region`). */
+    region?: { x: number; y: number; width: number; height: number }
   }, signal?: AbortSignal): Promise<HelperCapture & { data: Buffer }>
   ocr(options: {
     windowId?: number
@@ -81,10 +85,15 @@ type Runner = (
   file: string, args: string[], options: ExecFileOptions & { signal?: AbortSignal },
 ) => Promise<{ stdout: string; stderr: string; code: number }>
 
-const defaultRunner: Runner = (file, args, options) => new Promise(resolve => {
+/** Runs a process; a process killed by the timeout says so instead of looking like a silent `exit 1`. */
+export const defaultRunner: Runner = (file, args, options) => new Promise(resolve => {
   execFile(file, args, { ...options, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
     const code = error ? (typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : 1) : 0
-    resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? error?.message ?? ''), code })
+    const killed = error && ((error as { killed?: boolean }).killed || (error as { signal?: string }).signal)
+    const explained = String(stderr ?? '').trim() || (killed
+      ? `helper timed out after ${options.timeout ?? '?'} ms and was killed (${(error as { signal?: string }).signal ?? 'signal'})`
+      : (error?.message ?? ''))
+    resolve({ stdout: String(stdout ?? ''), stderr: explained, code })
   })
 })
 
@@ -111,6 +120,10 @@ export function createMacosHelper(options: {
   compileTimeoutMs?: number
   callTimeoutMs?: number
   now?: () => number
+  /** One helper process at a time across every server on this Mac (default true; see `call`). */
+  lock?: boolean
+  /** How long a call waits for another server's capture to finish before `helper_busy` (default: the call timeout). */
+  lockWaitMs?: number
 } = {}): MacosHelper {
   const platform = options.platform ?? process.platform
   const sourcePath = options.sourcePath ?? defaultHelperSourcePath()
@@ -169,28 +182,85 @@ export function createMacosHelper(options: {
     return compiled
   }
 
-  const call = async (args: string[], signal?: AbortSignal): Promise<Record<string, unknown>> => {
+  // Two ScreenCaptureKit captures running at once hang each other until killed (measured 2026-10-09: fifteen
+  // sequential helper runs passed, two side by side both stalled). So helper runs are serialised: a promise chain
+  // within this server, and an advisory lock file in the cache directory across servers (James runs several
+  // sessions, each with its own server). A lock left by a dead process is taken over; a live holder is waited for.
+  const useLock = options.lock ?? true
+  const lockWaitMs = options.lockWaitMs ?? callTimeoutMs
+  const lockPath = join(cacheDir, 'helper.lock')
+  const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new HelperFailure('aborted', 'helper call aborted')) }, { once: true })
+  })
+  const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (error) { return (error as { code?: string }).code === 'EPERM' } }
+  const acquireLock = async (signal?: AbortSignal): Promise<void> => {
+    const deadline = now() + lockWaitMs
+    for (;;) {
+      try {
+        const fd = openSync(lockPath, 'wx')
+        try { writeSync(fd, String(process.pid)) } finally { closeSync(fd) }
+        return
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'EEXIST') throw error
+      }
+      let holder = Number.NaN
+      try { holder = Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10) } catch { /* being written or gone */ }
+      if (Number.isFinite(holder) && holder !== process.pid && !pidAlive(holder)) {
+        try { unlinkSync(lockPath) } catch { /* someone else took it */ }
+        continue
+      }
+      if (now() > deadline) {
+        throw new HelperFailure('helper_busy',
+          `another capture (pid ${Number.isFinite(holder) ? holder : 'unknown'}) has held ${lockPath} for over ${lockWaitMs} ms; `
+          + 'two ScreenCaptureKit captures at once hang each other, so this one was not started')
+      }
+      await sleep(50, signal)
+    }
+  }
+  const releaseLock = (): void => {
+    try { if (readFileSync(lockPath, 'utf8').trim() === String(process.pid)) unlinkSync(lockPath) } catch { /* not ours or gone */ }
+  }
+  let queue: Promise<unknown> = Promise.resolve()
+  const serialised = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = queue.then(work, work)
+    queue = next.catch(() => undefined)
+    return next
+  }
+
+  const call = (args: string[], signal?: AbortSignal): Promise<Record<string, unknown>> => serialised(async () => {
     const availability = await ensure(signal)
     if (!availability.ok) throw new HelperFailure('helper_unavailable', `${availability.reason}. ${availability.remediation}`)
-    const result = await run(availability.path, args, { timeout: callTimeoutMs, signal })
+    if (useLock) {
+      try { mkdirSync(cacheDir, { recursive: true }) } catch { /* exists */ }
+      await acquireLock(signal)
+    }
+    let result
+    try {
+      result = await run(availability.path, args, { timeout: callTimeoutMs, signal })
+    } finally {
+      if (useLock) releaseLock()
+    }
     let parsed: Record<string, unknown> | undefined
     try { parsed = JSON.parse(result.stdout.trim().split('\n').pop() ?? '') as Record<string, unknown> } catch { /* below */ }
     if (!parsed) {
       if (signal?.aborted) throw new HelperFailure('aborted', 'helper call aborted')
-      throw new HelperFailure('helper_failed', (result.stderr || result.stdout || `exit ${result.code}`).trim().slice(0, 400))
+      const detail = (result.stderr || result.stdout || `exit ${result.code}`).trim().slice(0, 400)
+      throw new HelperFailure(/timed out/.test(detail) ? 'helper_timeout' : 'helper_failed', detail)
     }
     if (typeof parsed.error === 'string') throw new HelperFailure(parsed.error, String(parsed.message ?? parsed.error))
     return parsed
-  }
+  })
 
   return {
     ensure,
     supportsCapture: () => sck,
-    async capture({ windowId, width, format = 'jpeg', quality = 80 }, signal) {
+    async capture({ windowId, width, format = 'jpeg', quality = 80, region }, signal) {
       if (!sck) throw new HelperFailure('sck_unavailable', 'ScreenCaptureKit window capture needs macOS 14 or later')
       const out = join(tmpdir(), `cu-mcp-sck-${process.pid}-${randomBytes(6).toString('hex')}.${format === 'png' ? 'png' : 'jpg'}`)
       const args = ['capture', '--window', String(windowId), '--out', out, '--format', format, '--quality', String(quality)]
       if (width) args.push('--width', String(Math.round(width)))
+      if (region) args.push('--region', [region.x, region.y, region.width, region.height].join(','))
       try {
         const result = await call(args, signal) as unknown as HelperCapture
         return { ...result, data: readFileSync(out) }

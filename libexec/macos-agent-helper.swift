@@ -59,11 +59,28 @@ struct WindowImage {
     let frame: CGRect
 }
 
+/// ScreenCaptureKit can stall indefinitely when another process is capturing at the same time (measured
+/// 2026-10-09: two helpers side by side both hung). A stall becomes a JSON error the caller can act on.
+func withSckTimeout<T: Sendable>(_ seconds: Double, _ what: String, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await operation() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw HelperError(code: "sck_timeout", message: "ScreenCaptureKit did not \(what) within \(Int(seconds)) s (another capture may be running)")
+        }
+        guard let first = try await group.next() else { throw HelperError(code: "sck_timeout", message: "ScreenCaptureKit returned nothing") }
+        group.cancelAll()
+        return first
+    }
+}
+
 @available(macOS 14.0, *)
 func captureWindow(id: UInt32, width: Int?, scale userScale: Double?, minPixelScale: Double = 1) async throws -> WindowImage {
     let content: SCShareableContent
     do {
-        content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        content = try await withSckTimeout(10, "list the windows") { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false) }
+    } catch let error as HelperError {
+        throw error
     } catch {
         throw HelperError(code: "screen_recording_denied",
                           message: "ScreenCaptureKit refused to list windows (Screen Recording permission?): \(error.localizedDescription)")
@@ -95,7 +112,7 @@ func captureWindow(id: UInt32, width: Int?, scale userScale: Double?, minPixelSc
     config.showsCursor = false
     config.ignoreShadowsSingleWindow = true
     config.captureResolution = .best
-    let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+    let image = try await withSckTimeout(10, "capture the window") { try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) }
     return WindowImage(image: image, scale: Double(image.width) / max(1, Double(rect.width)), frame: window.frame)
 }
 

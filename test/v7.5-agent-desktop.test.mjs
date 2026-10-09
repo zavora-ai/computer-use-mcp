@@ -86,20 +86,21 @@ const ocr = {
 }
 const bounds = { x: 100, y: 30, width: 1000, height: 600 }
 
-test('OCR boxes map from image pixels to window points and screen points', () => {
+test('OCR boxes map from image pixels to window points; screen is the window origin plus the box (v7.6)', () => {
   const lines = mapOcrLines(ocr, bounds)
   assert.deepEqual(lines[1].box, { x: 800, y: 5, w: 50, h: 15 })
-  assert.deepEqual(lines[1].screen, { x: 900, y: 35, w: 50, h: 15 })
+  assert.equal('screen' in lines[1], false, 'the per-line screen box was dropped')
   // Without a reported scale it is derived from the image and window widths.
   const derived = mapOcrLines({ ...ocr, scale: undefined }, bounds)
-  assert.deepEqual(derived[1].screen, lines[1].screen)
+  assert.deepEqual(derived[1].box, lines[1].box)
 })
 
 test('findText matches exact, contains and regex, in reading order, centring on the substring', () => {
   const lines = mapOcrLines(ocr, bounds)
+  const origin = { x: bounds.x, y: bounds.y }
   assert.equal(findText(lines, 'build', 'exact').length, 1)
   assert.equal(findText(lines, 'buil', 'exact').length, 0)
-  const edit = findText(lines, 'edit', 'contains')[0]
+  const edit = findText(lines, 'edit', 'contains', origin)[0]
   assert.equal(edit.matched, 'Edit')
   // "Edit" starts at character 6 of 18 in a line 180 points wide starting at x=110.
   assert.equal(edit.point.x, Math.round(110 + 180 * (6 / 18) + (180 * (4 / 18)) / 2))
@@ -153,12 +154,15 @@ function desktop({ idle = null, helperOcr = ocr, known = [] } = {}) {
   return { native, calls, helper, store, targets, guard, input, context, window }
 }
 
-test('read_window_text returns lines with window and screen boxes and honours min_confidence', async () => {
+test('read_window_text returns lines with window boxes plus screen_origin and honours min_confidence', async () => {
   const d = desktop()
   const result = await handleAgentDesktopTool('read_window_text', { target_app: 'com.epicgames.UnrealEditor', region: [0, 0, 500, 100], min_confidence: 0.5 }, d.context)
   assert.equal(result.isError, undefined)
   assert.equal(result.structuredContent.count, 2)
-  assert.deepEqual(result.structuredContent.lines[1].screen, { x: 900, y: 35, w: 50, h: 15 })
+  assert.deepEqual(result.structuredContent.lines[1].box, { x: 800, y: 5, w: 50, h: 15 })
+  assert.equal('screen' in result.structuredContent.lines[1], false)
+  assert.deepEqual(result.structuredContent.screen_origin, { x: 100, y: 30 })
+  assert.deepEqual(result.structuredContent.window.bounds, bounds)
   assert.deepEqual(d.calls.find(c => c[0] === 'ocr')[1].region, { x: 0, y: 0, width: 500, height: 100 })
   const linux = await handleAgentDesktopTool('read_window_text', { target_app: 'x' }, { ...d.context, platform: 'linux' })
   assert.equal(linux.structuredContent.error, 'platform_unsupported')

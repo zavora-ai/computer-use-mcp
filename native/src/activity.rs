@@ -282,17 +282,24 @@ mod macos_monitor {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{mpsc, OnceLock};
     use std::time::{Duration, Instant};
+    use super::seed_last_physical_ms;
 
     static CLOCK_ORIGIN: OnceLock<Instant> = OnceLock::new();
     static LAST_PHYSICAL_MS: AtomicU64 = AtomicU64::new(0);
     static TAP_STATUS: OnceLock<Result<(), String>> = OnceLock::new();
 
+    /// The clock starts one day in, not at zero, so a "last physical input" before this process started (seeded
+    /// from the system's idle counter at tap install) is representable: 0 reads as a day of idle, never as "now".
+    pub(crate) const CLOCK_BASE_MS: u64 = 86_400_000;
+
     fn monotonic_ms() -> u64 {
-        CLOCK_ORIGIN
-            .get_or_init(Instant::now)
-            .elapsed()
-            .as_millis()
-            .min(u128::from(u64::MAX)) as u64
+        CLOCK_BASE_MS.saturating_add(
+            CLOCK_ORIGIN
+                .get_or_init(Instant::now)
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+        )
     }
 
     fn install_tap() -> Result<(), String> {
@@ -365,7 +372,12 @@ mod macos_monitor {
                         return;
                     }
                 };
-                LAST_PHYSICAL_MS.store(monotonic_ms(), Ordering::Release);
+                // Seed the clock from the system's own HID idle counter, not from "now". Stamping "now" made the
+                // first guarded call of every server process read as user activity (user_active, msSinceInput
+                // under the threshold) with nobody at the keyboard; CI's macOS smoke test failed exactly there.
+                // CGEventSourceSecondsSinceLastEventType with the HID system state counts physical devices only;
+                // this process has posted nothing yet when the tap installs, so the reading is the user's.
+                LAST_PHYSICAL_MS.store(seed_last_physical_ms(monotonic_ms(), hid_idle_seconds()), Ordering::Release);
                 unsafe { run_loop.add_source(&source, kCFRunLoopCommonModes) };
                 tap.enable();
                 if sender.send(Ok(())).is_err() {
@@ -388,12 +400,75 @@ mod macos_monitor {
         ensure_started().as_ref().ok()?;
         Some(monotonic_ms().saturating_sub(LAST_PHYSICAL_MS.load(Ordering::Acquire)) as f64)
     }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        // CGEventSourceSecondsSinceLastEventType(CGEventSourceStateID stateID, CGEventType eventType) -> CFTimeInterval
+        fn CGEventSourceSecondsSinceLastEventType(state_id: u32, event_type: u32) -> f64;
+    }
+    const K_CG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 1;
+    const K_CG_ANY_INPUT_EVENT_TYPE: u32 = u32::MAX;
+
+    /// Seconds since the last physical (HID system state) input event, or None when the system can't say.
+    fn hid_idle_seconds() -> Option<f64> {
+        let seconds = unsafe {
+            CGEventSourceSecondsSinceLastEventType(K_CG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE, K_CG_ANY_INPUT_EVENT_TYPE)
+        };
+        if seconds.is_finite() && seconds >= 0.0 { Some(seconds) } else { None }
+    }
 }
 
 #[cfg(target_os = "macos")]
 #[napi]
 pub fn get_user_idle_time_ms() -> Option<f64> {
     macos_monitor::idle_time_ms()
+}
+
+/// The clock value to store at tap install: `now` minus the system's idle time, so the first reading reflects the
+/// user's real last input. Without an idle reading the clock is seeded far in the past (idle), never "now".
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) fn seed_last_physical_ms(now_ms: u64, hid_idle_seconds: Option<f64>) -> u64 {
+    match hid_idle_seconds {
+        Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
+            let idle_ms = (seconds * 1000.0).min(u64::MAX as f64) as u64;
+            now_ms.saturating_sub(idle_ms)
+        }
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::seed_last_physical_ms;
+
+    #[test]
+    fn seed_uses_the_system_idle_time() {
+        // 10 s idle at now = 60 s: the last input was at 50 s
+        assert_eq!(seed_last_physical_ms(60_000, Some(10.0)), 50_000);
+    }
+
+    #[test]
+    fn seed_never_reads_as_now_when_idle_is_unknown() {
+        assert_eq!(seed_last_physical_ms(60_000, None), 0);
+        assert_eq!(seed_last_physical_ms(60_000, Some(f64::NAN)), 0);
+        assert_eq!(seed_last_physical_ms(60_000, Some(-1.0)), 0);
+    }
+
+    #[test]
+    fn seed_saturates_when_idle_exceeds_uptime() {
+        assert_eq!(seed_last_physical_ms(5_000, Some(10.0)), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_clock_can_represent_input_before_process_start() {
+        // At install the elapsed time is ~0; a 20 s idle reading must still come out as 20 s, not 0.
+        let now = super::macos_monitor::CLOCK_BASE_MS + 5;
+        let seed = seed_last_physical_ms(now, Some(20.0));
+        assert_eq!(now - seed, 20_000);
+        // And the unknown case reads as a day idle, never as now.
+        assert!(now - seed_last_physical_ms(now, None) >= 86_400_000);
+    }
 }
 
 #[cfg(target_os = "windows")]

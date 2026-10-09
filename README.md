@@ -139,9 +139,11 @@ Downloads is not guaranteed to bypass those prompts.
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
 
-The default profile exposes **73 tools**. Set `COMPUTER_USE_PROFILE=core` for a
-smaller starting set; `ax`, `scripting`, `windows-admin` and `full` are also
-available. Optional host services add their own tools.
+The default profile, **`desktop`**, exposes about 39 tools on macOS: observation,
+coordinates, OCR for apps that draw their own UI, waits and the session target.
+Set `COMPUTER_USE_PROFILE=full` for every tool (73), or `core`, `ax`, `scripting`
+and `windows-admin` for other bounds. Tools that don't exist on your platform are
+not listed. Optional host services add their own tools.
 
 Try asking your agent:
 

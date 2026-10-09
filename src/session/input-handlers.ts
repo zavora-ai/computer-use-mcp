@@ -1,6 +1,6 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process'
 import type { AXBounds, NativeModule } from '../native.js'
-import { ok, type ToolResult } from '../result.js'
+import { ok, okJson, type ToolResult } from '../result.js'
 import { StructuredToolError } from './errors.js'
 import type { FocusController } from './focus.js'
 import type { ResolvedTarget, TargetStateController } from './target-state.js'
@@ -13,6 +13,7 @@ import { resolveAppWindow } from './window-select.js'
 type ExecFile = typeof defaultExecFileSync
 
 const INPUT_TOOLS = new Set([
+  'click', 'set_target', 'get_target',
   'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click',
   'mouse_move', 'left_click_drag', 'mouse_drag', 'left_mouse_down', 'left_mouse_up',
   'cursor_position', 'scroll', 'type', 'key', 'hold_key',
@@ -20,11 +21,13 @@ const INPUT_TOOLS = new Set([
 ])
 
 /** Tools that neither post input nor activate anything. */
-const NON_PHYSICAL_TOOLS = new Set(['cursor_position', 'read_clipboard', 'write_clipboard'])
+const NON_PHYSICAL_TOOLS = new Set(['cursor_position', 'read_clipboard', 'write_clipboard', 'set_target', 'get_target'])
+/** `hold_key` sleeps on the server thread (one native call), so a hold is capped; longer holds would block every tool. */
+export const MAX_HOLD_SECONDS = 10
 
 /** v7.5 (R5): tools whose input can be posted to the target process instead. */
 export const PID_DELIVERY_TOOLS = new Set([
-  'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'scroll', 'type', 'key',
+  'click', 'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'scroll', 'type', 'key',
 ])
 
 /**
@@ -233,6 +236,21 @@ export class InputHandler {
   }
 
   /** Describe a call for a user_active refusal. */
+  /** v7.6 R7: the session target as get_target / set_target report it. */
+  #describeTarget(): Record<string, unknown> | null {
+    const state = this.#targets.current()
+    if (!state) return null
+    const window = state.windowId !== undefined ? this.#native.getWindow(state.windowId) : null
+    return {
+      app: state.bundleId ?? null,
+      windowId: state.windowId ?? null,
+      title: window?.title ?? null,
+      onScreen: state.windowId !== undefined ? Boolean(window?.isOnScreen) : null,
+      establishedBy: state.establishedBy,
+      establishedAt: state.establishedAt,
+    }
+  }
+
   #wouldDo(tool: string, args: Record<string, unknown>): string {
     const at = Array.isArray(args.coordinate) ? ` at (${args.coordinate.join(', ')})` : ''
     const target = typeof args.target_app === 'string' ? ` in ${args.target_app}`
@@ -306,6 +324,32 @@ export class InputHandler {
       const [x, y] = coordinate()
       return this.clickAt({ x, y }, button, count, tool, args, route)
     }
+
+    // v7.6 R7: one click with button and count; the five v7 names below are aliases of it.
+    if (tool === 'click') {
+      const button = args.button === undefined ? 'left' : args.button
+      if (button !== 'left' && button !== 'right' && button !== 'middle') throw new Error('Invalid button: expected left, right or middle')
+      const count = args.count === undefined ? 1 : args.count
+      if (count !== 1 && count !== 2 && count !== 3) throw new Error('Invalid count: expected 1, 2 or 3')
+      return click(button, count)
+    }
+    if (tool === 'set_target') {
+      if (args.clear === true) { this.#targets.clear(); return okJson({ target: null, cleared: true }) }
+      const windowId = typeof args.window_id === 'number' ? args.window_id : undefined
+      const app = typeof args.app === 'string' && args.app.length > 0 ? args.app : undefined
+      const title = typeof args.title === 'string' && args.title.length > 0 ? args.title : undefined
+      if (windowId === undefined && app === undefined) throw new Error('set_target needs app, window_id, or clear: true')
+      let resolved: ResolvedTarget
+      if (windowId !== undefined) {
+        resolved = this.#targets.resolve({ target_window_id: windowId })
+      } else {
+        const window = resolveAppWindow(this.#native, app!, title)
+        resolved = { bundleId: app, ...(window ? { windowId: window.windowId } : {}) }
+      }
+      this.#targets.update(resolved, 'activation')
+      return okJson({ target: this.#describeTarget() })
+    }
+    if (tool === 'get_target') return okJson({ target: this.#describeTarget() })
 
     if (tool === 'left_click') return click('left', 1)
     if (tool === 'right_click') return click('right', 1)
@@ -454,11 +498,14 @@ export class InputHandler {
       const keys = normalizeHeldKeys(args.keys, this.#platform)
       const resolved = target()
       await focus(resolved)
+      // The native hold sleeps on the server thread, so cap it: a long hold would block every other tool.
+      const requested = number('duration', 1)
+      const duration = Math.min(Math.max(requested, 0), MAX_HOLD_SECONDS)
       try {
-        this.#native.holdKey(keys, number('duration', 1) * 1000)
+        this.#native.holdKey(keys, duration * 1000)
       } catch (error) { throw explainNativeKeyError(error) }
       if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
-      return ok('Held')
+      return ok(requested > MAX_HOLD_SECONDS ? `Held for ${duration} s (capped from ${requested} s)` : 'Held')
     }
 
     if (tool === 'read_clipboard') {

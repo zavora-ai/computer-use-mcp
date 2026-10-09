@@ -10,7 +10,7 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `skills/computer-use-windows-admin` — filesystem / registry / process
 
 **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
-**Profiles:** `COMPUTER_USE_PROFILE=core|ax|scripting|windows-admin|full` (default `full`)
+**Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools; `full` lists everything)
 
 **v7 environment & behaviors:**
 - **Cancellation:** tool calls honor the host `AbortSignal` (`wait` returns early; `run_script` terminates its subprocess tree through a POSIX process group or recursive Windows `taskkill`).
@@ -58,7 +58,7 @@ posture, and `policy_status` returns it as structured data.
 
 | Variable | Effect |
 |---|---|
-| `COMPUTER_USE_PROFILE` | `core \| ax \| scripting \| windows-admin \| full` (default `full`). Bounds the maximum exposed tool surface. |
+| `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6). Bounds the maximum exposed tool surface. |
 | `COMPUTER_USE_ACTIVE_PROFILE` | Starting profile within that bound; may be narrowed at runtime but never widened past `COMPUTER_USE_PROFILE`. |
 | `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: separately installed platform package → bundled binary). |
 | `COMPUTER_USE_LEGACY_FOCUS_TAG=true` | Restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`). |

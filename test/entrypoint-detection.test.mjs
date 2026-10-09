@@ -83,3 +83,8 @@ test('isModuleEntrypoint reports false rather than throwing on bad input', async
   // A path that does not exist cannot be resolved, so it is not the entrypoint.
   assert.equal(isModuleEntrypoint(url, '/nonexistent/path/that/cannot/resolve'), false)
 })
+
+test('isStdioEntrypoint accepts the self-checking launcher', () => {
+  assert.equal(isStdioEntrypoint('/repo/dist/launch.js'), true)
+  assert.equal(isStdioEntrypoint('C:\\repo\\dist\\launch.js'), true)
+})

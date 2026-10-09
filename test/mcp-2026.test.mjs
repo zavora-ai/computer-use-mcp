@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import test from 'node:test'
+import { TOOL_CATALOG } from '../dist/tool-catalog.js'
+
+// v7.6: these tests describe the full v7 surface; the default profile is `desktop` since 7.6.
+process.env.COMPUTER_USE_PROFILE ??= 'full'
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
@@ -67,10 +71,11 @@ test('2026 discover is stateless and advertises only implemented extensions', as
     assert.deepEqual(discover.body.result.supportedVersions, ['2026-07-28'])
     assert.deepEqual(discover.body.result.capabilities.extensions, { [TASKS]: {} })
     assert.equal(discover.body.result.resultType, 'complete')
-    assert.equal(discover.body.result._meta['io.modelcontextprotocol/serverInfo'].version, '7.5.0')
+    assert.equal(discover.body.result._meta['io.modelcontextprotocol/serverInfo'].version, '7.6.0')
 
     const listed = await modernRequest(handler, 'tools/list')
-    assert.equal(listed.body.result.tools.length, 73)
+    // v7.6 R7: tools that do not exist on this platform are not registered
+    assert.equal(listed.body.result.tools.length, Object.values(TOOL_CATALOG).filter(meta => !meta.platforms || meta.platforms.includes(process.platform)).length)
     for (const tool of listed.body.result.tools) {
       assert.equal(typeof tool.title, 'string')
       for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {

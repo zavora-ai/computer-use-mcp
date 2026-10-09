@@ -1,5 +1,82 @@
 # Changelog
 
+## v7.6.0 (unreleased)
+
+The design pass and the defect fixes from the 2026-10-09 reviews
+([review](docs/reviews/2026-10-09-desktop-control-review.md), [second pass on the design](docs/reviews/2026-10-09-design-second-pass.md),
+spec [v7.6 R7](docs/specs/v7.6-honest-actions/requirements.md)). Measured on the live server before the change: the default
+`tools/list` was 73 tools and 112,727 bytes (about 30k tokens); half of the schema bytes were the same seven targeting
+parameters repeated on every input tool.
+
+### Changed
+
+- **The default profile is `desktop`** (core plus the OCR and wait tools and `agent_pointer`); `COMPUTER_USE_PROFILE=full`
+  lists everything as before. On macOS the default list is 39 tools and 45,942 bytes on the wire (about 12k tokens);
+  `full` is 84,037 bytes, down from 112,727.
+- **Tools that do not exist on a platform are neither listed nor callable there** (`registry` and `notification` on
+  macOS and Linux, the OCR tools off macOS, Spaces on Linux). They used to be listed and fail with `platform_unsupported`.
+- **One `click`** (`button: left|right|middle`, `count: 1|2|3`, with the usual targeting and `delivery`). `left_click`,
+  `right_click`, `middle_click`, `double_click` and `triple_click` remain callable as thin aliases; they still accept
+  `target_app`, `target_window_id`, `delivery` and `force`.
+- **Shared parameters are described in one sentence each** (`target_app`, `target_window_id`, `target_title`,
+  `focus_strategy`, `force`, `delivery`); the guidance moved to the server instructions and `get_tool_guide`.
+- **`approval_token` is no longer advertised on mutating tools' schemas.** It is accepted in the call's
+  `_meta["computer-use/approval_token"]` and, for compatibility, as an undeclared argument. Policy behaviour is unchanged.
+  `COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN=true` restores the old schemas.
+- **Two `_meta` fields per tool** (`computer-use/focusRequired`, `computer-use/mutates`); `get_tool_metadata` still returns
+  the full set. `COMPUTER_USE_FULL_WIRE_META=true` restores all seven.
+- **Server instructions are generated per platform and profile from the catalog** and describe this release: route
+  order with OCR for self-drawn apps, the user-active guard and `delivery`, waits, the session target. The v7.0 text told
+  every host to prefer the accessibility tree, which is empty on Unreal and Blender.
+- `read_window_text` lines carry `box` (window points) and the result carries the window's screen origin once; the
+  per-line `screen` rectangle is gone (it doubled the geometry bytes).
+- `get_app_capabilities` reports what the accessibility tree contains (`accessibility: { nodes, hasControls }`) instead
+  of `accessible: true` for any app with a window.
+
+### Added
+
+- **`set_target` / `get_target`:** the session target made explicit, so input and capture tools can omit targeting.
+- **`wait_for_text`** (macOS): wait until text appears in a window, or disappears with `gone: true`, by on-device OCR.
+- **`wait_for_stable`** (macOS): wait until a window stops changing (consecutive captures identical for `quiet_ms`).
+  `region` is accepted and reported as `regionApplied: false` until the capture helper gains a crop; the whole window is hashed.
+- `screenshot` `full_screen: true` captures the whole screen even when a session target is set.
+- Every tool has a `job` (`observe`, `act`, `semantic`, `script`, `admin`, `browser`, `spaces`, `meta`) in the catalog,
+  and `tools/list` has byte budgets under test on the real transport (`desktop` 48,000, `full` 88,000).
+
+### Fixed (from the 2026-10-09 review)
+
+- **Two ScreenCaptureKit captures at once no longer hang.** Measured while testing the new waits: fifteen sequential
+  capture-helper runs passed, two side by side both stalled until killed, and the wrapper then reported the killed
+  helper as a silent `exit 1`. Helper runs are now serialised within a server and across servers (an advisory lock in
+  `~/Library/Caches/computer-use-mcp/helper.lock`, taken over from a dead process, waited for from a live one, then
+  `helper_busy`); a helper killed by the timeout is reported as `helper_timeout` with the duration; and the helper itself
+  turns a ScreenCaptureKit stall into an `sck_timeout` error after 10 s instead of hanging. Found live on 2026-10-09.
+
+- **The user-active guard no longer refuses the first input call of a fresh server.** The passive HID tap stamped
+  "last physical input = now" when it installed, so any guarded call in the next `COMPUTER_USE_USER_IDLE_MS` was refused
+  with `user_active` and nobody at the keyboard (PR #35's macOS smoke test failed exactly there). The clock is now seeded
+  from the system's HID idle counter (`CGEventSourceSecondsSinceLastEventType`), so the first reading is the user's real
+  last input.
+- **`process_kill` can't broadcast.** `pid` must be 2 or more (`kill(2)` with 0, 1 or a negative pid signals a process
+  group or every process the user owns); a `name` is matched exactly (`pgrep -x`, `pkill -x`) and an ambiguous match is
+  refused with `ambiguous_name` unless `all: true`.
+- **`hold_key` is capped at 10 s** (schema and handler). The hold sleeps on the server thread, so an unbounded duration
+  froze every other tool; the result says when it was capped.
+- **Start-up no longer dies silently.** Empty or non-numeric `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS` and
+  `COMPUTER_USE_TASK_POLL_INTERVAL_MS` fall back to their defaults with a stderr note instead of throwing at import;
+  unhandled promise rejections are logged to stderr instead of ending the process; the stdio entry check also accepts
+  the real path of the module (bin symlinks).
+
+### Added (from the 2026-10-09 review)
+
+- **`dist/launch.js`, the self-checking launcher** (now the package `bin`). It imports only Node built-ins, checks that
+  `node_modules`, `dist/server.js` and the native addon are present, prints the fix (`npm ci`, `npm run build:ts`,
+  `npm run build:native`) to stderr and exits 2 when they aren't, and otherwise loads the server. Found when the
+  workspace's `node_modules/` was deleted and every start since 2026-10-04 ended as "connection closed" with no reason
+  visible to the host.
+- **Non-destructive TypeScript build:** `build:ts` compiles into `dist.next` and swaps it in, so a server starting
+  mid-build still finds `dist/`.
+
 ## v7.5.0 (2026-10-01)
 
 Work beside a person instead of over them, and read apps that draw their own UI. Every

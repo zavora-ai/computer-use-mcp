@@ -25,6 +25,7 @@ export function isStdioEntrypoint(argv1: string | undefined): boolean {
   return (
     normalized.endsWith('/server.ts') ||
     normalized.endsWith('/server.js') ||
+    normalized.endsWith('/launch.js') ||
     normalized.endsWith('/computer-use-mcp')
   )
 }

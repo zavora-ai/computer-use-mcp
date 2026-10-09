@@ -1,6 +1,6 @@
 # v7.5 "agent desktop": design
 
-Status: **pre-approved by James 2026-10-01; implemented on `feat/v7.5-agent-desktop` (uncommitted)**. Implements
+Status: **pre-approved by James 2026-10-01; implemented on `feat/v7.5-agent-desktop` (`b97de7e`, PR #35)**. Implements
 [requirements.md](requirements.md). Last updated 2026-10-01. "Decided:" notes record choices made during implementation
 where this design was open.
 
