@@ -215,9 +215,17 @@ export async function handleAdminTool(
     const mode = requiredString(args, 'mode')
     if (mode === 'list') {
       if (isWindows) {
+        // Get-Process on a cold machine can take over 10 s (seen on the CI runner), and a timeout used to come back
+        // as an empty error text. Give it 30 s and say what happened.
+        const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : 20
+        const timeoutMs = 30_000
         const result = await context.spawnBounded('powershell', ['-NoProfile', '-Command',
-          'Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 20 Id,ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json'], 10_000)
-        return result.code === 0 ? ok(result.stdout) : { content: [{ type: 'text', text: result.stderr }], isError: true }
+          `Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First ${limit} Id,ProcessName,@{N="MemMB";E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json`], timeoutMs)
+        if (result.code === 0) return ok(result.stdout)
+        if (result.timedOut) {
+          return errJson({ error: 'timeout', message: `powershell Get-Process did not answer within ${timeoutMs} ms`, hint: 'Retry; a machine under load can take a while to enumerate processes.' })
+        }
+        return errJson({ error: 'process_list_failed', message: result.stderr.trim() || `powershell exited with ${result.code}` })
       }
       const result = await context.spawnBounded('ps', isLinux ? ['aux', '--sort=-%mem'] : ['aux', '-r'], 5_000)
       return ok(result.stdout.split('\n').slice(0, 21).join('\n'))
