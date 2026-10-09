@@ -5,7 +5,7 @@
 <style>text{font-family:Arial,Helvetica,sans-serif;fill:#193950}.title{font-size:34px;font-weight:700}.section{font-size:21px;font-weight:700}.heading{font-size:19px;font-weight:700}.body{font-size:16px}.small{font-size:14px;fill:#4a677c}.edge{fill:none;stroke:#3c6685;stroke-width:2;marker-end:url(#arrow)}.card{fill:#edf5fd;stroke:#a7c5de;stroke-width:1.4}.opt{fill:#eaf8f4;stroke:#a0ccc0;stroke-width:1.4}.panel{fill:white;stroke:#d5e1ea;stroke-width:1.3}</style>
 <rect width="1600" height="1900" fill="#f5f8fc"/>
 <text x="50" y="62" class="title">computer-use-mcp</text>
-<text x="50" y="95" class="body">Version 7.2 • 10 September 2026</text>
+<text x="50" y="95" class="body">Version 7.6.0 • 9 October 2026</text>
 <text x="50" y="124" class="small">Arrows show calls or the labeled control operation. Results return along the call path.</text>
 <rect x="30" y="150" width="1540" height="540" rx="12" class="panel"/>
 <text x="55" y="187" class="section">1   Core tool execution</text>

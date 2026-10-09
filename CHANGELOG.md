@@ -1,6 +1,6 @@
 # Changelog
 
-## v7.6.0 (unreleased)
+## v7.6.0 (2026-10-09)
 
 The design pass and the defect fixes from the 2026-10-09 reviews
 ([review](docs/reviews/2026-10-09-desktop-control-review.md), [second pass on the design](docs/reviews/2026-10-09-design-second-pass.md),
@@ -77,7 +77,7 @@ parameters repeated on every input tool.
 - **Non-destructive TypeScript build:** `build:ts` compiles into `dist.next` and swaps it in, so a server starting
   mid-build still finds `dist/`.
 
-## v7.5.0 (2026-10-01)
+## v7.5.0 (2026-10-01; shipped as part of v7.6.0, never published on its own)
 
 Work beside a person instead of over them, and read apps that draw their own UI. Every
 change came from building a game with Unreal and Blender, where the agent stopped using

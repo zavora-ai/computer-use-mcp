@@ -1,8 +1,42 @@
-# computer-use-mcp 7.2 architecture
+# computer-use-mcp architecture
+
+The protocol, authority and Tasks sections below were written for 7.2 and still describe the transport and policy layers
+of 7.6.0. The tool surface has since changed (7.5 and 7.6, released together as 7.6.0); the section that follows is the current one, and the sections
+after it note where a 7.2 figure is superseded.
+
+## Current surface (7.6.0)
+
+- **Profile and platform filtering happen at registration.** The registry registers a tool only when it is inside
+  `COMPUTER_USE_PROFILE` (the bound, default `desktop`) and exists on the running platform (`platforms` in the catalog).
+  A tool that fails either test is neither listed nor callable. Profiles nest: `core` is inside `desktop`, which is
+  inside `ax`, `scripting` and `windows-admin`, all inside `full`.
+- **Sizes.** The catalog has 78 tools. On macOS the default `desktop` profile lists 39 (45,942 bytes of `tools/list` on the
+  wire, about 12k tokens) and `full` lists 76 (84,037 bytes, down from 112,727 before 7.6); Windows lists 35 and 74, Linux 35
+  and 66. Byte budgets (`desktop` 48,000, `full` 88,000) are tests on the real transport. Every tool has a `job`
+  (`observe`, `act`, `semantic`, `script`, `admin`, `browser`, `spaces`, `meta`); the instructions and `get_tool_guide` are
+  organised by it, and profiles remain the permission tiers.
+- **Server instructions** are generated per platform and profile from the catalog (`src/instructions.ts`) and describe
+  the route order (the app's own API, scripting, accessibility, OCR for self-drawn apps, coordinates), the user-active
+  guard, waits and the session target.
+- **Wire shape.** Shared targeting parameters are one sentence each; `approval_token` is in no schema (the registry copies
+  `_meta["computer-use/approval_token"]` into the arguments before policy runs, and still accepts it as an undeclared
+  argument); two `_meta` fields per tool by default (`COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN` and
+  `COMPUTER_USE_FULL_WIRE_META` restore the pre-7.6 shapes). One `click` carries the button and count; the five older click
+  names stay as thin aliases.
+- **Session target.** `set_target` / `get_target` expose the target state the session already kept, so input and capture
+  tools may omit targeting.
+- **Capture helper.** macOS window capture and OCR go through one Swift ScreenCaptureKit/Vision helper. Helper runs are
+  serialised within a server and across servers by an advisory lock (`~/Library/Caches/computer-use-mcp/helper.lock`); a
+  killed helper is `helper_timeout`, a stalled capture is `sck_timeout` after 10 s, a held lock is `helper_busy`.
+- **Launcher.** `dist/launch.js` (the package `bin`) uses only Node built-ins, checks `node_modules`, `dist/server.js`
+  and the native addon, names the fix and exits 2 when one is missing, and otherwise loads the server.
+- **User-active guard.** A passive HID event tap (Input Monitoring for the host app) stamps the last physical input; the
+  clock is seeded from the system HID idle counter so the first call of a fresh server is judged on real history.
+  Without the permission the guard allows every call and `doctor` reports the clock as unavailable.
 
 ## Compatibility boundary
 
-Version 7.2 preserves all 64 v7 tool names and input schemas and adds application discovery as the 65th tool. Protocol negotiation is independent of that tool API:
+Version 7.2 preserved all 64 v7 tool names and input schemas and added application discovery as the 65th tool (7.5 and 7.6 added the OCR, wait, `click` and session-target tools; every earlier name is still callable, the click variants as aliases, though the input schemas of the shared targeting parameters and `approval_token` changed in 7.6). Protocol negotiation is independent of that tool API:
 
 - MCP 2026-07-28 uses stateless requests, `server/discover`, per-request client identity/capabilities, in-band multi-round-trip input, and `subscriptions/listen`.
 - MCP 2025-11-25 and earlier continue through the SDK's legacy initialization path.
@@ -12,10 +46,10 @@ Version 7.2 preserves all 64 v7 tool names and input schemas and adds applicatio
 flowchart LR
   Modern["2026-07-28 client"] -->|"per-request envelope"| Entry["SDK v2 serving entry"]
   Legacy["2025 client"] -->|"initialize"| Entry
-  Entry -->|"modern: one instance per HTTP request"| Server["Computer Use MCP 7.2"]
+  Entry -->|"modern: one instance per HTTP request"| Server["Computer Use MCP"]
   Entry -->|"legacy HTTP: stateless fallback"| Server
   Entry -->|"stdio: instance pinned to connection era"| Server
-  Server --> Registry["Validated 65-tool registry"]
+  Server --> Registry["Validated registry (profile and platform filtered)"]
   Registry --> Policy["Policy, approval, authorization"]
   Policy --> Session["Targeting, lock, cancellation"]
   Session --> Native["Rust N-API and bounded scripts"]
@@ -138,3 +172,5 @@ None of these hooks grants model-callable authority by itself.
 ## Component diagram
 
 ![Computer Use MCP components](assets/architecture.svg)
+
+The diagram was drawn for 7.2 (it says 65 tools); read its counts through the *Current surface (7.6.0)* section above.

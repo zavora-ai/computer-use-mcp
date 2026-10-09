@@ -59,7 +59,7 @@ seconds, which is fine out of process and fatal inside it.
 
 `get_screenshot_of_window_as_json` returns each area's `type`, `x`, `y`, `width`,
 `height` and space context. Those are Blender-window coordinates, so combined with
-`desktop__get_window` bounds they tell you exactly where to click for something the
+`desktop__get_window` bounds they tell you exactly where to click (`click`) for something the
 Python API cannot reach. That is the bridge between the two servers: Blender says
 where its panels are, computer-use acts on them.
 
@@ -74,7 +74,12 @@ reports `scriptable: false, accessible: false`.
 
 Blender's structure comes from **Blender**, not from the operating system:
 `get_screenshot_of_window_as_json` returns the window layout, areas, active object
-and selection. Use that where you would normally use an accessibility tree.
+and selection. Use that where you would normally use an accessibility tree. For
+what only the window shows (a dialog, a progress line, a message), computer-use's
+OCR route (`read_window_text` with a `region`, `click_text`) reads it without
+screenshots and without activating Blender; `get_app_capabilities` reports
+`accessibility: { nodes, hasControls }`, which for Blender is a few nodes and
+`hasControls: false`.
 
 ## Routing
 
@@ -91,9 +96,10 @@ and selection. Use that where you would normally use an accessibility tree.
 | Frame an object, switch workspace | `jump_to_view3d_object_by_name`, `jump_to_tab_by_name` | blender |
 | Audit a file: missing textures, links, polycount | `get_blendfile_summary_*` | blender |
 | Batch work on a `.blend` without touching the session | `*_for_cli` variants | blender |
-| Launch Blender, confirm it is up and past the splash | `open_application`, `list_windows`, `screenshot` | computer-use |
-| Blender is hung, or a modal dialog is blocking the socket | `screenshot`, `left_click`, `key` | computer-use |
-| Sculpt or paint strokes | `mouse_drag` | computer-use |
+| Launch Blender, confirm it is up and past the splash | `open_application`, `wait_for_window` (`kind: "main"`), `list_windows`, `screenshot` | computer-use |
+| Blender is hung, or a modal dialog is blocking the socket | `list_windows` (kind `dialog`), `read_window_text`, `click_text`, `key`; `click` by coordinate last | computer-use |
+| Wait for a render, a save or a dialog to finish | `wait_for_text` (macOS, OCR), `wait_for_stable` (window stops changing), `wait_for_window` | computer-use |
+| Sculpt or paint strokes | `mouse_drag` (in the `ax` and `full` profiles, not the default `desktop` one) | computer-use |
 | Prove to a human what the screen showed | `screenshot` | computer-use |
 
 ## Write Python, don't click
@@ -132,6 +138,15 @@ So:
 3. Never re-send an image to ask a question that text can answer.
 4. Keep the conversation append-only. Prefix caching only hits on a full prefix
    match, so editing earlier turns to save tokens throws away a much larger saving.
+
+## While the user is working
+
+computer-use refuses input that would take focus or move the mouse within a few
+seconds of the person's own input (`user_active`). `delivery: "pid"` posts keys to
+the process without activating it, but apps differ in what they accept and
+`get_app_capabilities` reports what has worked for Blender. Blender routes hotkeys
+to the editor under the pointer, so prefer Python through the blender server over
+hotkeys. Do not pass `force: true` unless the user asked for that action.
 
 ## Order of work
 

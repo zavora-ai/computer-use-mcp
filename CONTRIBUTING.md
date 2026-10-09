@@ -8,7 +8,7 @@ Thank you for your interest in contributing!
 ```bash
 git clone https://github.com/zavora-ai/computer-use-mcp
 cd computer-use-mcp
-npm install
+npm ci
 npm run build
 npm run demo  # verify everything works
 ```
@@ -25,7 +25,7 @@ node test/smoke-windows.mjs # verify everything works
 
 **Windows prerequisites:**
 - [Rust](https://rustup.rs) (stable, 1.70+) with MSVC toolchain
-- [Node.js](https://nodejs.org) 18+
+- [Node.js](https://nodejs.org) 20+
 - Visual Studio Build Tools (C++ workload) or Visual Studio with C++ support
 - Windows SDK (included with VS Build Tools)
 
@@ -40,7 +40,7 @@ npm run build:ts             # compiles TypeScript
 
 **Linux prerequisites:**
 - [Rust](https://rustup.rs) (stable, 1.70+)
-- [Node.js](https://nodejs.org) 18+
+- [Node.js](https://nodejs.org) 20+
 - X11 dev libraries: `sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxrandr-dev`
 - Runtime tools: `sudo apt-get install -y xdotool wmctrl xclip scrot`
 - For Wayland: `sudo apt-get install -y wl-clipboard ydotool grim`
@@ -62,7 +62,10 @@ native/src/       Rust NAPI module — each file has #[cfg(target_os)] for macOS
 test/             Automated test suite (node:test + fast-check property tests)
 examples/         Runnable demos
 scripts/          Ad-hoc development scripts
-docs/specs/       Historical design specs
+docs/specs/       Design specs (requirements → design → tasks); older ones are historical
+docs/reviews/     Reviews and the inputs behind them
+docs/releases/    Release notes, one per version
+libexec/          The macOS capture and OCR helper (Swift, compiled on first use)
 dist/             Compiled TypeScript output (generated, not committed)
 ```
 
@@ -130,13 +133,25 @@ npx tsx examples/demo-v4.ts           # Window targeting
 
 - Keep PRs focused — one feature or fix per PR
 - Update the README if you add or change a tool
-- Run `npm test` and confirm all tests pass
+- Run `npm test` and confirm all tests pass; `tools/list` has byte budgets under test (`test/v7.6-tool-surface.test.mjs`), so a new tool must fit or raise them deliberately
 - Bump the version in `package.json` following semver if you change public API
+
+## Releasing
+
+1. Bump the version in `package.json`, then `npm run prepare:packages` (stamps the six platform packages); the version also lives
+   in `src/server.ts` (`SERVER_INFO`), `src/mcp-tasks.ts` and `mcp-server.toml`. The unit suite pins it.
+2. Date the `CHANGELOG.md` section, write `docs/releases/vX.Y.Z.md`, add it to `files` in `package.json` and link it from the README.
+3. Open a PR; CI builds every native target, runs the suite on five platforms and verifies the tarball. Merge when green.
+4. Tag the merge commit (`git tag -a vX.Y.Z -m ... && git push origin vX.Y.Z`) and publish the GitHub release from the release note
+   (`gh release create vX.Y.Z --verify-tag --notes-file docs/releases/vX.Y.Z.md`).
+5. The push to `main` runs the "Stage npm release for approval" job: it packs the attested tarball with its SBOM and runs
+   `npm stage publish` with OIDC provenance. A maintainer approves the staged publish on npmjs.com. A later push to `main` with
+   the same version is skipped by that job.
 
 ## Reporting bugs
 
 Open a GitHub issue with:
-1. macOS version (`sw_vers`)
+1. Platform and version (`sw_vers`, `winver` or `lsb_release -a`)
 2. Node.js version (`node --version`)
 3. The exact error message
 4. Steps to reproduce

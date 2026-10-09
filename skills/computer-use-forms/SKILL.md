@@ -14,8 +14,11 @@ when the one above cannot do the job:
    browser's own chrome including its dialogs.
 2. **The page** — a browser-automation server acting by selector, or `browser_find`
    for an element's exact screen coordinates. Anything inside a web page.
-3. **Pixels** — `screenshot`, then `left_click` and `type`. A canvas, a custom-drawn
-   control, an app that exposes nothing.
+3. **OCR** (macOS) — `read_window_text` with a `region`, then `click_text` on a label.
+   Apps that draw their own UI have an empty accessibility tree; OCR needs no coordinates
+   and works on a covered window. `wait_for_text` confirms a value or a message appeared.
+4. **Pixels** — `screenshot`, then `click` and `type`. A canvas, a custom-drawn
+   control, an app that exposes nothing, text OCR cannot read.
 
 ## Facts you cannot infer, each measured
 
@@ -26,12 +29,17 @@ harder. Toolbar buttons and dialogs like "Save password?" *are* accessible.
 
 **A capture is smaller than the screen.** 2560 wide arrives 1024 wide, so one image
 pixel is 2.5 real ones, against a field about 35 pixels tall. Every `screenshot` reply
-states its own mapping — read it rather than deriving one. A window capture includes
-the window's shadow so its scale is approximate; a screen capture is exact; a window
-that could not be captured silently becomes a screen capture, and the reply says so.
+states its own mapping — read it rather than deriving one. On macOS 14+ a window
+capture is the window alone, without its shadow, so the mapping is exact; on older
+systems and other platforms a window capture can include a shadow and its scale is
+approximate. A window that could not be captured silently becomes a screen capture, and
+the reply says so. With a session target set, `screenshot` captures that window;
+`full_screen: true` captures the screen.
 
-**`zoom` takes desktop coordinates**, not window ones, and returns 1:1. Raise the
-window first or you will capture whatever else is at those coordinates.
+**`zoom` returns 1:1.** Without a target it takes desktop coordinates, so raise the
+window first or you will capture whatever else is at those coordinates. With
+`target_app` or `target_window_id` (since 7.5) the region is in that window's points,
+from its top-left.
 
 **A single-page app discards input typed before it hydrates.** A field still empty
 after you typed is usually this, not a missed click.
@@ -42,7 +50,7 @@ keyboard, establish where focus is by typing and looking, then move relatively.
 
 ## Invariants
 
-- **Verify the value landed before you submit.** One capture. This catches nearly
+- **Verify the value landed before you submit.** One capture (or `read_window_text` on the field's region). This catches nearly
   every failure in this loop, and skipping it is what makes the work slow, because the
   mistake then surfaces several calls later as something confusing.
 - **Verify the outcome by something outside the form** — a window title, a URL,

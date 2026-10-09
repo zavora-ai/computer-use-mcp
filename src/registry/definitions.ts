@@ -92,7 +92,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     quality: z.number().int().min(0).max(100).optional().describe('Screenshot quality; 0 = PNG'),
   }, DYNAMIC_MUT)
 
-  tool('screenshot', 'Capture the screen or a specific window. BEFORE using this, consider get_ui_tree or find_element to discover UI by role/label — structured queries are cheaper than visual parsing. Auto-targets the active session window when no explicit target is given.', {
+  tool('screenshot', 'Capture the screen or a specific window (the session target when one is set; full_screen: true for the whole screen). To read text, read_window_text is cheaper than an image; for native apps, get_ui_tree or find_element return controls by role and label.', {
     width: z.number().int().positive().optional()
       .describe('Override width in pixels. Omit to use provider-optimal default.'),
     quality: z.number().int().min(0).max(100).optional()

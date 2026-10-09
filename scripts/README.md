@@ -14,7 +14,7 @@ need a native build and OS permissions. They are not unattended unit tests.
 | `npm run evaluate:strategy -- baseline.json candidate.json` | Compare matched, independently verified task traces. |
 | `npm run prepare:packages` | Stamp platform manifests and copy available native binaries. |
 
-`clean-dist.mjs` only removes generated TypeScript output. `live-windows.mjs` is
+`build-ts.mjs` compiles TypeScript into `dist.next` and swaps it into `dist`, so a server starting mid-build still finds its files (`clean-dist.mjs` only removes generated output). `live-windows.mjs` is
 an attended Windows development probe. Legacy Mission Control/Spaces experiments
 and obsolete v3–v5 scripts were removed in v7.2; their history remains in Git.
 Only `verify-input-attribution.mjs` is included as a script in the npm package.
