@@ -60,6 +60,8 @@ parameters repeated on every input tool.
 - **`process_kill` can't broadcast.** `pid` must be 2 or more (`kill(2)` with 0, 1 or a negative pid signals a process
   group or every process the user owns); a `name` is matched exactly (`pgrep -x`, `pkill -x`) and an ambiguous match is
   refused with `ambiguous_name` unless `all: true`.
+- **`process_kill` `mode: list` on Windows** gives `Get-Process` 30 s instead of 10, reports a timeout as `timeout` with the
+  duration (it used to come back as an empty error text), and honours `limit`. A cold CI runner hit the old bound.
 - **`hold_key` is capped at 10 s** (schema and handler). The hold sleeps on the server thread, so an unbounded duration
   froze every other tool; the result says when it was capped.
 - **Start-up no longer dies silently.** Empty or non-numeric `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS` and
