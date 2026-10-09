@@ -451,10 +451,11 @@ mod macos {
     }
 
     #[napi]
-    pub fn mouse_move(x: f64, y: f64) {
+    pub fn mouse_move(x: f64, y: f64) -> napi::Result<()> {
         if crate::activity::emergency_stop_active() {
-            return;
+            return Ok(());
         }
+        crate::permissions::ensure_input_trusted()?;
         let point = CGPoint::new(x, y);
         let event = CGEvent::new_mouse_event(
             source(),
@@ -464,6 +465,7 @@ mod macos {
         )
         .unwrap();
         post(event);
+        Ok(())
     }
 
     /// Resolve a button name to its CGEvent down/up/dragged triple.
@@ -526,6 +528,7 @@ mod macos {
         which: u8,
     ) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let (mouse_button, down, up, dragged) = button_events(button)?;
         let flags = modifier_flags(modifiers)?;
         let event_type = match which {
@@ -590,6 +593,7 @@ mod macos {
 
     fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, additive: bool) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let point = CGPoint::new(x, y);
         let (btn, down_type, up_type) = match button.as_str() {
             "left" => (
@@ -644,6 +648,7 @@ mod macos {
     #[napi]
     pub fn mouse_button(action: String, x: f64, y: f64) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let point = CGPoint::new(x, y);
         let evt_type = match action.as_str() {
             "press" => CGEventType::LeftMouseDown,
@@ -679,21 +684,24 @@ mod macos {
     }
 
     #[napi]
-    pub fn mouse_scroll(dy: i32, dx: i32) {
+    pub fn mouse_scroll(dy: i32, dx: i32) -> napi::Result<()> {
         if crate::activity::emergency_stop_active() {
-            return;
+            return Ok(());
         }
+        crate::permissions::ensure_input_trusted()?;
         if let Ok(event) = CGEvent::new_scroll_event(source(), ScrollEventUnit::LINE, 2, dy, dx, 0)
         {
             post(event);
         }
+        Ok(())
     }
 
     #[napi]
-    pub fn mouse_drag(x: f64, y: f64) {
+    pub fn mouse_drag(x: f64, y: f64) -> napi::Result<()> {
         if crate::activity::emergency_stop_active() {
-            return;
+            return Ok(());
         }
+        crate::permissions::ensure_input_trusted()?;
         let point = CGPoint::new(x, y);
         let event = CGEvent::new_mouse_event(
             source(),
@@ -703,6 +711,7 @@ mod macos {
         )
         .unwrap();
         post(event);
+        Ok(())
     }
 
     // ── Pid delivery (v7.5): post to one process, never move the real cursor ──
@@ -731,6 +740,7 @@ mod macos {
         window_id: Option<u32>,
     ) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let point = CGPoint::new(x, y);
         let (btn, down_type, up_type, _) = button_events(&button)?;
         let moved = CGEvent::new_mouse_event(
@@ -773,6 +783,7 @@ mod macos {
         window_id: Option<u32>,
     ) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let event = CGEvent::new_scroll_event(source(), ScrollEventUnit::LINE, 2, dy, dx, 0)
             .map_err(|_| napi::Error::from_reason("Could not create scroll event"))?;
         {

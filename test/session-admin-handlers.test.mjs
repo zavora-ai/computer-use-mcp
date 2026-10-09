@@ -248,3 +248,28 @@ test('process_kill by name matches the exact name and refuses an ambiguous match
   assert.deepEqual(invocations[1], ['pkill', ['-9', '-x', 'node']])
   assert.match(killed.content[0].text, /2 processes named node/)
 })
+
+// ── v7.6: the Windows process list names a timeout and honours limit ───────────────────────────
+// A cold CI runner took over 10 s for Get-Process, and the timeout came back as an empty error text.
+
+test('process_kill list on Windows passes the limit and names a PowerShell timeout', async () => {
+  let invocation
+  const ok = await handleAdminTool('process_kill', { mode: 'list', limit: 5 }, context({
+    spawnBounded: async (...args) => { invocation = args; return { stdout: '[]', stderr: '', code: 0, timedOut: false } },
+  }))
+  assert.equal(ok.isError, undefined)
+  assert.equal(invocation[0], 'powershell')
+  assert.match(invocation[1].join(' '), /-First 5 /)
+  assert.equal(invocation[2], 30_000)
+  const slow = await handleAdminTool('process_kill', { mode: 'list' }, context({
+    spawnBounded: async () => ({ stdout: '', stderr: '', code: -1, timedOut: true }),
+  }))
+  assert.equal(slow.isError, true)
+  assert.equal(slow.structuredContent.error, 'timeout')
+  assert.match(slow.structuredContent.message, /30000 ms/)
+  const failed = await handleAdminTool('process_kill', { mode: 'list' }, context({
+    spawnBounded: async () => ({ stdout: '', stderr: 'access denied', code: 1, timedOut: false }),
+  }))
+  assert.equal(failed.structuredContent.error, 'process_list_failed')
+  assert.equal(failed.structuredContent.message, 'access denied')
+})

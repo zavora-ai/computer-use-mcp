@@ -187,6 +187,50 @@ You can confirm the server is available with:
 codex mcp list
 ```
 
+## Cursor
+
+Cursor reads MCP servers from `~/.cursor/mcp.json` (every project) or
+`.cursor/mcp.json` inside a project (that project only):
+
+```json
+{
+  "mcpServers": {
+    "computer-use": {
+      "command": "npx",
+      "args": ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
+    }
+  }
+}
+```
+
+Open **Customize** in the sidebar (Cursor Settings › MCP on older releases): the
+server shows as connected with its tools listed. Cursor asks before running an
+MCP tool by default, so the first `screenshot` or `left_click` prompts; allowlist
+the tools you want to run unattended and keep the prompt for input and
+`run_script`. Add an `env` block to the same entry to narrow the surface
+(`"COMPUTER_USE_PROFILE": "core"`), or point `command`/`args` at `node` and a
+checkout's `dist/server.js` to run a source build.
+
+**Cursor is the host process on macOS.** Cursor spawns the server, so macOS
+attributes every permission to Cursor — not to `node`, `npx` or your terminal.
+Enable **Cursor** in System Settings › Privacy & Security › **Accessibility** and
+**Screen & System Audio Recording**, allow it under **Automation** when
+`run_script` first targets an app, then restart Cursor. Without Accessibility,
+input tools refuse with `accessibility_permission_denied` rather than silently
+doing nothing. Ask the agent to run `doctor` from inside Cursor: a `doctor` run
+from a terminal reports the terminal's grants, not Cursor's.
+
+**Reading code and driving the machine in one loop.** Cursor already reads and
+edits the codebase; this server lets the same agent operate the running
+application and compare the two. Prompts that use both:
+
+- *"Read `src/login-form.tsx`, start the app, submit the form on screen with a
+  wrong password, and tell me whether the error state matches the code."*
+- *"Reproduce the bug in issue #12: open the app, follow the steps from the issue,
+  and take a screenshot after each one."*
+- *"Read `test/smoke.mjs`, run it, then check the screenshot against what the
+  test asserts."*
+
 ## Claude (Anthropic)
 
 ### Claude Desktop

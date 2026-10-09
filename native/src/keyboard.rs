@@ -421,6 +421,7 @@ mod macos {
     fn key_press_impl(combo: &str, repeat: Option<i32>, pid: Option<i32>) -> napi::Result<()> {
         let map = key_code_map();
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let repeat = repeat.unwrap_or(1);
         let combo_lower = combo.to_lowercase();
         let parts: Vec<&str> = combo_lower.split('+').map(|s| s.trim()).collect();
@@ -465,14 +466,15 @@ mod macos {
         key_press_impl(&combo, repeat, Some(pid))
     }
 
-    fn type_text_impl(text: &str, pid: Option<i32>) {
+    fn type_text_impl(text: &str, pid: Option<i32>) -> napi::Result<()> {
         if crate::activity::emergency_stop_active() {
-            return;
+            return Ok(());
         }
+        crate::permissions::ensure_input_trusted()?;
         let chars: Vec<u16> = text.encode_utf16().collect();
         for chunk in chars.chunks(20) {
             if crate::activity::emergency_stop_active() {
-                return;
+                return Ok(());
             }
             let down = CGEvent::new_keyboard_event(source(), 0, true).unwrap();
             down.set_string_from_utf16_unchecked(chunk);
@@ -481,16 +483,17 @@ mod macos {
             deliver(up, pid);
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
+        Ok(())
     }
 
     #[napi]
-    pub fn type_text(text: String) {
+    pub fn type_text(text: String) -> napi::Result<()> {
         type_text_impl(&text, None)
     }
 
     /// Type Unicode text into one process without activating it.
     #[napi]
-    pub fn type_text_to_pid(pid: i32, text: String) {
+    pub fn type_text_to_pid(pid: i32, text: String) -> napi::Result<()> {
         type_text_impl(&text, Some(pid))
     }
 
@@ -691,6 +694,7 @@ mod macos {
     }
 
     fn type_keys_impl(text: &str, pid: Option<i32>) -> napi::Result<serde_json::Value> {
+        crate::permissions::ensure_input_trusted()?;
         crate::activity::ensure_not_emergency_stopped()?;
         let (table, layout) = char_table();
         let mut as_keys = 0u32;
@@ -759,6 +763,7 @@ mod macos {
     #[napi]
     pub fn hold_key(keys: Vec<String>, duration_ms: i32) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
         let map = key_code_map();
         let mut pressed: Vec<(CGKeyCode, CGEventFlags)> = Vec::new();
 

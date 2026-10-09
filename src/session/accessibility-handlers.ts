@@ -150,6 +150,20 @@ function similarLabels(
 }
 
 /** Accessibility, scripting, and capability-advisor handlers. */
+/**
+ * osascript reports a refused Apple event as `Not authorized to send Apple events
+ * to <app>. (-1743)`. That is macOS Automation permission for this host process,
+ * granted per target application, and nothing in the script can change it — so
+ * name the setting instead of leaving the agent to rewrite and retry the script.
+ */
+export function withAutomationHint(stderr: string): string {
+  if (!/\(-1743\)|Not authorized to send Apple events/i.test(stderr)) return stderr
+  const target = /Apple events to (.+?)\.\s*\(-1743\)/.exec(stderr)?.[1]
+  return `${stderr}\nautomation_permission_denied: macOS refused Apple events${target ? ` to ${target}` : ''} from this host process. `
+    + `Allow your terminal, IDE or agent host to control ${target ?? 'the target application'} in `
+    + 'System Settings > Privacy & Security > Automation, then retry.'
+}
+
 export async function handleAccessibilityTool(
   tool: string,
   args: Record<string, unknown>,
@@ -301,7 +315,10 @@ export async function handleAccessibilityTool(
     const timeoutMs = Math.max(100, Math.min(requested, 120_000))
     const result = await context.runScript(language, stringArg(args, 'script'), timeoutMs, context.signal)
     if (result.timedOut) return { content: [{ type: 'text', text: `script timed out after ${timeoutMs}ms` }], isError: true }
-    if (result.code !== 0) return { content: [{ type: 'text', text: (result.stderr || `script exited with code ${result.code}`).trimEnd() }], isError: true }
+    if (result.code !== 0) {
+      const stderr = (result.stderr || `script exited with code ${result.code}`).trimEnd()
+      return { content: [{ type: 'text', text: withAutomationHint(stderr) }], isError: true }
+    }
     return ok(result.stdout.replace(/\n+$/, ''))
   }
 
