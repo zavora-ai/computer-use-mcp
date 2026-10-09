@@ -56,35 +56,35 @@ credential_bindings = []
 
 [[tools]]
 name = "left_click"
-description = "Left Click"
+description = "Alias of click (button left, count 1)"
 risk_class = "internal_write"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "right_click"
-description = "Right Click"
+description = "Alias of click (button right)"
 risk_class = "internal_write"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "middle_click"
-description = "Middle Click"
+description = "Alias of click (button middle)"
 risk_class = "internal_write"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "double_click"
-description = "Double Click"
+description = "Alias of click (count 2)"
 risk_class = "internal_write"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "triple_click"
-description = "Triple Click"
+description = "Alias of click (count 3)"
 risk_class = "internal_write"
 requires_approval = false
 credential_bindings = []

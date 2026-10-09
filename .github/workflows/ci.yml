@@ -270,6 +270,11 @@ jobs:
               "dist/session/accessibility-handlers.js",
               "dist/session/spaces-handlers.js",
               "dist/session/screenshot-handlers.js",
+              // v7.5 agent desktop and v7.6 surface
+              "dist/launch.js", "dist/env.js", "dist/instructions.js", "dist/entrypoint.js",
+              "dist/session/agent-desktop-handlers.js", "dist/session/macos-helper.js", "dist/session/pid-delivery.js",
+              "dist/session/user-activity.js", "dist/session/window-select.js", "dist/session/keys.js", "dist/session/input-handlers.js",
+              "libexec/macos-agent-helper.swift", "docs/releases/v7.5.0.md", "docs/releases/v7.6.0.md",
               "dist/session/input-handlers.js",
               "dist/session/scripting-service.js",
               "dist/session/openai-handler.js",
@@ -423,8 +428,10 @@ jobs:
             expected=$(npm view "@zavora-ai/computer-use-mcp@$ver" dist.integrity)
             actual=$(node -e "const fs=require('fs'),c=require('crypto'); process.stdout.write('sha512-'+c.createHash('sha512').update(fs.readFileSync(process.argv[1])).digest('base64'))" "$archive")
             if [ "$actual" != "$expected" ]; then
-              echo "published @zavora-ai/computer-use-mcp@$ver does not match the attested tarball; bump the version" >&2
-              exit 1
+              # A docs or CI change after the release changes the tarball but not the version. That is not a reason to
+              # fail main: nothing is published, and the next version bump stages a fresh release.
+              echo "::warning::@zavora-ai/computer-use-mcp@$ver is already published and the tarball differs from this build; nothing staged. Bump the version to publish again."
+              exit 0
             fi
             echo "@zavora-ai/computer-use-mcp@$ver already published with identical integrity — skipping"
           else

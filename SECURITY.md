@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| 7.4.x | Yes |
-| 7.3.x | Security fixes |
+| 7.6.x | Yes |
+| 7.3.x – 7.4.x | Security fixes |
 | 7.0.x – 7.2.x | Security fixes |
 | 6.x and earlier | No |
 
@@ -15,7 +15,7 @@ Do not use a public GitHub issue. Email **security@zavora.ai** with a descriptio
 
 ## Security boundary
 
-The server acts with the OS permissions of its process. With Accessibility/UI Automation, Screen Recording, and scripting permission, it can observe and control most of the desktop. The `full` profile is therefore a high-privilege local capability.
+The server acts with the OS permissions of its process. With Accessibility/UI Automation, Screen Recording, and scripting permission, it can observe and control most of the desktop. The default profile since 7.6 is `desktop` (observation, coordinates, OCR, waits); `COMPUTER_USE_PROFILE=full` adds scripting, the filesystem, process control and the browser tools and is therefore a high-privilege local capability.
 
 The primary command uses MCP over stdio. The separate `computer-use-mcp-http` command opens a loopback-only Streamable HTTP listener with `Host` and `Origin` checks. `scrape` and user-authored `run_script` content can still initiate network access.
 
@@ -25,7 +25,7 @@ The primary command uses MCP over stdio. The separate `computer-use-mcp-http` co
 - Tool annotations describe risk but are not authorization controls.
 - `ServerOptions.authorizeToolCall` lets an embedding host enforce transport identity and scope before dispatch.
 - `COMPUTER_USE_ALLOWED_APPS` and `COMPUTER_USE_BLOCKED_APPS` constrain application targets.
-- `COMPUTER_USE_REQUIRE_APPROVAL`, `COMPUTER_USE_REQUIRE_APPROVAL_FOR`, and `COMPUTER_USE_APPROVAL_TOKEN` gate configured operations.
+- `COMPUTER_USE_REQUIRE_APPROVAL`, `COMPUTER_USE_REQUIRE_APPROVAL_FOR`, and `COMPUTER_USE_APPROVAL_TOKEN` gate configured operations. Since 7.6 the token travels in the call's `_meta["computer-use/approval_token"]` and is not advertised in any tool schema, so a model never sees a credential-shaped field; it is still accepted as an undeclared argument.
 - MCP form elicitation is one-shot. Accepting one action never approves a later call.
 - Modern Roots and elicitation responses carry HMAC-signed, expiring request state bound to the exact method, client, tool, and arguments. Configure `COMPUTER_USE_REQUEST_STATE_SECRET` when retries must survive process restarts.
 - Approval messages show the exact bounded scope involved. Tokens never appear in the message or audit log.

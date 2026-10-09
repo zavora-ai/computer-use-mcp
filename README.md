@@ -120,30 +120,33 @@ Before using desktop tools:
 
 | Platform | Setup |
 |---|---|
-| macOS | Grant the host Accessibility and Screen Recording access. App scripting may also request Automation access. |
+| macOS 14+ | Grant the host app (the terminal or agent that launches the server) Accessibility and Screen Recording access; Input Monitoring lets the user-active guard see when you are typing or moving the mouse. App scripting may also request Automation access. |
 | Windows | Run in a signed-in desktop session. Protected or elevated windows may need matching privileges. |
 | Linux | Use a graphical session with the required X11/Wayland utilities. Accessibility support needs AT-SPI. See [platform details](docs/ARCHITECTURE.md). |
 
-Ask your agent to run `doctor` to check capabilities. Office must be installed and
-activated separately; its folder-access prompts are normal setup requirements.
-Downloads is not guaranteed to bypass those prompts.
+Ask your agent to run `doctor` to check capabilities. The `computer-use-mcp` command checks
+its own install first (dependencies, build, native module) and names the fix on stderr if
+something is missing. Office must be installed and activated separately; its folder-access
+prompts are normal setup requirements. Downloads is not guaranteed to bypass those prompts.
 
 ## What it can do
 
 | Capability | Examples |
 |---|---|
 | Discover applications | Find installed and running apps, identify their targets, and choose an automation approach. |
-| Read the interface | Capture a window, zoom into a region, inspect accessibility controls and find a button or field; read a window's text by on-device OCR when an app draws its own UI. |
-| Operate applications | Click controls, fill forms, select menus, type text, drag paths and use keyboard shortcuts. |
+| Read the interface | Capture a window, zoom into a region, inspect accessibility controls and find a button or field; read a window's text by on-device OCR when an app draws its own UI; wait for a window, for text, or for the screen to settle instead of polling screenshots. |
+| Operate applications | Click controls (`click` with button and count), fill forms, select menus, type text, drag paths and use keyboard shortcuts; set a session target once instead of naming the window on every call. |
 | Use app scripting | AppleScript/JXA on macOS and PowerShell on Windows. |
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
 
-The default profile, **`desktop`**, exposes about 39 tools on macOS: observation,
+The default profile, **`desktop`**, exposes 39 tools on macOS: observation,
 coordinates, OCR for apps that draw their own UI, waits and the session target.
-Set `COMPUTER_USE_PROFILE=full` for every tool (73), or `core`, `ax`, `scripting`
-and `windows-admin` for other bounds. Tools that don't exist on your platform are
-not listed. Optional host services add their own tools.
+Set `COMPUTER_USE_PROFILE=full` for every tool (76 on macOS), or `core`, `ax`,
+`scripting` and `windows-admin` for other bounds. Tools that don't exist on your
+platform are not listed. Optional host services add their own tools. The server's
+instructions to the agent are generated for your platform and profile, so they only
+name tools that are there.
 
 Try asking your agent:
 
@@ -163,6 +166,7 @@ controls.
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
 import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
 
+// The default profile is `desktop`; pass { profile: 'full' } for every tool.
 const client = await connectInProcess(createComputerUseServer())
 try {
   const apps = await client.discoverApplications({
@@ -226,8 +230,9 @@ browser fixture. These live checks need their documented platform prerequisites.
 
 ## Documentation and support
 
-- [v7.5.0 release notes](docs/releases/v7.5.0.md)
+- [v7.6.0 release notes](docs/releases/v7.6.0.md) (includes 7.5.0: [its notes](docs/releases/v7.5.0.md))
 - [v7.4.0 release notes and rollout checklist](docs/releases/v7.4.0.md)
+- [Reviews](docs/reviews/): the 2026-10-09 review and design pass behind 7.6.0
 - [Tool usage and agent setup](AGENTS.md)
 - [Architecture and platform support](docs/ARCHITECTURE.md)
 - [Sessions, Tasks, browser isolation and supervision](docs/STRATEGY.md)
