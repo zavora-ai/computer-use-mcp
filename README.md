@@ -96,6 +96,13 @@ anything that can reach the port. Fine on your own machine, never on a shared ho
 
 ## Set up your agent
 
+**Windows desktop status card (optional):** set `COMPUTER_USE_STATUS_OVERLAY=1` in your
+MCP server environment to show a compact, always-on-top activity panel with
+elapsed time, recent steps, and Pause / Resume / Stop controls. It uses the
+existing MCP session and native pointer rather than another desktop driver.
+See [the Windows status overlay guide](docs/windows-status-overlay.md) for
+behavior, previews, and cancellation limitations.
+
 Requires **Node.js 20+** and an interactive desktop. The published package bundles
 native modules for macOS, Windows and Linux, on x64 and arm64.
 

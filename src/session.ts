@@ -1,4 +1,5 @@
 import { withToolDefaults } from './registry/definitions.js'
+import { WindowsStatusOverlay } from './status-overlay.js'
 /**
  * Session — resilient computer use session with in-process focus management.
  *
@@ -213,6 +214,12 @@ export function createSession(opts: SessionOptions = {}): Session {
   // first reading taken at the first tool call would refuse that call.
   userGuard.activity()
 
+  // Opt-in Windows status panel, launched only on the first desktop action.
+  // Mock-native sessions remain headless so tests and embedded hosts do not
+  // unexpectedly spawn a user interface.
+  const statusOverlay = IS_WINDOWS && opts.native == null && process.env.COMPUTER_USE_STATUS_OVERLAY === '1'
+    ? new WindowsStatusOverlay()
+    : undefined
   const virtualPointer = new VirtualPointerController(n)
   const spacesHandler = new SpacesHandler({ native: n, spawnBounded, sleep })
   const screenshotHandler = new ScreenshotHandler({
@@ -535,16 +542,34 @@ export function createSession(opts: SessionOptions = {}): Session {
     return result
   }
 
-  const coordinated: Session['dispatch'] = (tool, args, signal, progress, context) => {
-    if (closed) return Promise.reject(new Error('Session is closed'))
-    return MUTATING_TOOLS.has(tool) && !context?.preflight
-      ? coordinateDesktop(opts.lockPath ?? DEFAULT_SESSION_LOCK_PATH, () => dispatch(tool, args, signal, progress, context), signal)
-      : dispatch(tool, args, signal, progress, context)
+  const coordinated: Session['dispatch'] = async (tool, args, signal, progress, context) => {
+    if (closed) throw new Error('Session is closed')
+    const show = statusOverlay && !context?.preflight && tool !== 'doctor' && tool !== 'policy_status'
+    const mutates = MUTATING_TOOLS.has(tool)
+    if (show) {
+      const veto = statusOverlay.check(mutates)
+      if (veto) return errJson({ error: veto, message: 'Desktop control is paused or stopped by the local user' })
+      statusOverlay.begin(tool)
+    }
+    let failed = true
+    try {
+      const effectiveSignal = statusOverlay
+        ? (signal ? AbortSignal.any([signal, statusOverlay.signal]) : statusOverlay.signal)
+        : signal
+      const result = mutates && !context?.preflight
+        ? await coordinateDesktop(opts.lockPath ?? DEFAULT_SESSION_LOCK_PATH,
+          () => dispatch(tool, args, effectiveSignal, progress, context), effectiveSignal)
+        : await dispatch(tool, args, effectiveSignal, progress, context)
+      failed = Boolean(result.isError)
+      return result
+    } finally {
+      if (show) statusOverlay.finish(failed)
+    }
   }
   return {
     dispatch: coordinated,
     preflight: (tool, args, signal, context) => dispatch(tool, args, signal, undefined, { ...context, preflight: true }),
-    close: () => { closeRequested = true; dispose() },
+    close: () => { closeRequested = true; statusOverlay?.close(); dispose() },
     retain: () => { references++; let released = false; return () => { if (!released) { released = true; references--; dispose() } } },
     getLastScreenshot: () => screenshotHandler.lastScreenshot(),
   }
