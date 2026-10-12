@@ -103,4 +103,10 @@ check that counts.
 
 **CI on #41 (2026-10-12):** the Windows test jobs failed on the new packaging test (a `file:` URL pathname is not a Windows path; fixed with `fileURLToPath`), and the Linux test jobs failed in the input smoke step: `multi_select` now validates coordinates, which asks the display size, and the runner had no X server (review T6: the smoke used to pass by doing nothing). The Linux job now runs that step under Xvfb with the X11 tools installed.
 
-**Release (2026-10-12):** #41 merged as 06a14bd; tag `v7.6.1` and the GitHub release published; npm staging runs from `main` for James to approve. A stray `libexec/__pycache__/*.pyc` from a local syntax check rode in with the merge and was removed in the next commit; the tarball staged from that commit is the clean one.
+**Release (2026-10-12):** #41 merged as 06a14bd (squash, co-authored by ShakeCrane). A stray `libexec/__pycache__/*.pyc`
+from a local syntax check rode in with the merge; #42 (3860ca4) removed it and ignores `__pycache__/`. The tag `v7.6.1` and
+the GitHub release were then re-cut on 3860ca4, so the tag, the release and the tarball share a commit. The `main` run on
+3860ca4 passed every job and staged `@zavora-ai/computer-use-mcp@7.6.1` (tag `latest`, 182 files, 5.5 MB, shasum
+`25b9e231c9f3b968943790d1247bbcf7edb81315`, stage id `9fcd12b1-a7ed-4464-b623-3a5b7d047de9`) for James's approval on
+npmjs.com. Still open after the release: #40 (ShakeCrane's Windows validation, then close), #36 (the publish workflow for
+the per-platform packages), and the adk-rust Anthropic converter gap noted in the agent example.
