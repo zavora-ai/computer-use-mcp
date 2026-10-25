@@ -517,20 +517,55 @@ export class MacosCardPresenter implements CardPresenter {
   stop(): void { try { this.#child?.kill() } catch { /* already gone */ } }
 }
 
-/** The Windows card: PowerShell and WPF (the lineage is PR #40), with the server's pid watched and capture excluded. */
+/** How long the Windows card has to show its window (PowerShell and WPF take 2–7 s to start cold). */
+const WINDOWS_CARD_START_MS = 20_000
+
+/**
+ * The Windows card: PowerShell and WPF (the lineage is PR #40), with the server's pid watched and capture excluded.
+ * 7.7.1: up when its window exists (the script writes `windows-card.json`); a PowerShell that exits first, as on a
+ * service or session-0 desktop, is reported instead of counted as launched.
+ */
 export class WindowsCardPresenter implements CardPresenter {
   readonly kind = 'windows'
   #child: ChildProcess | undefined
-  constructor(private readonly options: { scriptPath?: string } = {}) {}
-  start(directory: string): void {
+  constructor(private readonly options: {
+    scriptPath?: string
+    /** Tests: the command that stands in for PowerShell. */
+    command?: (directory: string) => { file: string; args: string[] }
+    startMs?: number
+  } = {}) {}
+
+  async start(directory: string): Promise<void> {
     const script = this.options.scriptPath ?? libexecPath('windows-status-card.ps1')
-    const child = spawn('powershell.exe',
-      ['-NoLogo', '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script, directory],
-      { windowsHide: true, stdio: 'ignore' })
+    const { file, args } = this.options.command?.(directory) ?? {
+      file: 'powershell.exe',
+      args: ['-NoLogo', '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script, directory],
+    }
+    const child = spawn(file, args, { windowsHide: true, stdio: 'ignore' })
+    this.#child = child
+    const limit = this.options.startMs ?? WINDOWS_CARD_START_MS
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + limit
+      const finish = (error?: Error) => {
+        clearInterval(timer)
+        child.off('exit', onExit)
+        child.off('error', onError)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onExit = (code: number | null) => finish(new Error(`${file} exited with code ${code ?? 'null'} before the card appeared (no interactive desktop?).`))
+      const onError = (error: Error) => finish(new Error(`${file} could not be started: ${error.message}. The Windows card needs powershell.exe on PATH.`))
+      const timer = setInterval(() => {
+        if (existsSync(join(directory, 'windows-card.json'))) finish()
+        else if (Date.now() > deadline) finish(new Error(`The card did not appear within ${limit / 1000} s.`))
+      }, 50)
+      child.once('exit', onExit)
+      child.once('error', onError)
+    })
     child.on('error', () => { /* the card is optional */ })
     child.unref()
-    this.#child = child
   }
+
   stop(): void { try { this.#child?.kill() } catch { /* already gone */ } }
 }
 
@@ -608,15 +643,16 @@ export function defaultCardPresenter(platform: NodeJS.Platform = process.platfor
 
 /**
  * Whether the desktop status card shows. 7.7.0 (K5): on by default on macOS, where it has run since 7.6.1;
- * `COMPUTER_USE_STATUS_CARD=false` turns it off. Windows stays opt-in (`true`) until the card has been run on more
- * hardware. Linux is opt-in too: its card takes a strip of the desktop from the person's windows and shows in
- * captures (masked), and it has run on GNOME and one X11 window manager so far.
+ * `COMPUTER_USE_STATUS_CARD=false` turns it off. 7.7.1: on by default on Windows too, except inside `node --test`
+ * (`NODE_TEST_CONTEXT`), so a Windows test run does not open a PowerShell card for every real session it builds.
+ * Linux is opt-in: its card takes a strip of the desktop from the person's windows and shows in captures (masked),
+ * and it has run on GNOME and one X11 window manager so far.
  */
 export function statusCardEnabled(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
   const raw = env.COMPUTER_USE_STATUS_CARD?.trim().toLowerCase()
   if (raw === 'true' || raw === '1') return true
   if (raw === 'false' || raw === '0') return false
-  return platform === 'darwin'
+  return platform === 'darwin' || (platform === 'win32' && !env.NODE_TEST_CONTEXT)
 }
 
 /** The emergency-stop chord armed by default (7.7.0, K5): two modifiers and Escape, shown on the card. */

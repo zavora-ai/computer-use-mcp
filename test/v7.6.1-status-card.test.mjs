@@ -124,8 +124,8 @@ test('control_status is a core read-only tool on every platform, and the instruc
   assert.match(buildInstructions('darwin', 'desktop'), /paused_by_user or stopped_by_user/)
 })
 
-test('the card was opt-in in 7.6.1; 7.7.0 turns it on by default on macOS only', () => {
-  assert.equal(statusCardEnabled({}, 'win32'), false)
+test('the card was opt-in in 7.6.1; 7.7.0 turns it on by default on macOS, 7.7.1 on Windows too', () => {
+  assert.equal(statusCardEnabled({}, 'win32'), true)
   assert.equal(statusCardEnabled({}, 'linux'), false)
   assert.equal(statusCardEnabled({}, 'darwin'), true)
   assert.equal(statusCardEnabled({ COMPUTER_USE_STATUS_CARD: 'true' }, 'win32'), true)

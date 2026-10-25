@@ -10,7 +10,8 @@ import { join } from 'node:path'
 import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 
-const server = createComputerUseServer()
+// The admin and scripting tools exercised below are in the `full` profile (the default is `desktop` since v7.6).
+const server = createComputerUseServer({ profile: 'full' })
 const client = await connectInProcess(server)
 
 const text = r => r.content?.find(c => c.type === 'text')?.text ?? ''

@@ -254,6 +254,11 @@ export const REFUSALS: Readonly<Record<string, RefusalAdvice>> = {
     hint: 'No control matched. Use similarLabels if offered, or look at the tree (find_element with a looser label) before trying coordinates.',
     next: (args) => typeof args.window_id === 'number' ? { tool: 'get_ui_tree', arguments: { window_id: args.window_id, max_depth: 6 } } : undefined,
   },
+  // 7.7.1 (Windows): a role UI Automation has no control type for.
+  unknown_role: {
+    hint: 'That role is not one Windows reports. Use a role from valid_roles (similar_roles are the closest), as get_ui_tree shows them.',
+    next: (args) => typeof args.window_id === 'number' ? { tool: 'get_ui_tree', arguments: { window_id: args.window_id, max_depth: 6 } } : undefined,
+  },
   outside_display: {
     hint: 'Those coordinates are not on any display. Take a screenshot and map the point again with the mapping it states.',
     next: (args) => ({ tool: 'screenshot', arguments: targetArgs(args) }),

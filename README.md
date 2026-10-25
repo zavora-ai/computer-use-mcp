@@ -140,7 +140,7 @@ prompts are normal setup requirements. Downloads is not guaranteed to bypass tho
 | Use app scripting | AppleScript/JXA on macOS and PowerShell on Windows. |
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
-| Stay in control | A desktop status card (on by default on macOS; `COMPUTER_USE_STATUS_CARD=true` on Windows and Linux) shows what the agent is doing with Pause and Stop, and `ctrl+alt+escape` stops it. Moving the mouse or typing pauses the agent until you stop. Neither the card nor the agent's pointer appears in its screenshots (on Linux the card is painted out of them, and it reserves a strip of the desktop instead of floating on top). |
+| Stay in control | A desktop status card (on by default on macOS and Windows; `COMPUTER_USE_STATUS_CARD=true` on Linux) shows what the agent is doing with Pause and Stop, and `ctrl+alt+escape` stops it. Moving the mouse or typing pauses the agent until you stop. Neither the card nor the agent's pointer appears in its screenshots (on Linux the card is painted out of them, and it reserves a strip of the desktop instead of floating on top). |
 
 The default profile, **`desktop`**, exposes 37 tools on macOS: observation,
 coordinates, OCR for apps that draw their own UI, waits and the session target.

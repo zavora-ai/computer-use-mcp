@@ -349,7 +349,10 @@ export async function runDoctor(options: {
         id: 'status_card',
         status: !card?.enabled ? 'skip' : card.error || linuxProblem ? 'warn' : 'pass',
         summary: !card?.enabled
-          ? 'Desktop status card off (set COMPUTER_USE_STATUS_CARD=true to show the person what the agent does, with Pause and Stop).'
+          ? isWindows
+            // 7.7.1: on by default on Windows, so off means someone set it off.
+            ? 'Desktop status card off (COMPUTER_USE_STATUS_CARD=false; unset it to show the person what the agent does, with Pause and Stop).'
+            : 'Desktop status card off (set COMPUTER_USE_STATUS_CARD=true to show the person what the agent does, with Pause and Stop).'
           : card.error
             ? `Desktop status card could not start: ${card.error}`
             : linuxProblem
