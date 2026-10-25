@@ -10,6 +10,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createComputerUseServer } from '../dist/server.js'
+import { createSession } from '../dist/session.js'
 import { connectInProcess } from '../dist/client.js'
 import { RunStore, newRunId, RUN_CONSOLE_URI } from '../dist/agent-run.js'
 import { RUN_CONSOLE_HTML, runConsoleHtml, ANALYTICS_BRAND } from '../dist/run-console.js'
@@ -279,6 +280,48 @@ test('a captured screenshot is a real frame from the session, not model text', a
     assert.equal(later.content.some(block => block.type === 'image'), false,
       'an unrelated progress call does not re-send the last frame')
     assert.equal(parse(await client.callTool('run_console', { runId })).screenshot.data, 'ZmFrZS1mcmFtZQ==')
+  } finally {
+    await client.close()
+  }
+})
+
+test('every capture of a still screen attaches a current frame', async () => {
+  // 7.7.0 (K3) answers a screenshot identical to the last one with text, three
+  // times in a row. The console capture went through that, so on a still screen
+  // three captures in four attached nothing and the console kept the old frame
+  // and its time. An unchanged screen is still the current frame.
+  let captures = 0
+  const native = {
+    getDisplaySize: () => ({ width: 1440, height: 900, pixelWidth: 2880, pixelHeight: 1800, scaleFactor: 2, displayId: 1 }),
+    getFrontmostApp: () => ({ bundleId: 'com.apple.Terminal', displayName: 'Terminal', pid: 1 }),
+    listRunningApps: () => [],
+    listWindows: () => [],
+    getWindow: () => null,
+    takeScreenshot(_width, _app, _quality, previousHash) {
+      captures += 1
+      if (previousHash === 'same') return { width: 800, height: 500, mimeType: 'image/jpeg', hash: 'same', unchanged: true }
+      return { base64: 'ZnJhbWU=', width: 800, height: 500, mimeType: 'image/jpeg', hash: 'same', unchanged: false }
+    },
+  }
+  let tick = 0
+  const runStore = new RunStore(() => new Date(Date.UTC(2026, 9, 25, 0, 0, tick++)))
+  const client = await connect({ session: createSession({ native }), runStore })
+  try {
+    const { runId } = parse(await client.callTool('run_start', { prompt: 'watch' }))
+    const times = []
+    for (let i = 1; i <= 5; i++) {
+      const result = await client.callTool('run_progress', { runId, capture: true, narration: `frame ${i}` })
+      const image = result.content.find(block => block.type === 'image')
+      assert.ok(image, `capture ${i} returns the frame`)
+      assert.equal(image.data, 'ZnJhbWU=')
+      const at = parse(result).screenshot.at
+      assert.notEqual(at, times.at(-1), `capture ${i} refreshes the console's frame time`)
+      times.push(at)
+    }
+    assert.equal(captures, 5, 'each capture looks at the screen again')
+    const shown = parse(await client.callTool('run_console', { runId }))
+    assert.equal(shown.screenshot.data, 'ZnJhbWU=')
+    assert.equal(shown.screenshot.at, times.at(-1))
   } finally {
     await client.close()
   }

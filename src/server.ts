@@ -318,9 +318,12 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     const runConsole = registerRunConsole(server, {
       ...(opts.runStore ? { store: opts.runStore } : {}),
       capture: async windowId => {
+        // resend: an unchanged screen is still a current frame. Without it, three
+        // captures in four came back as text and the console kept the old frame's time.
         const result = await session.dispatch('screenshot', {
           ...(windowId !== undefined ? { target_window_id: windowId } : {}),
           quality: 70,
+          resend: true,
         })
         const image = result.content.find(block => block.type === 'image')
         return image && image.type === 'image' ? { data: image.data, mimeType: image.mimeType } : null

@@ -92,6 +92,9 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   cropped as pixels of the capture: on Linux, which scales that capture to 1024 wide, a region on a 1920-wide screen
   came from the wrong place (or off the image), and on a Retina Mac without the capture helper it covered a quarter
   of the area. It is now scaled into the capture.
+- **`run_progress {capture: true}` attaches a current frame on a still screen.** The console's capture went through
+  the unchanged-capture text reply, so three captures in four attached nothing and the run console kept showing the
+  old frame and its time. It now always sends the image (`resend: true`).
 - **Linux accessibility on GTK 4, and the focused element** (issue #21). `find_element`, `click_element`,
   `set_value`, `press_button` and `fill_form` walked 10 levels of the AT-SPI tree, and GTK 4 puts its controls 15 to 20
   levels down, so every search of a GTK 4 window failed with "AT-SPI search truncated". A search now walks up to 30
