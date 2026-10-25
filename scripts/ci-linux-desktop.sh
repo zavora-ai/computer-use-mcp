@@ -35,6 +35,14 @@ wait_for() { # seconds, description, command...
   return 1
 }
 
+# The check takes about a minute. A hang fails the job with a message instead of holding the runner (7.7.0).
+run_check() {
+  local status=0
+  timeout --kill-after=10 300 node "$root/scripts/linux-check.mjs" "$@" || status=$?
+  if [ "$status" -eq 124 ]; then echo "linux-check did not finish within 300 s" >&2; fi
+  return "$status"
+}
+
 # A private session bus that can start no services. A normal session bus starts xdg-desktop-portal when GTK asks it for
 # the theme, the portal tries GNOME's backend, which cannot run here, and zenity waits 25 s for the D-Bus timeout
 # before it shows a window. With nothing to start, the lookup fails at once and GTK uses its defaults.
@@ -82,7 +90,7 @@ case "$desktop" in
     # A window manager announces itself on the root window (EWMH); activation needs one.
     wait_for 10 "$desktop to manage the display" sh -c 'xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"'
     echo "desktop: $desktop on Xvfb :$number"
-    node "$root/scripts/linux-check.mjs"
+    run_check
     ;;
   sway)
     export GDK_BACKEND=wayland
@@ -95,7 +103,7 @@ case "$desktop" in
     WAYLAND_DISPLAY=$(cd "$XDG_RUNTIME_DIR" && ls wayland-* | grep -v '\.lock$' | head -1)
     export SWAYSOCK WAYLAND_DISPLAY XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway
     echo "desktop: sway (headless) on $WAYLAND_DISPLAY"
-    node "$root/scripts/linux-check.mjs" --skip-input
+    run_check --skip-input
     ;;
   *)
     echo "unknown desktop: $desktop (xfwm4, openbox or sway)" >&2

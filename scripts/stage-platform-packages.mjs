@@ -18,13 +18,17 @@ function runNpm(args) {
 function errorCode(result) {
   try { return JSON.parse(result.stdout).error?.code } catch { return undefined }
 }
+/** An E404 for a version of a package that exists ("No match found for version"), not for a name npm has never seen. */
+function isMissingVersion(result) {
+  try { return /No match found for version/i.test(JSON.parse(result.stdout).error?.summary ?? '') } catch { return false }
+}
 /** E409 for a version that is staged and awaiting approval, which staging again cannot replace. */
 function alreadyStaged(result) {
   const text = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
   return errorCode(result) === 'E409' && /already staged|Cannot stage previously published version/i.test(text)
 }
 
-export function stagePlatformPackages(directory = root, npm = runNpm) {
+export function stagePlatformPackages(directory = root, npm = runNpm, env = process.env) {
   const rootPkg = readJson(join(directory, 'package.json'))
   const version = rootPkg.version
   const packages = readJson(join(directory, 'release', 'platform', 'packages.json'))
@@ -66,8 +70,19 @@ export function stagePlatformPackages(directory = root, npm = runNpm) {
       } else console.log(`${spec} already published with identical integrity — skipping`)
     } else {
       if (errorCode(existing) !== 'E404') throw new Error(`Cannot check ${spec}: ${existing.stderr || existing.stdout}`)
-      pending.push({ spec, archive, integrity })
+      pending.push({ spec, archive, integrity, created: !isMissingVersion(existing) })
     }
+  }
+  // 7.7.0: trusted publishing (OIDC) cannot create a package name, so the first release of a native package needs the
+  // stage-only bootstrap token. Without it npm answers ENEEDAUTH, which does not say that a secret is missing.
+  const created = pending.filter(entry => entry.created).map(entry => entry.spec)
+  if (created.length && !env.NODE_AUTH_TOKEN) {
+    throw new Error(
+      `${created.join(', ')} ${created.length === 1 ? 'is a new package name' : 'are new package names'} on npm, ` +
+      'and trusted publishing cannot create a name. Add the NPM_NATIVE_STAGE_TOKEN secret (a granular "Read and write ' +
+      '(stage only)" token for @zavora-ai) and run the release again; see "First release of new package names" in ' +
+      'docs/NATIVE-PACKAGES.md. Nothing was staged.',
+    )
   }
   for (const { spec, archive, integrity } of pending) {
     const result = npm(['stage', 'publish', archive, '--access', 'public', '--provenance', '--ignore-scripts', '--json'])

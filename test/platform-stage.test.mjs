@@ -25,7 +25,9 @@ function fixture(t) {
   fs.writeFileSync(path.join(destination, 'packages.json'), JSON.stringify(packages))
   return { directory, destination, packages }
 }
-const error = (code, summary = code) => ({ status: 1, stdout: JSON.stringify({ error: { code, summary } }), stderr: '' })
+// npm's E404 for a version that a package does not have; a name npm has never seen answers "Not Found" instead.
+const error = (code, summary = code === 'E404' ? 'No match found for version 9.0.0-test.1' : code) =>
+  ({ status: 1, stdout: JSON.stringify({ error: { code, summary } }), stderr: '' })
 // The main package's own version check (7.6.2) comes first; these fixtures stage an unreleased version.
 const isMainView = args => args[0] === 'view' && args[1].startsWith('@zavora-ai/computer-use-mcp@')
 
@@ -154,7 +156,8 @@ test('a staging failure exits nonzero with the commit and artifact context', t =
     }));
   `
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    encoding: 'utf8', env: { ...process.env, GITHUB_SHA: commit },
+    // A token, so the new names (an E404 that is not "No match found for version") reach staging.
+    encoding: 'utf8', env: { ...process.env, GITHUB_SHA: commit, NODE_AUTH_TOKEN: 'stage-only' },
   })
   assert.equal(result.error, undefined)
   assert.notEqual(result.status, 0)
@@ -167,4 +170,17 @@ test('a staging failure exits nonzero with the commit and artifact context', t =
 test('other staging failures also propagate', t => {
   const { directory } = fixture(t)
   assert.throws(() => stagePlatformPackages(directory, args => args[0] === 'view' ? error('E404') : error('E403', 'publish denied')), /Cannot stage/)
+})
+
+test('a new package name without the bootstrap token stops before anything is staged, naming the secret', t => {
+  const { directory } = fixture(t)
+  const staged = []
+  const npm = args => {
+    if (args[0] === 'stage') { staged.push(args); return { status: 0, stdout: '{}', stderr: '' } }
+    return isMainView(args) ? error('E404') : error('E404', 'Not Found - GET https://registry.npmjs.org/@zavora-ai%2fcomputer-use-mcp-x - Not found')
+  }
+  assert.throws(() => stagePlatformPackages(directory, npm, {}), /new package names.*NPM_NATIVE_STAGE_TOKEN.*Nothing was staged/s)
+  assert.equal(staged.length, 0)
+  stagePlatformPackages(directory, npm, { NODE_AUTH_TOKEN: 'stage-only' })
+  assert.equal(staged.length, 6, 'with the token, all six new names are staged')
 })

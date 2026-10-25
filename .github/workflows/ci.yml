@@ -19,6 +19,7 @@ jobs:
   build-native:
     name: Build native — ${{ matrix.target.name }}
     runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +55,7 @@ jobs:
             artifact: computer-use-napi.linux-arm64.node
             copy-from: target/aarch64-unknown-linux-gnu/release/libcomputer_use_napi.so
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -79,7 +80,7 @@ jobs:
         run: cp native/${{ matrix.target.copy-from }} ${{ matrix.target.artifact }}
 
       - name: Upload native binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target.artifact }}
           path: ${{ matrix.target.artifact }}
@@ -89,18 +90,19 @@ jobs:
     name: Pack all six native platform packages
     needs: build-native
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: computer-use-napi.*.node
           merge-multiple: true
       - name: Synchronize versions, require every artifact, and verify tarball contents
         run: npm run pack:platforms
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-platform-packages
           path: release/platform/
@@ -109,11 +111,12 @@ jobs:
   lint:
     name: Lint TypeScript
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -132,6 +135,7 @@ jobs:
   native-checks:
     name: Native tests & lint — ${{ matrix.host.name }}
     runs-on: ${{ matrix.host.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -146,7 +150,7 @@ jobs:
           - name: Linux x64
             runner: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -177,6 +181,7 @@ jobs:
     name: Test — ${{ matrix.os.name }}
     needs: [build-native, platform-packages]
     runs-on: ${{ matrix.os.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -197,10 +202,10 @@ jobs:
             runner: ubuntu-24.04-arm
             binary: computer-use-napi.linux-arm64.node
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -209,7 +214,7 @@ jobs:
         run: npm ci
 
       - name: Download native binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.os.binary }}
 
@@ -232,7 +237,7 @@ jobs:
           COMPUTER_USE_NATIVE_PATH: ${{ github.workspace }}/${{ matrix.os.binary }}
 
       - name: Download packed native packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: native-platform-packages
           path: release/platform
@@ -289,15 +294,17 @@ jobs:
     name: Linux desktop — ${{ matrix.desktop }}
     needs: build-native
     runs-on: ubuntu-24.04
+    # A hang (7.7.0: ImageMagick import under xfwm4) used to hold the run for hours, until a later push cancelled it.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         desktop: [xfwm4, openbox, sway]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -306,7 +313,7 @@ jobs:
         run: npm ci
 
       - name: Download native binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: computer-use-napi.linux-x64.node
 
@@ -334,11 +341,12 @@ jobs:
     name: Verify package contents
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -413,18 +421,19 @@ jobs:
     name: Install packed tarball — Node ${{ matrix.node }}
     needs: build-native
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         node: [20, 22, 24, current]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: computer-use-napi.linux-x64.node
       - run: npm run build:ts
@@ -443,33 +452,35 @@ jobs:
     name: Stage npm release for approval
     needs: [build-native, platform-packages, lint, native-checks, test, package, install-matrix]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.repository == 'zavora-ai/computer-use-mcp' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: read
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
+          # No dependency cache in the job that holds an id-token: a poisoned cache could reach the OIDC token.
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --force
 
       - name: Download all native binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: .
           pattern: computer-use-napi.*.node
           merge-multiple: true
 
       - name: Download exact tested platform tarballs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: native-platform-packages
           path: release/platform
@@ -523,7 +534,7 @@ jobs:
         run: npm sbom --sbom-format cyclonedx > release-sbom.cdx.json
 
       - name: Attest native binaries and exact tarballs
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             computer-use-napi.*.node
@@ -531,13 +542,13 @@ jobs:
             release/platform/*.tgz
 
       - name: Attach SBOM attestation to the exact main tarball
-        uses: actions/attest-sbom@v2
+        uses: actions/attest-sbom@v4
         with:
           subject-path: release/root/*.tgz
           sbom-path: release-sbom.cdx.json
 
       - name: Upload immutable release evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-evidence-${{ github.sha }}
           path: |
@@ -545,8 +556,8 @@ jobs:
             release-sbom.cdx.json
           if-no-files-found: error
 
-      # New npm names need a maintainer session or stage-only token once, before
-      # trusted publishing can be configured. OIDC handles subsequent releases.
+      # New npm names need a stage-only token once (NPM_NATIVE_STAGE_TOKEN), because trusted publishing cannot
+      # create a name; OIDC handles every release after that. See docs/NATIVE-PACKAGES.md.
       - name: Stage all native packages with provenance for maintainer approval
         run: node scripts/stage-platform-packages.mjs
         env:

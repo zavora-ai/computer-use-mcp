@@ -7,6 +7,7 @@ mod linux {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     use std::path::Path;
+    use std::time::Duration;
 
     /// 7.7.0 (K7): the XDG desktop portal's Screenshot, for Wayland sessions where no capture tool works (GNOME 41
     /// and later refuse `gnome-screenshot`'s old D-Bus call from other programs). The reply arrives as a signal on a
@@ -48,9 +49,15 @@ sys.stderr.write('portal screenshot failed: %s' % reasons.get(result.get('code')
 sys.exit(1)
 "#;
 
+    /// How long one capture tool may take (7.7.0). A capture takes well under a second; the desktop portal script
+    /// gives up on its own after 30 s.
+    fn capture_limit(tool: &str) -> Duration {
+        if tool == "python3" { Duration::from_secs(35) } else { Duration::from_secs(10) }
+    }
+
     /// Run one capture tool. True when it exited 0 and left a non-empty file; otherwise why not, for the error.
     fn attempt(tool: &str, args: &[&str], path: &Path, tried: &mut Vec<String>) -> bool {
-        match linux_tools::run(tool, args) {
+        match linux_tools::run_within(tool, args, capture_limit(tool)) {
             Ok(_) if path.metadata().map(|meta| meta.len() > 0).unwrap_or(false) => true,
             Ok(_) => {
                 tried.push(format!("{tool} wrote no image"));
@@ -95,6 +102,100 @@ sys.exit(1)
             || attempt("import", &["-window", "root", &file], path, tried)
     }
 
+    /// 7.7.0: an X11 session is read through Xlib (`XGetImage` on the root window, cut to the window when one is
+    /// named), so a capture needs no tool and cannot hang on one: ImageMagick's `import -window root` never returned
+    /// under xfwm4 on Xvfb. As with `grim -g` on wlroots, a window's covered parts show what covers them. The tools
+    /// remain the fallback.
+    fn capture_x11_xlib(window_id: Option<u32>) -> Result<image::DynamicImage, String> {
+        use x11::xlib;
+        // The window's rectangle comes from the window list, not from Xlib: asking Xlib about a window that has gone
+        // raises BadWindow, and Xlib's default error handler ends the process.
+        let window = match window_id {
+            Some(id) => Some(
+                linux_desktop::find(id)
+                    .map_err(|error| error.reason)?
+                    .ok_or_else(|| format!("window {id} is not in the window list"))?,
+            ),
+            None => None,
+        };
+        unsafe {
+            let display = xlib::XOpenDisplay(std::ptr::null());
+            if display.is_null() {
+                return Err("Xlib could not open the display".into());
+            }
+            let screen = xlib::XDefaultScreen(display);
+            let root = xlib::XRootWindow(display, screen);
+            let screen_width = i64::from(xlib::XDisplayWidth(display, screen));
+            let screen_height = i64::from(xlib::XDisplayHeight(display, screen));
+            // Inside the root window on every side, or XGetImage raises BadMatch.
+            let (x, y, width, height) = match &window {
+                Some(window) => {
+                    let left = window.x.clamp(0, screen_width);
+                    let top = window.y.clamp(0, screen_height);
+                    let right = (window.x + window.width).clamp(0, screen_width);
+                    let bottom = (window.y + window.height).clamp(0, screen_height);
+                    (left, top, right - left, bottom - top)
+                }
+                None => (0, 0, screen_width, screen_height),
+            };
+            if width <= 0 || height <= 0 {
+                xlib::XCloseDisplay(display);
+                return Err("the window is off screen".into());
+            }
+            let image = xlib::XGetImage(
+                display,
+                root,
+                x as i32,
+                y as i32,
+                width as u32,
+                height as u32,
+                xlib::XAllPlanes(),
+                xlib::ZPixmap,
+            );
+            if image.is_null() {
+                xlib::XCloseDisplay(display);
+                return Err("XGetImage returned no image".into());
+            }
+            let converted = rgb_from_ximage(image);
+            xlib::XDestroyImage(image);
+            xlib::XCloseDisplay(display);
+            converted.map(image::DynamicImage::ImageRgb8)
+        }
+    }
+
+    /// An Xlib ZPixmap as RGB. The usual layout (32 bits per pixel, least significant byte first) is read straight from
+    /// memory; any other goes through `XGetPixel`. Either way the channels come from the image's own masks.
+    unsafe fn rgb_from_ximage(image: *mut x11::xlib::XImage) -> Result<image::RgbImage, String> {
+        let info = &*image;
+        let masks = [u64::from(info.red_mask), u64::from(info.green_mask), u64::from(info.blue_mask)];
+        if masks.contains(&0) {
+            return Err(format!("unsupported X image: depth {}, {} bits per pixel", info.depth, info.bits_per_pixel));
+        }
+        let channel = |pixel: u64, mask: u64| -> u8 {
+            let shift = mask.trailing_zeros();
+            let bits = (mask >> shift).count_ones();
+            let value = (pixel & mask) >> shift;
+            if bits >= 8 { (value >> (bits - 8)) as u8 } else { (value * 255 / ((1u64 << bits) - 1)) as u8 }
+        };
+        let (width, height) = (info.width.max(0) as u32, info.height.max(0) as u32);
+        let direct = info.bits_per_pixel == 32 && info.byte_order == x11::xlib::LSBFirst && !info.data.is_null();
+        let stride = info.bytes_per_line.max(0) as usize;
+        let data = info.data as *const u8;
+        let mut rgb = image::RgbImage::new(width, height);
+        for row in 0..height {
+            for column in 0..width {
+                let pixel = if direct {
+                    let at = data.add(row as usize * stride + column as usize * 4);
+                    u64::from(u32::from_le_bytes([*at, *at.add(1), *at.add(2), *at.add(3)]))
+                } else {
+                    u64::from(x11::xlib::XGetPixel(image, column as i32, row as i32))
+                };
+                rgb.put_pixel(column, row, image::Rgb([channel(pixel, masks[0]), channel(pixel, masks[1]), channel(pixel, masks[2])]));
+            }
+        }
+        Ok(rgb)
+    }
+
     /// 7.7.0 (L3): JPEG at the requested quality (it was always the encoder's default).
     fn encode(image: &image::DynamicImage, quality: u32) -> napi::Result<(Vec<u8>, &'static str)> {
         let mut buf = Vec::new();
@@ -127,25 +228,36 @@ sys.exit(1)
         let path = directory.path().join("shot.png");
 
         let mut tried = Vec::new();
-        let captured = if linux_desktop::is_wayland() {
-            capture_wayland(&path, window_id, &mut tried)
+        // X11 through Xlib first. A `target_app` with no window means the focused window (`scrot -u`), which only the
+        // tools can find.
+        let read = if !linux_desktop::is_wayland() && (window_id.is_some() || target_app.is_none()) {
+            capture_x11_xlib(window_id).map_err(|reason| tried.push(format!("Xlib: {reason}"))).ok()
         } else {
-            capture_x11(&path, window_id, &target_app, &mut tried)
+            None
         };
-        if !captured {
-            return Err(napi::Error::from_reason(format!(
-                "Screenshot failed. Tried: {}. Install {}.",
-                tried.join("; "),
-                if linux_desktop::is_wayland() {
-                    "grim (sway, Hyprland), or python3-gi for the desktop portal (GNOME, KDE)"
+        let img = match read {
+            Some(img) => img,
+            None => {
+                let captured = if linux_desktop::is_wayland() {
+                    capture_wayland(&path, window_id, &mut tried)
                 } else {
-                    "scrot or ImageMagick (import)"
+                    capture_x11(&path, window_id, &target_app, &mut tried)
+                };
+                if !captured {
+                    return Err(napi::Error::from_reason(format!(
+                        "Screenshot failed. Tried: {}. Install {}.",
+                        tried.join("; "),
+                        if linux_desktop::is_wayland() {
+                            "grim (sway, Hyprland), or python3-gi for the desktop portal (GNOME, KDE)"
+                        } else {
+                            "scrot or ImageMagick (import)"
+                        }
+                    )));
                 }
-            )));
-        }
-
-        let raw = std::fs::read(&path).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
-        let img = image::load_from_memory(&raw).map_err(|e| napi::Error::from_reason(format!("decode: {e}")))?;
+                let raw = std::fs::read(&path).map_err(|e| napi::Error::from_reason(format!("read: {e}")))?;
+                image::load_from_memory(&raw).map_err(|e| napi::Error::from_reason(format!("decode: {e}")))?
+            }
+        };
 
         let target_width = width.unwrap_or(1024);
         let resized = if img.width() > target_width {
