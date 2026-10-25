@@ -55,6 +55,8 @@ export interface CardFrame {
   waiting: ControlWaiting
   chord: string | null
   platform: NodeJS.Platform
+  /** 7.8: the live watcher is looking at this target (cards that do not know the field ignore it). */
+  watching?: { target: string; since: number } | null
 }
 
 export interface ControlStatus extends Record<string, unknown> {
@@ -151,6 +153,7 @@ export class OperatorControl {
   #action: ControlAction | null = null
   #recent: ControlAction[] = []
   #waiting: ControlWaiting = null
+  #watching: { target: string; since: number } | null = null
   #lastRefused: { tool: string; at: string } | null = null
   #lastFrame = ''
   readonly #takeover: TakeoverOptions | undefined
@@ -204,6 +207,7 @@ export class OperatorControl {
       emergencyStop: { latched: this.#native.isNativeEmergencyStopActive?.() === true },
       lastRefused: this.#lastRefused,
       waiting: this.#waiting,
+      watching: this.#watching ? { target: this.#watching.target, since: new Date(this.#watching.since).toISOString() } : null,
       takeover: this.#takeover ? {
         enabled: true,
         movement: this.#takeover.movement ?? TAKEOVER_MOVEMENT,
@@ -345,6 +349,17 @@ export class OperatorControl {
     this.#publish()
   }
 
+  /**
+   * 7.8: the live watcher started (or stopped) looking at the screen. Watching is shown on the card like an action,
+   * so a watch that only looks still launches the card: the person sees that something is watching and can Pause it.
+   */
+  watching(info: { target: string; since: number } | null): void {
+    if (this.#closed) return
+    this.#watching = info
+    if (info) this.#ensurePresenter()
+    this.#publish()
+  }
+
   pause(reason: ControlReason = 'host'): void {
     if (this.#closed || this.#state !== 'running') return
     this.#transition('paused', reason)
@@ -449,6 +464,7 @@ export class OperatorControl {
       waiting: this.#waiting,
       chord: this.#chord,
       platform: this.#platform,
+      watching: this.#watching,
     }
     const payload = JSON.stringify(frame)
     if (payload === this.#lastFrame) return

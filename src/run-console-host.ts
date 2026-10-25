@@ -45,6 +45,8 @@
  * Usage:
  *   computer-use-mcp-console                # serve, and run the scripted demo
  *   computer-use-mcp-console --no-demo      # serve, and wait for a real agent
+ *   computer-use-mcp-console --live         # live share: watch the screen with you (Haiku triage, Opus answers)
+ *   computer-use-mcp-console --live --live-act   # ... and let Opus act on what it notices, not only when asked
  *   computer-use-mcp-console --port 4600 --no-open
  *   computer-use-mcp-console --no-demo --brand 'Analytics Agent' \
  *     --credits 'ADK Rust,Business Intelligence MCP,running on=DeepSeek Flash'
@@ -60,6 +62,7 @@ import { createComputerUseServer, createComputerUseHttpHandler } from './server.
 import { connectInProcess } from './client.js'
 import { createSession } from './session.js'
 import { RunStore, type RunAttachment } from './agent-run.js'
+import { LiveDriver, type CreateMessage } from './live-driver.js'
 import { RUN_CONSOLE_HTML, runConsoleHtml, type ConsoleBrand } from './run-console.js'
 import { isModuleEntrypoint } from './entrypoint.js'
 
@@ -125,21 +128,19 @@ async function poll() {
   if (!initialised) return
   try {
     const runId = await fetch('/run-id').then(r => r.text())
-    if (runId) {
-      const result = await callTool('run_console', { runId })
-      // The screenshot dominates the payload and changes only when a frame lands,
-      // so compare on the fields that decide whether the view needs repainting.
-      const run = result.structuredContent ?? {}
-      const serialised = JSON.stringify([run.state, run.updatedAt, run.screenshot?.at,
-        run.messages?.length, run.activity?.length])
-      if (serialised !== last) {
-        last = serialised
-        frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: result }, '*')
-        log('→ ui/notifications/tool-result (' + (run.state ?? '?') + ')')
-      }
-    } else {
-      log('waiting for the first message')
+    // Asked even before the first message: with live share on, the reply carries the watch, so the page can offer it.
+    const result = await callTool('run_console', runId ? { runId } : {})
+    // The screenshot dominates the payload and changes only when a frame lands,
+    // so compare on the fields that decide whether the view needs repainting.
+    const run = result.structuredContent ?? {}
+    const serialised = JSON.stringify([run.state, run.updatedAt, run.screenshot?.at,
+      run.messages?.length, run.activity?.length, run.live?.watching, run.live?.paused, run.live?.lastSeq])
+    if (serialised !== last) {
+      last = serialised
+      frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: result }, '*')
+      log('→ ui/notifications/tool-result (' + (run.state ?? (run.live ? 'live' : '?')) + ')')
     }
+    if (!runId && !run.live) log('waiting for the first message')
   } catch (error) {
     log('poll failed: ' + (error?.message ?? error))
   }
@@ -196,7 +197,17 @@ export interface ServeOptions {
    * `Blender Agent`, which is what the published console has always shown.
    */
   brand?: ConsoleBrand
+  /**
+   * 7.8: live share. Adds the watcher's tools, a Watch button and a live view on the page, and, when an Anthropic
+   * API key is set, the tiered driver (Claude Haiku 5.5 triages what changes, Claude Opus 5.5 answers the person and
+   * what triage escalates). `act` lets Opus act on what triage escalates, not only on the person's requests; `fast`
+   * runs Opus in fast mode; `driver: false` keeps the watcher and view without the model loop.
+   */
+  live?: boolean | { act?: boolean; fast?: boolean; driver?: boolean; createMessage?: CreateMessage }
 }
+
+/** At most one live frame a second reaches the page: the person's view, not a recording. */
+const LIVE_VIEW_MS = 1_000
 
 export async function serve({
   port = 4517,
@@ -204,6 +215,7 @@ export async function serve({
   session: injected,
   onLog = () => {},
   brand,
+  live,
 }: ServeOptions = {}): Promise<ConsoleHost> {
   // Built once: the header is fixed for the life of the host, so there is no
   // reason to re-render the document on every request for it.
@@ -218,7 +230,9 @@ export async function serve({
   if (durability.problem) onLog(`run state not durable: ${durability.problem}`)
   else if (durability.path) onLog(`run state kept in ${durability.path}`)
   const session = injected ?? createSession()
-  const shared = { runConsole: true as const, runStore: store, session }
+  const liveOptions = live === true ? {} : live || undefined
+  const watcher = liveOptions ? session.live : undefined
+  const shared = { runConsole: true as const, runStore: store, session, ...(watcher ? { live: true } : {}) }
 
   // The page talks to this one; an agent gets its own per-request servers.
   const client = await connectInProcess(createComputerUseServer(shared))
@@ -234,6 +248,51 @@ export async function serve({
   // rather than leaving it in the store unreachable.
   let currentRunId = store.latest()?.runId ?? ''
   if (currentRunId) onLog(`resumed run ${currentRunId}`)
+
+  // 7.8: live share. The driver needs a model key; without one the watch and the live view still work.
+  let driver: LiveDriver | undefined
+  if (watcher && liveOptions?.driver !== false) {
+    if (liveOptions?.createMessage || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) {
+      driver = new LiveDriver({
+        watcher, store, client, runId: () => currentRunId || undefined,
+        ...(liveOptions?.act ? { act: true } : {}),
+        ...(liveOptions?.fast ? { fast: true } : {}),
+        ...(liveOptions?.createMessage ? { createMessage: liveOptions.createMessage } : {}),
+        log: onLog,
+      })
+      driver.start()
+      onLog(`live share: Claude Haiku 5.5 triages what changes, Claude Opus 5.5 answers${liveOptions?.act ? ' and may act on what it escalates' : ''}`)
+    } else {
+      onLog('live share: no ANTHROPIC_API_KEY, so the screen is watched and shown but no model looks at it')
+    }
+  }
+  // The person's live view: a frame on the page at most once a second while something changes.
+  let lastView = 0
+  let viewTimer: ReturnType<typeof setTimeout> | undefined
+  const showLive = (): void => {
+    if (!watcher?.watching || !currentRunId || viewTimer) return
+    const wait = Math.max(0, lastView + LIVE_VIEW_MS - Date.now())
+    viewTimer = setTimeout(() => {
+      viewTimer = undefined
+      lastView = Date.now()
+      const runId = currentRunId
+      watcher.latestFrame({ width: 1024, quality: 60 })
+        .then(frame => { if (runId === currentRunId) store.progress(runId, { screenshot: { data: frame.data, mimeType: frame.mimeType, caption: 'Live' } }) })
+        .catch(() => { /* paused, a credential manager in front, or the watch ended: the last frame stays */ })
+    }, wait)
+    viewTimer.unref?.()
+  }
+  const unwatch = watcher?.onEvent(event => {
+    if (event.kind !== 'paused' && event.kind !== 'watch_stopped') showLive()
+  })
+  /** A run payload for the page, with the watch and the driver when live share is on. */
+  const withLive = (result: ToolResult): ToolResult => {
+    if (!watcher || result.isError) return result
+    let body: Record<string, unknown>
+    try { body = value(result) } catch { return result }
+    const merged = { ...body, live: { ...watcher.status(), driver: driver?.status() ?? null } }
+    return { ...result, content: [{ type: 'text', text: JSON.stringify(merged) }], structuredContent: merged }
+  }
   /** Where uploads land. One directory per host, created on first use. */
   let uploadDirectory = ''
 
@@ -324,6 +383,39 @@ export async function serve({
    * read or write some other run either.
    */
   async function callForPage(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
+    if (name === 'live_watch') return liveWatchForPage(args)
+    return withLive(await callForPageInner(name, args))
+  }
+
+  /**
+   * The person's Watch button. Watching is theirs to start and stop from the page; the target is the whole screen,
+   * and starting a watch with no conversation yet opens one so the replies have somewhere to go.
+   */
+  async function liveWatchForPage(args: Record<string, unknown>): Promise<ToolResult> {
+    if (!watcher) return { isError: true, content: [{ type: 'text', text: 'live_watch may not be called from the app' }] }
+    const action = args.action === 'stop' ? 'stop' : args.action === 'start' ? 'start' : 'status'
+    try {
+      if (action === 'start') {
+        if (!currentRunId) {
+          const opened = await client.callTool('run_start', { prompt: 'Watch the screen with me and tell me what matters.' }) as ToolResult
+          if (!opened.isError) currentRunId = String(value(opened).runId ?? '')
+        }
+        watcher.start({ displayId: 'main' })
+        onLog('the person started the live watch')
+        showLive()
+      } else if (action === 'stop') {
+        watcher.stop('stopped_by_person')
+        onLog('the person stopped the live watch')
+      }
+    } catch (error) {
+      return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }
+    }
+    return withLive(currentRunId
+      ? await client.callTool('run_console', { runId: currentRunId }) as ToolResult
+      : { content: [{ type: 'text', text: '{}' }] })
+  }
+
+  async function callForPageInner(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
     if (name === 'run_say') {
       const text = typeof args.text === 'string' ? args.text.trim() : ''
       const image = args.image as Record<string, unknown> | undefined
@@ -502,6 +594,10 @@ export async function serve({
     store,
     runId: () => currentRunId,
     close: async () => {
+      driver?.stop()
+      unwatch?.()
+      if (viewTimer) clearTimeout(viewTimer)
+      watcher?.stop('host_closed')
       await client.close()
       await mcp.close()
       // Only tear down a session this host made; an injected one is the caller's.
@@ -626,11 +722,16 @@ if (isModuleEntrypoint(import.meta.url, process.argv[1])) {
         return rest.length ? { label, value: rest.join('=') } : segment.trim()
       })
     : undefined
+  // 7.8: --live adds live share (the Watch button, the live view and, with an API key, the model loop); --live-act
+  // lets Opus act on what it escalates, --live-fast runs it in fast mode.
+  const liveShare = flag('--live') > -1
   const host = await serve({
     port: portFlag > -1 ? Number(process.argv[portFlag + 1]) : 4517,
     // The scripted walkthrough is the default so the console shows something the
     // moment it opens. An agent driving it is the real thing; ask for --no-demo.
-    demo: flag('--no-demo') === -1,
+    // A live share session is the person's own screen, so it never starts with the walkthrough.
+    demo: flag('--no-demo') === -1 && !liveShare,
+    ...(liveShare ? { live: { act: flag('--live-act') > -1, fast: flag('--live-fast') > -1 } } : {}),
     // Name the agent in the header. The console is generic infrastructure, so a
     // host reading dashboards should not have to say `Blender Agent`.
     brand: brandFlag > -1 ? { name: process.argv[brandFlag + 1], credits } : undefined,

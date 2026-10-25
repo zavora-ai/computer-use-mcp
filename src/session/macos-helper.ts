@@ -38,6 +38,19 @@ export interface HelperCapture {
   window?: number
   /** The display captured (7.7.0). */
   display?: number
+  /** 7.8: what changed since the previous capture of this source (`diff`). */
+  diff?: HelperDiff
+  /** 7.8: nothing changed and `skipUnchanged` was set, so no image was encoded. */
+  unchanged?: boolean
+}
+
+/** A capture compared with the previous one of the same source. `area` and `dirty` are fractions of the image. */
+export interface HelperDiff {
+  changed: boolean
+  area: number
+  dirty?: { x: number; y: number; width: number; height: number }
+  /** The first capture of this source in the helper: there was nothing to compare with. */
+  first?: boolean
 }
 
 export type HelperRegion = { x: number; y: number; width: number; height: number }
@@ -79,6 +92,10 @@ export interface MacosHelper {
     quality?: number
     /** Crop to this region, in points from the window's or display's top-left (helper `--region`). */
     region?: HelperRegion
+    /** 7.8: compare with the previous capture of this source kept in the helper; a string names the source. */
+    diff?: boolean | string
+    /** With `diff`: an unchanged capture is not encoded (`unchanged: true`, empty `data`). */
+    skipUnchanged?: boolean
   }, signal?: AbortSignal): Promise<HelperCapture & { data: Buffer }>
   ocr(options: {
     windowId?: number
@@ -468,7 +485,7 @@ export function createMacosHelper(options: {
     ensure,
     supportsCapture: () => sck,
     close: stopWarm,
-    async capture({ windowId, displayId, overlayPids, width, format = 'jpeg', quality = 80, region }, signal) {
+    async capture({ windowId, displayId, overlayPids, width, format = 'jpeg', quality = 80, region, diff, skipUnchanged }, signal) {
       if (!sck) throw new HelperFailure('sck_unavailable', 'ScreenCaptureKit capture needs macOS 14 or later')
       const out = join(tmpdir(), `cu-mcp-sck-${process.pid}-${randomBytes(6).toString('hex')}.${format === 'png' ? 'png' : 'jpg'}`)
       const args = ['capture']
@@ -483,9 +500,15 @@ export function createMacosHelper(options: {
       args.push('--out', out, '--format', format, '--quality', String(quality))
       if (width) args.push('--width', String(Math.round(width)))
       if (region) args.push('--region', [region.x, region.y, region.width, region.height].join(','))
+      if (diff) {
+        args.push('--diff')
+        if (typeof diff === 'string') args.push('--diff-key', diff)
+        if (skipUnchanged) args.push('--skip-unchanged')
+      }
       try {
         const result = await call(args, signal) as unknown as HelperCapture
-        return { ...result, data: readFileSync(out) }
+        // An unchanged capture with skipUnchanged was never encoded: there is no file.
+        return { ...result, data: result.unchanged ? Buffer.alloc(0) : readFileSync(out) }
       } finally {
         try { rmSync(out, { force: true }) } catch { /* already gone */ }
       }

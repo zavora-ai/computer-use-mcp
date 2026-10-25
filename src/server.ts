@@ -7,6 +7,7 @@ import { BrowserBackend } from './browser.js'
 import { registerBrowserTools } from './browser-tools.js'
 import { DesktopBroker } from './desktop-broker.js'
 import { registerStrategy, UI_EXTENSION } from './strategy.js'
+import { registerLiveTools } from './live-tools.js'
 import { registerRunConsole, type RunStore } from './agent-run.js'
 import { principalKey } from './authority.js'
 import { createHash, randomBytes } from 'node:crypto'
@@ -106,6 +107,11 @@ export interface ServerOptions extends SessionOptions {
   runStore?: RunStore
   /** Receives the run store so a host can read run state directly. */
   onRunStore?: (store: RunStore) => void
+  /**
+   * 7.8: expose live share, `live_watch` and `live_events` over the session's screen watcher (default:
+   * `COMPUTER_USE_LIVE=true`). Opt-in, like the run console: watching is for a host that has a person in the loop.
+   */
+  live?: boolean
 
   /**
    * Desktop session to drive. Supply one to share a single session across the
@@ -328,6 +334,9 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     })
     for (const [name, execute] of runConsole.executors) extensions.set(name, execute)
     opts.onRunStore?.(runConsole.store)
+  }
+  if ((opts.live ?? process.env.COMPUTER_USE_LIVE === 'true') && session.live) {
+    for (const [name, execute] of registerLiveTools(server, session.live)) extensions.set(name, execute)
   }
   ;(opts.taskManager ?? taskManager).install(server, registry, extensions)
   opts.onRegistry?.(registry)

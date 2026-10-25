@@ -184,6 +184,7 @@
     "@zavora-ai/computer-use-mcp-win32-x64": "7.7.0",
     "@zavora-ai/computer-use-mcp-win32-arm64": "7.7.0",
     "@zavora-ai/computer-use-mcp-linux-x64": "7.7.0",
-    "@zavora-ai/computer-use-mcp-linux-arm64": "7.7.0"
+    "@zavora-ai/computer-use-mcp-linux-arm64": "7.7.0",
+    "@anthropic-ai/sdk": "^1.3.0"
   }
 }

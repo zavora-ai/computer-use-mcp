@@ -46,6 +46,16 @@ function list(env: NodeJS.ProcessEnv, name: string, fallback: string[] = []): st
   return raw !== undefined ? raw.split(',').map(value => value.trim()).filter(Boolean) : [...fallback]
 }
 
+/**
+ * The credential managers whose actions need approval (`COMPUTER_USE_CREDENTIAL_APPS`, empty to opt out). 7.8: the
+ * live watcher also neither samples nor serves a frame while one of them is frontmost.
+ */
+export function sensitiveApps(env: NodeJS.ProcessEnv = process.env, isWindows = process.platform === 'win32'): string[] {
+  return list(env, 'COMPUTER_USE_CREDENTIAL_APPS', isWindows
+    ? ['1Password.exe', 'CredentialUIBroker.exe', 'KeePassXC.exe']
+    : ['com.apple.keychainaccess', 'com.apple.Passwords', 'com.1password.1password', 'com.agilebits.onepassword7'])
+}
+
 /** Collapse to comparable identifier characters so quoting and spacing cannot hide a name. */
 const identifierChars = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '')
 
@@ -123,13 +133,10 @@ export function createLegacyPolicyRuntime(options: {
   const env = options.env ?? process.env
   const auditKey = randomBytes(32)
   let auditPermissionsChecked = false
-  const defaultSensitiveApps = options.isWindows
-    ? ['1Password.exe', 'CredentialUIBroker.exe', 'KeePassXC.exe']
-    : ['com.apple.keychainaccess', 'com.apple.Passwords', 'com.1password.1password', 'com.agilebits.onepassword7']
   const policyConfig: LegacyPolicyConfig = {
     allowedApps: list(env, 'COMPUTER_USE_ALLOWED_APPS'),
     blockedApps: list(env, 'COMPUTER_USE_BLOCKED_APPS'),
-    sensitiveApps: list(env, 'COMPUTER_USE_CREDENTIAL_APPS', defaultSensitiveApps),
+    sensitiveApps: sensitiveApps(env, options.isWindows),
     requireApprovalFor: list(env, 'COMPUTER_USE_REQUIRE_APPROVAL_FOR'),
     approvalRequiredForAll: env.COMPUTER_USE_REQUIRE_APPROVAL === 'true',
     destructiveRequiresApproval: env.COMPUTER_USE_DESTRUCTIVE_REQUIRES_APPROVAL === 'true',

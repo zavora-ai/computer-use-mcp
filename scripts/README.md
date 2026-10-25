@@ -17,6 +17,7 @@ need a native build and OS permissions. They are not unattended unit tests.
 | `node test/platform-install.mjs` | Install packed native dependencies using a disposable local registry and load the addon. |
 | `node scripts/verify-local-native.mjs` | Verify that source execution resolves and loads the current host build artifact; use a process-scoped `COMPUTER_USE_NATIVE_PATH`. |
 | `node scripts/utm-vms.mjs up\|status\|down` | On a Mac, tunnel to the server running in UTM Windows and Linux VMs and register it with Claude Code; see [Testing in UTM virtual machines](../docs/TESTING-IN-UTM.md). |
+| `ANTHROPIC_API_KEY=… node scripts/bench-live-latency.mjs <shot.jpg> [runs] [out.json]` | Live share: time to first token, speed and cost of the triage and act models on one screenshot behind a cached prompt (spends a few cents). |
 | `node scripts/linux-check.mjs [--takeover] [--skip-input]` | The live Linux check: windows, capture, activation, input and read-back on the desktop it runs on; see [Testing on Linux](../docs/TESTING-LINUX.md). |
 | `bash scripts/ci-linux-desktop.sh xfwm4\|openbox\|sway` | Run that check on an invisible desktop (Xvfb with xfwm4 or Openbox, or headless sway) with its own display, runtime directory and D-Bus bus, as the `linux-desktops` CI job does. |
 
