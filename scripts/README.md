@@ -18,7 +18,7 @@ need a native build and OS permissions. They are not unattended unit tests.
 | `node scripts/verify-local-native.mjs` | Verify that source execution resolves and loads the current host build artifact; use a process-scoped `COMPUTER_USE_NATIVE_PATH`. |
 | `node scripts/utm-vms.mjs up\|status\|down` | On a Mac, tunnel to the server running in UTM Windows and Linux VMs and register it with Claude Code; see [Testing in UTM virtual machines](../docs/TESTING-IN-UTM.md). |
 | `node scripts/linux-check.mjs [--takeover] [--skip-input]` | The live Linux check: windows, capture, activation, input and read-back on the desktop it runs on; see [Testing on Linux](../docs/TESTING-LINUX.md). |
-| `bash scripts/ci-linux-desktop.sh xfwm4\|openbox\|sway` | Run that check on an invisible desktop (Xvfb with xfwm4 or Openbox, or headless sway) with its own display, runtime directory and D-Bus bus, as the `linux-desktops` CI job does. |
+| `bash scripts/ci-linux-desktop.sh xfwm4\|openbox\|sway` | Run that check on an invisible desktop (Xvfb with xfwm4 or Openbox, or headless sway) with its own display, runtime directory and D-Bus bus, as the `linux-desktops` CI job does for Openbox and sway (xfwm4 is out of CI until its hang on Xvfb is understood). |
 
 `build-ts.mjs` compiles TypeScript into `dist.next` and swaps it into `dist`, so a server starting mid-build still finds its files (`clean-dist.mjs` only removes generated output). `live-windows.mjs` is
 an attended Windows development probe. Legacy Mission Control/Spaces experiments
