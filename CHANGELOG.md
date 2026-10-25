@@ -88,6 +88,14 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
 
 ### Fixed
 
+- **Two sessions no longer stall each other's captures.** While a helper process holds a ScreenCaptureKit session, a
+  capture in another process with the same code identity hangs until the first exits; a differently signed copy and
+  `screencapture` are unaffected (measured on macOS 26.2). Every server ran the same compiled helper, so once 7.7's
+  warm helper had captured in one session, every capture in another session waited 10 s and failed with `sck_timeout`
+  for as long as that helper stayed up (30 s after its last call). Each helper instance now runs its own copy of the
+  compiled helper, signed with an identifier of its own; copies are removed when their process exits, and copies left
+  by a crashed process are removed by the next one. This is also what the 7.6 cross-server lock was guarding against
+  (two processes of one identity); the lock stays as defence in depth.
 - **`zoom` without a target cuts the region you named.** The region is in screen points, as `click` is, but it was
   cropped as pixels of the capture: on Linux, which scales that capture to 1024 wide, a region on a 1920-wide screen
   came from the wrong place (or off the image), and on a Retina Mac without the capture helper it covered a quarter
