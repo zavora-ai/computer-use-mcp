@@ -151,7 +151,8 @@ test('COMPUTER_USE_HELPER_SERVE=false runs one process per call, with the displa
   const sha = createHash('sha256').update(readFileSync(source)).digest('hex').slice(0, 8)
   writeFileSync(join(dir, `macos-agent-helper-${sha}`), '')
   const calls = []
-  const run = async (_file, args) => {
+  const run = async (file, args) => {
+    if (file === 'codesign') return { code: 0, stdout: '', stderr: '' }
     calls.push(args)
     writeFileSync(args[args.indexOf('--out') + 1], 'IMG')
     return { code: 0, stderr: '', stdout: JSON.stringify({ path: 'x', width: 1, height: 1, hash: 'd', scale: 1, frame: { x: 0, y: 0, width: 1, height: 1 }, mimeType: 'image/png', bytes: 3, display: 2 }) }

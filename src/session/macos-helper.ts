@@ -15,9 +15,9 @@
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams, type ExecFileOptions } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export interface HelperFrame { x: number; y: number; width: number; height: number }
@@ -179,6 +179,52 @@ export async function compileSwiftHelper(options: {
   return { ok: true, path: target }
 }
 
+const processAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true } catch (error) { return (error as { code?: string }).code === 'EPERM' }
+}
+
+/** This process's helper copies, removed when it exits. */
+const ownCopies = new Set<string>()
+let ownCopiesHooked = false
+const HELPER_COPY = /^macos-agent-helper-[0-9a-f]{8}-p(\d+)-[0-9a-f]+$/
+
+/**
+ * A signed copy of the compiled helper with an identifier of its own, for one helper instance to run (7.7.0). While a
+ * helper process holds a ScreenCaptureKit session, a capture in another process with the same code identity hangs
+ * until the first exits (measured 2026-10-25 on macOS 26.2: a copy signed with another identifier, and screencapture,
+ * were unaffected). Every server shares one compiled binary, so a warm helper in one session stalled every other
+ * session's captures for 10 s each. Copies left by processes that have exited are removed here; this process's go
+ * when it exits. If the copy cannot be made, the shared binary is used.
+ */
+export async function ownHelperCopy(shared: string, run: Runner = defaultRunner): Promise<string> {
+  const directory = dirname(shared)
+  try {
+    for (const name of readdirSync(directory)) {
+      const match = HELPER_COPY.exec(name)
+      if (match && !processAlive(Number(match[1]))) rmSync(join(directory, name), { force: true })
+    }
+  } catch { /* nothing to clean */ }
+  const tag = `${process.pid}-${randomBytes(3).toString('hex')}`
+  const copy = `${shared}-p${tag}`
+  try {
+    copyFileSync(shared, copy)
+    chmodSync(copy, 0o755)
+    const signed = await run('codesign', ['--force', '--sign', '-', '--identifier', `ai.zavora.computer-use.helper.${tag}`, copy], { timeout: 30_000 })
+    if (signed.code !== 0) throw new Error(signed.stderr)
+  } catch {
+    try { rmSync(copy, { force: true }) } catch { /* never made */ }
+    return shared
+  }
+  ownCopies.add(copy)
+  if (!ownCopiesHooked) {
+    ownCopiesHooked = true
+    process.once('exit', () => {
+      for (const file of ownCopies) { try { rmSync(file, { force: true }) } catch { /* already gone */ } }
+    })
+  }
+  return copy
+}
+
 export function createMacosHelper(options: {
   sourcePath?: string
   cacheDir?: string
@@ -234,6 +280,8 @@ export function createMacosHelper(options: {
   // sequential helper runs passed, two side by side both stalled). So helper runs are serialised: a promise chain
   // within this server, and an advisory lock file in the cache directory across servers (James runs several
   // sessions, each with its own server). A lock left by a dead process is taken over; a live holder is waited for.
+  // 2026-10-25: those helpers shared one code identity, which is what makes ScreenCaptureKit hang (see
+  // ownHelperCopy). Each instance now runs its own copy; the lock stays as defence in depth.
   const useLock = options.lock ?? true
   const lockWaitMs = options.lockWaitMs ?? callTimeoutMs
   const lockPath = join(cacheDir, 'helper.lock')
@@ -241,7 +289,7 @@ export function createMacosHelper(options: {
     const timer = setTimeout(resolve, ms)
     signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new HelperFailure('aborted', 'helper call aborted')) }, { once: true })
   })
-  const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch (error) { return (error as { code?: string }).code === 'EPERM' } }
+  const pidAlive = processAlive
   const acquireLock = async (signal?: AbortSignal): Promise<void> => {
     const deadline = now() + lockWaitMs
     for (;;) {
@@ -391,16 +439,24 @@ export function createMacosHelper(options: {
     return parsed
   }
 
+  // The binary this instance runs: its own signed copy of the compiled helper (see ownHelperCopy).
+  let runnable: { shared: string; path: Promise<string> } | undefined
+  const runnablePath = (shared: string): Promise<string> => {
+    if (runnable?.shared !== shared) runnable = { shared, path: ownHelperCopy(shared, run) }
+    return runnable.path
+  }
+
   const call = (args: string[], signal?: AbortSignal): Promise<Record<string, unknown>> => serialised(async () => {
     const availability = await ensure(signal)
     if (!availability.ok) throw new HelperFailure('helper_unavailable', `${availability.reason}. ${availability.remediation}`)
+    const path = await runnablePath(availability.path)
     if (useLock) {
       try { mkdirSync(cacheDir, { recursive: true }) } catch { /* exists */ }
       await acquireLock(signal)
     }
     let parsed: Record<string, unknown>
     try {
-      parsed = serveMode ? await serveRetrying(availability.path, args, signal) : await oneShot(availability.path, args, signal)
+      parsed = serveMode ? await serveRetrying(path, args, signal) : await oneShot(path, args, signal)
     } finally {
       if (useLock) releaseLock()
     }
