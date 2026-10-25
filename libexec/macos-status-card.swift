@@ -29,6 +29,13 @@ struct CardFrame: Decodable {
     let chord: String?
     /// 7.7.0: "takeover" when the person used the mouse or keyboard during an action.
     let reason: String?
+    /// 7.8: the live watcher is looking at this target.
+    let watching: CardWatching?
+}
+
+struct CardWatching: Decodable {
+    let target: String
+    let since: Double
 }
 
 /// "ctrl+alt+escape" as the keys read on a Mac keyboard: ⌃⌥⎋.
@@ -248,6 +255,9 @@ final class Card {
             if frame?.reason == "takeover" {
                 title.stringValue = "You took over · \(elapsed)"
                 action.stringValue = "The agent waits while you use the mouse or keyboard, and resumes when you stop."
+            } else if frame?.watching != nil {
+                title.stringValue = "Agent paused · \(elapsed)"
+                action.stringValue = "The watch sees nothing and nothing is changed until you resume."
             } else {
                 title.stringValue = "Agent paused · \(elapsed)"
                 action.stringValue = "Mutations are refused; it can still look. Resume when you are ready."
@@ -269,6 +279,11 @@ final class Card {
                 dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
                 title.stringValue = "Agent needs approval · \(elapsed)"
                 action.stringValue = current(frame) ?? "A gated action is waiting for the host's approval."
+            } else if let watching = frame?.watching, current(frame) == nil {
+                // Watching without acting: say what it can see, and that Pause stops it seeing.
+                dot.layer?.backgroundColor = NSColor.systemPurple.cgColor
+                title.stringValue = "Agent is watching this Mac · \(elapsedText(since: watching.since))"
+                action.stringValue = "Sees \(watching.target). Pause and it sees nothing."
             } else {
                 dot.layer?.backgroundColor = NSColor.systemBlue.cgColor
                 title.stringValue = "Agent is using this Mac · \(elapsed)"

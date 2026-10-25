@@ -16,6 +16,9 @@
 //       frame is the display in global points.
 //   --region (7.7.0) crops to x,y,w,h in points from the window's or display's top-left, at full resolution
 //       (--width is ignored); the reply echoes it.
+//   --diff [--diff-key <k>] [--skip-unchanged] (7.8): compare with the previous capture of the same source kept in
+//       this process; the reply gains diff {changed, area, dirty?, first?}, and an unchanged capture with
+//       --skip-unchanged is not encoded ({unchanged: true}, no path).
 //   ocr (--window <id> | --image <file>) [--region x,y,w,h] [--languages en-US,...] [--fast]
 //       Vision text recognition, on device. Boxes are image pixels, top-left origin.
 //       --region is in window points with --window, in image pixels with --image.
@@ -31,7 +34,7 @@ import ScreenCaptureKit
 import UniformTypeIdentifiers
 import Vision
 
-let helperVersion = "7.7.0"
+let helperVersion = "7.8.0"
 
 struct HelperError: Error {
     let code: String
@@ -286,6 +289,63 @@ func parseRegion(_ text: String?) throws -> CGRect? {
     return CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
 }
 
+// MARK: - Change detection for the live watcher (7.8)
+
+/// A persistent SCStream was tried for the watcher first (2026-10-25): while one ran, a capture from any other process
+/// hung, the stream stopped delivering frames, and captures stayed broken until the streaming process exited. So the
+/// watcher samples with ordinary captures under the cross-server lock, and this keeps the last sample of each source in
+/// the warm process to say what changed, without the server decoding an image.
+final class Thumbnails: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last: [String: (width: Int, height: Int, pixels: [UInt8])] = [:]
+    func swap(_ key: String, _ value: (width: Int, height: Int, pixels: [UInt8])) -> (width: Int, height: Int, pixels: [UInt8])? {
+        lock.lock(); defer { lock.unlock() }
+        let previous = last[key]
+        last[key] = value
+        return previous
+    }
+}
+let thumbnails = Thumbnails()
+
+/// A small grey copy of the image (160 wide), enough to see a dialog, a line of text or a progress bar change.
+func thumbnail(_ image: CGImage) -> (width: Int, height: Int, pixels: [UInt8])? {
+    let width = 160
+    let height = max(1, Int((Double(width) * Double(image.height) / max(1, Double(image.width))).rounded()))
+    var pixels = [UInt8](repeating: 0, count: width * height)
+    let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+        guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return true
+    }
+    return drawn ? (width, height, pixels) : nil
+}
+
+/// The share of the thumbnail that changed by more than a few grey levels, and the box around it (fractions of the
+/// image, top-left origin).
+func difference(_ before: (width: Int, height: Int, pixels: [UInt8]), _ after: (width: Int, height: Int, pixels: [UInt8])) -> [String: Any] {
+    guard before.width == after.width, before.height == after.height else { return ["changed": true, "area": 1.0, "resized": true] }
+    var count = 0, minX = after.width, minY = after.height, maxX = -1, maxY = -1
+    for y in 0..<after.height {
+        for x in 0..<after.width {
+            let index = y * after.width + x
+            if abs(Int(before.pixels[index]) - Int(after.pixels[index])) > 12 {
+                count += 1
+                minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+    }
+    guard count > 0 else { return ["changed": false, "area": 0.0] }
+    let w = Double(after.width), h = Double(after.height)
+    return [
+        "changed": true,
+        "area": (Double(count) / (w * h) * 10_000).rounded() / 10_000,
+        "dirty": ["x": Double(minX) / w, "y": Double(minY) / h, "width": Double(maxX - minX + 1) / w, "height": Double(maxY - minY + 1) / h],
+    ]
+}
+
 // MARK: - commands
 
 func usage(_ message: String) -> HelperError { HelperError(code: "usage", message: message) }
@@ -323,6 +383,19 @@ func runCommand(_ args: [String]) async throws -> [String: Any] {
             throw usage("capture needs --window <id> or --display <id|main>")
         }
         if let region { captured = try crop(captured, to: region) }
+        // 7.8: --diff compares this capture with the previous one of the same source (the live watcher); with
+        // --skip-unchanged an unchanged capture is not encoded at all.
+        var diff: [String: Any]?
+        if flag("--diff", in: args), let small = thumbnail(captured.image) {
+            let key = option("--diff-key", in: args) ?? (source.map { "\($0.key):\($0.value)" }.joined() + (region.map { ":\($0)" } ?? ""))
+            diff = thumbnails.swap(key, small).map { difference($0, small) } ?? ["changed": true, "area": 1.0, "first": true]
+        }
+        if let diff, diff["changed"] as? Bool == false, flag("--skip-unchanged", in: args) {
+            var reply: [String: Any] = ["unchanged": true, "diff": diff, "width": captured.image.width, "height": captured.image.height,
+                                        "scale": captured.scale, "frame": frameDict(captured.frame)]
+            reply.merge(source) { first, _ in first }
+            return reply
+        }
         let data = try encode(captured.image, to: out, format: format, quality: quality)
         var reply: [String: Any] = [
             "path": out, "width": captured.image.width, "height": captured.image.height,
@@ -331,6 +404,7 @@ func runCommand(_ args: [String]) async throws -> [String: Any] {
         ]
         reply.merge(source) { first, _ in first }
         if let region { reply["region"] = frameDict(region) }
+        if let diff { reply["diff"] = diff }
         return reply
     case "ocr":
         var region = try parseRegion(option("--region", in: args))

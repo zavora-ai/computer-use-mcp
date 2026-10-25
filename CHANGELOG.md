@@ -1,5 +1,51 @@
 # Changelog
 
+## v7.8.0 (unreleased)
+
+Live share, from [the 2026-10-25 live screen-share review](docs/reviews/2026-10-25-live-screen-share.md), tracked in
+[`docs/specs/v7.8/tasks.md`](docs/specs/v7.8/tasks.md).
+
+### Added
+
+- **Live share: an agent watches the screen with you.** Claude has no streaming video input, and a frame a second
+  would cost $34-56 an hour on Opus and answer about a screen that has already changed. So the screen is watched
+  locally and a model looks only when something changed:
+  - **A session watcher** samples the screen, an app or a window twice a second (640 px). On macOS the capture helper
+    compares each sample with the previous one in memory (`capture --diff`) and says how much changed and where,
+    without encoding an unchanged sample; on Windows and Linux the native capture says whether it changed. The window
+    list adds windows opening and closing, focus moving and titles changing.
+  - **A change gate** turns bursts of change into single events once the screen has been quiet for 600 ms (a screen
+    that keeps changing reports every 3 s), and drops a blinking caret, the menu bar clock and changes too small to
+    matter. Changes made while the agent acts are marked `cause: "agent"`.
+  - **`live_watch` and `live_events`** (listed when a host turns live share on: `live: true`, `COMPUTER_USE_LIVE=true`
+    or `computer-use-mcp-console --live`): start, move or stop the watch, and read what it saw, waiting for the next
+    event (the changed region in screen points) and attaching a current frame when the model wants to look.
+  - **A tiered driver in the console host** (`--live`, with an Anthropic API key): Claude Haiku 5.5, with thinking
+    off and no tools, captions each batch of events from a frame and decides whether to escalate; Claude Opus 5.5
+    answers what it escalates and everything the person types, with the desktop tools only for the person's requests
+    (or for its own escalations too with `--live-act`; `--live-fast` runs it in fast mode). Both tiers are rate-limited
+    per hour, back off on 429 and 5xx, and stop on a rejected key. Captions go to the console's activity feed, replies
+    to the transcript, tokens to the meter.
+  - **The console** gets a Watch button and a live view (at most a frame a second while something changes).
+  - **A person stays in charge.** Watching shows on the status card ("Agent is watching this Mac", macOS, Windows and
+    Linux cards), even when the agent only looks; Pause stops the sampling and no frame is served while paused; Stop
+    ends the watch; a locked screen pauses it; nothing is sampled, and window titles are not reported, while a
+    credential manager (`COMPUTER_USE_CREDENTIAL_APPS`) is frontmost. Frames and on-screen text are labelled untrusted
+    to every model.
+  - **Measured on macOS 26.2** with a 1280×800 frame behind a 5,000-token cached prompt
+    (`scripts/bench-live-latency.mjs`): Haiku 5.5 with thinking off answers in 1.07 s at the median for $0.00023;
+    Opus 5.5 at low effort in 2.89 s ($0.0097), 1.53 s in fast mode ($0.018). Live, from a build failure appearing in
+    a watched window to Opus telling the person: 4.9 s (event 0.7 s, triage 1.5 s, Opus 2.7 s); a follow-up question
+    answered in 3.1 s.
+- `@anthropic-ai/sdk` is an optional dependency, loaded only by the live driver.
+
+### Changed
+
+- The watcher samples with ordinary captures under the cross-server lock instead of a persistent ScreenCaptureKit
+  stream: while a stream ran, captures from other processes of the same helper hung and the stream stopped
+  delivering frames until its process exited (measured 2026-10-25). The cause turned out to be one shared code
+  identity (see the 7.7.0 fix below); a stream remains possible later, now that each server has its own.
+
 ## v7.7.0 (unreleased)
 
 The 7.6.2 and 7.7 work orders from [the 2026-10-23 competitor study](docs/reviews/2026-10-23-competitor-study.md),

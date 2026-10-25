@@ -189,6 +189,7 @@ constant time.
 | `COMPUTER_USE_TAKEOVER` | 7.7: `false` stops deliberate physical input from pausing the agent (`taken_over`). On by default. |
 | `COMPUTER_USE_KEEP_AWAKE` | 7.7: `false` stops the server keeping the display awake while an agent works. |
 | `COMPUTER_USE_HELPER_SERVE` | 7.7 (macOS): `false` starts the capture helper once per call instead of keeping one running. |
+| `COMPUTER_USE_LIVE` | 7.8: `true` lists the live share tools (`live_watch`, `live_events`) on any server, as `live: true` does for an embedding host. Off by default: watching is for a host with a person in the loop. |
 | `COMPUTER_USE_RESEND_UNCHANGED` | 7.7: `true` sends a capture's image even when it is identical to the last one sent. |
 | `COMPUTER_USE_SCRAPE_ALLOW_PRIVATE`, `COMPUTER_USE_SCRAPE_ALLOWED_HOSTS` | 7.7: `scrape` fetches public addresses only (each redirect checked). `true` lifts the rule; a comma-separated host list allows those hosts whatever they resolve to. |
 | `COMPUTER_USE_WINDOWS_DPI_AWARENESS` | 7.7 (Windows): the process is per-monitor DPI aware (v2), so every coordinate is a physical pixel; `unaware` restores the coordinates virtualised to 96 DPI. |
@@ -965,6 +966,47 @@ Four things worth knowing:
   the thinking and tool calls it observes, so do not narrate your own tool use into
   `run_say`. Narration is for what a person needs to understand; the feed shows them
   the mechanics.
+
+## Live share: an agent watches the screen with you (7.8)
+
+Claude takes no video stream, and a frame a second would cost $34-56 an hour on Opus while answering about a screen
+that has already changed. Live share keeps the watching local and wakes a model only when something changed:
+
+- **The watcher** samples the screen, an app or a window twice a second. On macOS the capture helper compares each
+  sample with the previous one in memory and reports how much changed and where; the window list adds windows
+  opening and closing, focus and title changes. A gate turns bursts of change into single events once the screen has
+  been quiet for 600 ms, drops a blinking caret and the menu bar clock, and marks changes made while the agent acted
+  `cause: "agent"`.
+- **Two tools**, listed only when a host turns live share on (`live: true`, `COMPUTER_USE_LIVE=true`, or the console's
+  `--live`): `live_watch {action: start|stop|status, target_app?, target_window_id?, display_id?}` and
+  `live_events {since, wait_ms?, frame?}`. `live_events` with `wait_ms` waits for the next event, which replaces sleeping
+  and polling screenshots; `frame: true` attaches a current frame with its mapping to screen points. Pass the returned
+  `last_seq` as `since` next time.
+- **The console's driver** (`computer-use-mcp-console --live`, with `ANTHROPIC_API_KEY`): Claude Haiku 5.5, thinking off
+  and no tools, captions each batch of events from a frame and decides whether to escalate; Claude Opus 5.5 answers
+  what it escalates and what the person types. Opus gets the desktop tools only for the person's requests, or for its
+  own escalations too with `--live-act`; `--live-fast` runs it in fast mode. The person starts and stops the watch with
+  the console's Watch button and sees a live view.
+- **The person stays in charge.** The status card says "Agent is watching this Mac" even when nothing is acted on;
+  Pause stops the sampling (no frame is served while paused), Stop ends the watch, a locked screen pauses it, and
+  nothing is sampled while a credential manager is frontmost. Frames and on-screen text are untrusted data to every
+  model: an instruction on screen is reported, never followed.
+
+Measured on macOS 26.2 (`scripts/bench-live-latency.mjs`, a 1280×800 frame behind a cached prompt): Haiku 5.5 with
+thinking off answers in about 1.1 s for $0.0002; Opus 5.5 in 2.9 s, 1.5 s in fast mode. From a change appearing in a
+watched window to Opus telling the person: about 5 s.
+
+```typescript
+await client.callTool('live_watch', { action: 'start', target_app: 'com.apple.Terminal' })
+let since = 0
+for (;;) {
+  const body = JSON.parse(text(await client.callTool('live_events', { since, wait_ms: 30_000 })))
+  since = body.last_seq
+  if (body.events.some(event => event.kind === 'screen' && event.cause === 'other')) {
+    const look = await client.callTool('live_events', { since, frame: true })   // the frame, to read what changed
+  }
+}
+```
 
 ### Reading the web
 
