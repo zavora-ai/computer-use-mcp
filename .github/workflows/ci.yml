@@ -500,24 +500,27 @@ jobs:
       - name: Build TypeScript
         run: npx tsc
 
-      - name: Pack exact universal release tarball
+      - name: Pack exact main release tarball
         shell: bash
         run: |
           mkdir -p release/root
           npm pack --ignore-scripts --pack-destination release/root
 
-      - name: Verify universal tarball contains every native target
+      # 7.7.0: the main package is thin, as Claude Code, Codex and esbuild ship. The addon comes only from the platform
+      # package npm picks by os and cpu, so the main tarball must carry no binary and must pin all six at its version.
+      - name: Verify the main tarball is thin and pins every native package
         shell: bash
         run: |
           archive=$(find release/root -type f -name '*.tgz' -print -quit)
           if [ -z "$archive" ]; then
-            echo "universal release tarball missing" >&2
+            echo "main release tarball missing" >&2
             exit 1
           fi
           tar -tzf "$archive" > release/root/contents.txt
-          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
-            grep -Fxq "package/computer-use-napi.${target}.node" release/root/contents.txt
-          done
+          if grep -E '\.node$' release/root/contents.txt; then
+            echo "the main tarball must not carry a native binary" >&2
+            exit 1
+          fi
           tar -xOzf "$archive" package/package.json | node -e '
             let source = "";
             process.stdin.on("data", chunk => source += chunk);
@@ -528,7 +531,7 @@ jobs:
                   throw new Error(`optional native package ${target} must match the main version`);
                 }
               }
-              console.log("universal tarball contains all six native targets");
+              console.log("main tarball is thin and pins all six native packages");
             });
           '
 

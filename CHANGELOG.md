@@ -71,12 +71,13 @@ ship here too.
   Openbox, or on headless sway, each with its own display, runtime directory and D-Bus bus; the `linux-desktops` job
   runs Openbox and sway. xfwm4 is out of the job for now: on Xvfb its check never got past `doctor` in any CI run.
   libei is tested against an in-process EIS server.
-- **A native package per platform.** npm installs `@zavora-ai/computer-use-mcp-<platform>-<arch>` (darwin, win32 and
-  linux on x64 and arm64) as an optional dependency pinned to the same version, so the addon for the host comes from its
-  own package. The main package still carries all six binaries through 7.x, so an install that skips optional
-  dependencies keeps working. CI packs the six from the tested build, installs them through a local registry on every
-  test runner, attests them and stages them with the main package for approval
-  ([`docs/NATIVE-PACKAGES.md`](docs/NATIVE-PACKAGES.md)).
+- **A native package per platform, and a thin main package.** npm installs `@zavora-ai/computer-use-mcp-<platform>-<arch>`
+  (darwin, win32 and linux on x64 and arm64), an optional dependency pinned to the same version that npm picks by `os`
+  and `cpu`, so an install downloads one binary. The main package carries none, the way Claude Code, Codex and esbuild
+  ship: 2.5 MB unpacked, against 10.8 MB for 7.6.1 with all six. An install with `--omit=optional` (or a lockfile made
+  on another OS that left the platform package out) gets no addon, and the launcher exits 2 naming the package and the
+  fix. CI packs the six from the tested build, installs them through a local registry on every test runner, attests
+  them and stages them with the main package for approval ([`docs/NATIVE-PACKAGES.md`](docs/NATIVE-PACKAGES.md)).
 
 ### Changed
 

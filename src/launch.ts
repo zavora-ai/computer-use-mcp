@@ -42,7 +42,12 @@ export function checkInstall(root: string = packageRoot, platform: NodeJS.Platfo
     let optionalPackage = false
     try { require.resolve(`@zavora-ai/computer-use-mcp-${platform}-${arch}/package.json`); optionalPackage = true } catch { /* not installed */ }
     if (!optionalPackage) {
-      problems.push(`native addon for ${platform}-${arch} is missing (tried ${candidates.join(', ')}): run \`npm run build:native\` in ${root}, or set COMPUTER_USE_NATIVE_PATH`)
+      // 7.7.0: the npm package carries no binary of its own; the addon is the optional platform package, which npm
+      // skips without failing the install (--omit=optional, a registry that lacks it, a lockfile made on another OS).
+      const name = `@zavora-ai/computer-use-mcp-${platform}-${arch}`
+      problems.push(`native addon for ${platform}-${arch} is missing (tried ${name} and ${candidates.join(', ')}): ` +
+        `installed from npm, reinstall without --omit=optional or install ${name} at the same version; ` +
+        `in a checkout, run \`npm run build:native\` in ${root}; or set COMPUTER_USE_NATIVE_PATH`)
     }
   }
   return { ok: problems.length === 0, problems }

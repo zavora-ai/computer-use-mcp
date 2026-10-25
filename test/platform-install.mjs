@@ -128,8 +128,11 @@ try {
   assert.deepEqual(downloads, [target], 'npm must download only the matching os/cpu tarball')
   await check(probe, optionalBinary)
   const installedRoot = path.join(probe, 'node_modules', rootPkg.name)
-  const legacyBinary = path.join(installedRoot, binaryName)
-  await check(probe, legacyBinary, legacyBinary)
+  // 7.7.0: the main package is thin, as Claude Code, Codex and esbuild ship: no binary of its own.
+  assert.deepEqual(fs.readdirSync(installedRoot).filter(name => name.endsWith('.node')), [], 'the main package ships no native binary')
+  const overrideBinary = path.join(probe, `override-${binaryName}`)
+  fs.copyFileSync(optionalBinary, overrideBinary)
+  await check(probe, overrideBinary, overrideBinary)
 
   // A source checkout under the probe resolves the already installed platform package.
   // Its freshly built root binary must win when source validation explicitly selects it.
@@ -152,24 +155,27 @@ try {
   console.log(current.stdout.trim())
   console.log('Source checkout uses the current build artifact with an installed platform package present')
 
-  for (const name of fs.readdirSync(installedRoot).filter(name => name.endsWith('.node'))) fs.unlinkSync(path.join(installedRoot, name))
-  await check(probe, optionalBinary)
-  console.log('Optional package loads with all bundled binaries removed; explicit override retains precedence')
+  console.log('The platform package loads; the main package carries no binary; an explicit override retains precedence')
 
+  // Without the platform package there is no addon: the install succeeds, and loading names the package and the fix.
+  async function missing(probe) {
+    const code = `
+      const { resolveAddonPath } = await import('@zavora-ai/computer-use-mcp/host-native');
+      try { resolveAddonPath(); console.log('RESOLVED') } catch (error) { console.log(error.message) }
+    `
+    const result = await execute(process.execPath, ['--input-type=module', '-e', code], { cwd: probe, env })
+    assert.match(result.stdout, new RegExp(`Native binary missing for ${target}`))
+    assert.ok(result.stdout.includes(`optional package ${nativeName}`), result.stdout)
+    assert.ok(result.stdout.includes('--omit=optional'), result.stdout)
+  }
   const omitted = await install('omitted', ['--omit=optional'])
   assert.equal(fs.existsSync(path.join(omitted, 'node_modules', nativeName)), false)
-  await check(omitted, path.join(omitted, 'node_modules', rootPkg.name, binaryName))
-  const omittedRoot = path.join(omitted, 'node_modules', rootPkg.name)
-  const generic = path.join(omittedRoot, 'computer-use-napi.node')
-  fs.copyFileSync(path.join(omittedRoot, binaryName), generic)
-  fs.unlinkSync(path.join(omittedRoot, binaryName))
-  await check(omitted, generic)
-  console.log('Generic bundled fallback loads when the platform binary and optional package are absent')
+  await missing(omitted)
   available = false
   const unavailable = await install('unavailable')
-  assert.equal(fs.existsSync(path.join(unavailable, 'node_modules', nativeName)), false)
-  await check(unavailable, path.join(unavailable, 'node_modules', rootPkg.name, binaryName))
-  console.log(`PASS ${target}: automatic npm install, native load, override, omitted and unavailable optional package fallback`)
+  assert.equal(fs.existsSync(path.join(unavailable, 'node_modules', nativeName)), false, 'npm skips an optional package the registry lacks')
+  await missing(unavailable)
+  console.log(`PASS ${target}: automatic npm install of the matching package only, native load, override, and a named fix when the platform package is omitted or unavailable`)
 } finally {
   await new Promise(resolve => server.close(resolve))
   fs.rmSync(directory, { recursive: true, force: true })

@@ -8,7 +8,7 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { resolveAddonPath } from '../dist/native.js'
+import { missingAddonFix, resolveAddonPath } from '../dist/native.js'
 import { preparePlatformPackages } from '../scripts/prepare-platform-packages.mjs'
 import { npmCommand } from '../scripts/npm-command.mjs'
 
@@ -41,7 +41,7 @@ test('each platform package manifest is well-formed and version-locked to the ro
   }
 })
 
-test('root and lockfile pin all six optional packages while retaining universal binaries', () => {
+test('root and lockfile pin all six optional packages, and the main package ships no binary (7.7.0: thin)', () => {
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
   assert.equal(lock.version, rootPkg.version)
   assert.equal(lock.packages[''].version, rootPkg.version)
@@ -54,11 +54,17 @@ test('root and lockfile pin all six optional packages while retaining universal 
     assert.equal(entry.optional, true)
     assert.deepEqual(entry.os, [TARGETS[target].os])
     assert.deepEqual(entry.cpu, [TARGETS[target].cpu])
-    assert.ok(
-      rootPkg.files.includes(`computer-use-napi.${target}.node`),
-      `universal package must ship the ${target} binary`,
-    )
   }
+  // The addon comes only from the platform package npm picks by os and cpu, as Claude Code, Codex and esbuild ship.
+  assert.deepEqual(rootPkg.files.filter(file => file.endsWith('.node')), [], 'the main package must not ship a native binary')
+})
+
+test('a missing addon names the platform package and how to get it', () => {
+  const fix = missingAddonFix('linux', 'arm64')
+  assert.match(fix, /optional package @zavora-ai\/computer-use-mcp-linux-arm64/)
+  assert.match(fix, /--omit=optional/)
+  assert.match(fix, /npm run build:native/)
+  assert.match(fix, /COMPUTER_USE_NATIVE_PATH/)
 })
 
 function fixture(t) {
@@ -151,7 +157,7 @@ test('explicit native path still wins over an installed optional package', t => 
   }
 })
 
-test('resolveAddonPath prefers an installed optional platform package over the legacy root binary', () => {
+test('resolveAddonPath prefers an installed optional platform package over a checkout build', () => {
   const target = `${process.platform}-${process.arch}`
   if (!(target in TARGETS)) { return } // unsupported host — skip
   const prevEnv = process.env.COMPUTER_USE_NATIVE_PATH
