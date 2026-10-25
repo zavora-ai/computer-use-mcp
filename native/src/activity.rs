@@ -60,7 +60,7 @@ pub fn get_physical_input_counters() -> PhysicalInputCounters {
     #[cfg(target_os = "windows")]
     let supported = windows_monitor::ensure_started().is_ok();
     #[cfg(target_os = "linux")]
-    let supported = linux_x11_monitor::ensure_started().is_ok();
+    let supported = linux_monitor().is_ok();
     PhysicalInputCounters {
         supported,
         movement: PHYSICAL_MOVEMENT.load(Ordering::Acquire) as f64,
@@ -731,7 +731,7 @@ mod windows_monitor {
 #[cfg(test)]
 mod tests {
     use super::{
-        chord_matches, linux_session_is_native_wayland, linux_x11_device_is_physical,
+        chord_matches, idle_activity_is_physical, linux_session_is_native_wayland, linux_x11_device_is_physical,
         macos_source_state_is_physical, parse_emergency_chord, windows_flags_are_physical,
         EMERGENCY_CHORD, MOD_ALT, MOD_CTRL, MOD_SHIFT, TRIGGER_ESCAPE,
     };
@@ -749,6 +749,20 @@ mod tests {
             TRIGGER_ESCAPE
         ));
         assert!(!chord_matches(MOD_CTRL | MOD_ALT, TRIGGER_ESCAPE));
+    }
+
+    #[test]
+    fn mutter_idle_activity_is_the_person_only_away_from_the_agents_input() {
+        // New activity, long after the agent's last input: the person.
+        assert!(idle_activity_is_physical(5_000, 4_000, false, 1_000, 150));
+        // Already counted.
+        assert!(!idle_activity_is_physical(4_000, 4_000, false, 1_000, 150));
+        // While the agent's input is in flight, or within the margin after it: the agent.
+        assert!(!idle_activity_is_physical(5_000, 4_000, true, 1_000, 150));
+        assert!(!idle_activity_is_physical(5_100, 4_000, false, 5_000, 150));
+        assert!(idle_activity_is_physical(5_200, 4_000, false, 5_000, 150));
+        // Activity before the agent's input began is masked by it, never counted late.
+        assert!(!idle_activity_is_physical(4_900, 4_000, false, 5_000, 150));
     }
 
     #[test]
@@ -1050,7 +1064,181 @@ mod linux_x11_monitor {
 #[cfg(target_os = "linux")]
 #[napi]
 pub fn get_user_idle_time_ms() -> Option<f64> {
-    linux_x11_monitor::idle_time_ms()
+    match linux_monitor().ok()? {
+        "mutter_idle_monitor" => linux_gnome_monitor::idle_time_ms(),
+        _ => linux_x11_monitor::idle_time_ms(),
+    }
+}
+
+/// The Linux physical-input monitor in use: XInput2 on X11, Mutter's idle clock on GNOME Wayland (7.7.x).
+#[cfg(target_os = "linux")]
+fn linux_monitor() -> Result<&'static str, String> {
+    match linux_x11_monitor::ensure_started() {
+        Ok(()) => Ok("xinput2_raw_non_xtest"),
+        Err(x11) => match linux_gnome_monitor::ensure_started() {
+            Ok(()) => Ok("mutter_idle_monitor"),
+            Err(gnome) => Err(format!("{x11}; {gnome}")),
+        },
+    }
+}
+
+/// Mark the agent's own input on Linux, so a monitor that cannot attribute input (Mutter's idle clock) does not count
+/// it as the person's. `start` before the events go out, `end` after.
+#[cfg(target_os = "linux")]
+pub(crate) fn note_agent_input(start: bool) {
+    linux_gnome_monitor::note_agent_input(start);
+}
+
+/// Whether activity Mutter saw at `activity_ms` is new physical input: later than the last activity already counted,
+/// not while the agent's input was in flight, and more than `margin_ms` after the agent's last input began or ended.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn idle_activity_is_physical(
+    activity_ms: u64,
+    last_counted_ms: u64,
+    agent_in_flight: bool,
+    last_agent_ms: u64,
+    margin_ms: u64,
+) -> bool {
+    activity_ms > last_counted_ms && !agent_in_flight && activity_ms > last_agent_ms.saturating_add(margin_ms)
+}
+
+/// GNOME on Wayland gives no program a global input stream, but Mutter publishes its own clock of the last user input
+/// (`org.gnome.Mutter.IdleMonitor.GetIdletime`). That clock counts every input, the agent's libei events included, so
+/// activity inside the agent's own input (plus a margin) is set aside and the rest is the person. The clock says when,
+/// not what: each poll that finds new physical activity counts as movement, so a takeover needs about 300 ms of
+/// sustained input (a moving mouse, typing) and a single key or click is not enough on its own.
+#[cfg(target_os = "linux")]
+mod linux_gnome_monitor {
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+    use std::sync::{mpsc, OnceLock};
+    use std::time::{Duration, Instant};
+
+    const POLL: Duration = Duration::from_millis(100);
+    /// Activity this close to the agent's own input is the agent's. Measured on GNOME 46: Mutter registers a libei
+    /// event before the send returns, so the margin only absorbs clock and scheduling jitter.
+    const AGENT_MARGIN_MS: u64 = 150;
+    /// Movement credited per poll with new physical activity (the takeover threshold is 500).
+    const MOVEMENT_PER_POLL: u64 = 200;
+
+    static CLOCK_ORIGIN: OnceLock<Instant> = OnceLock::new();
+    static LAST_PHYSICAL_MS: AtomicU64 = AtomicU64::new(0);
+    static LAST_AGENT_MS: AtomicU64 = AtomicU64::new(0);
+    static AGENT_IN_FLIGHT: AtomicU32 = AtomicU32::new(0);
+    static STATUS: OnceLock<Result<(), String>> = OnceLock::new();
+
+    /// Milliseconds on a clock that starts a day in the past, so the seed (now minus the compositor's idle time) does
+    /// not saturate at zero when the person has been idle longer than this process has run.
+    fn monotonic_ms() -> u64 {
+        CLOCK_ORIGIN
+            .get_or_init(|| {
+                let now = Instant::now();
+                now.checked_sub(Duration::from_secs(24 * 3600)).unwrap_or(now)
+            })
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64
+    }
+
+    pub fn note_agent_input(start: bool) {
+        LAST_AGENT_MS.store(monotonic_ms(), Ordering::Release);
+        if start {
+            AGENT_IN_FLIGHT.fetch_add(1, Ordering::AcqRel);
+        } else {
+            // Never below zero, even if an end were ever noted without its start.
+            let mut current = AGENT_IN_FLIGHT.load(Ordering::Acquire);
+            while current > 0 {
+                match AGENT_IN_FLIGHT.compare_exchange_weak(current, current - 1, Ordering::AcqRel, Ordering::Acquire) {
+                    Ok(_) => break,
+                    Err(actual) => current = actual,
+                }
+            }
+        }
+    }
+
+    fn idle_proxy(connection: &zbus::blocking::Connection) -> zbus::Result<zbus::blocking::Proxy<'_>> {
+        zbus::blocking::Proxy::new(
+            connection,
+            "org.gnome.Mutter.IdleMonitor",
+            "/org/gnome/Mutter/IdleMonitor/Core",
+            "org.gnome.Mutter.IdleMonitor",
+        )
+    }
+
+    fn run(sender: mpsc::SyncSender<Result<(), String>>) {
+        let wayland = super::linux_session_is_native_wayland(
+            std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
+            std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
+        );
+        if !wayland {
+            let _ = sender.send(Err("Mutter's idle clock is used on GNOME Wayland only".into()));
+            return;
+        }
+        let connection = match zbus::blocking::Connection::session() {
+            Ok(connection) => connection,
+            Err(error) => {
+                let _ = sender.send(Err(format!("D-Bus session bus: {error}")));
+                return;
+            }
+        };
+        let proxy = match idle_proxy(&connection) {
+            Ok(proxy) => proxy,
+            Err(error) => {
+                let _ = sender.send(Err(format!("Mutter IdleMonitor: {error}")));
+                return;
+            }
+        };
+        let idle = |proxy: &zbus::blocking::Proxy| proxy.call::<_, _, u64>("GetIdletime", &());
+        let first = match idle(&proxy) {
+            Ok(idle) => idle,
+            Err(error) => {
+                let _ = sender.send(Err(format!("Mutter IdleMonitor is not available (not GNOME?): {error}")));
+                return;
+            }
+        };
+        // Seeded from the compositor's clock, like the other monitors, so a fresh server is not "active" at once.
+        let mut last_counted = monotonic_ms().saturating_sub(first);
+        LAST_PHYSICAL_MS.store(last_counted, Ordering::Release);
+        if sender.send(Ok(())).is_err() {
+            return;
+        }
+        loop {
+            std::thread::sleep(POLL);
+            let Ok(idle_ms) = idle(&proxy) else { continue };
+            let activity = monotonic_ms().saturating_sub(idle_ms);
+            let physical = super::idle_activity_is_physical(
+                activity,
+                last_counted,
+                AGENT_IN_FLIGHT.load(Ordering::Acquire) > 0,
+                LAST_AGENT_MS.load(Ordering::Acquire),
+                AGENT_MARGIN_MS,
+            );
+            if activity > last_counted {
+                last_counted = activity;
+            }
+            if physical {
+                LAST_PHYSICAL_MS.store(activity, Ordering::Release);
+                super::PHYSICAL_MOVEMENT.fetch_add(MOVEMENT_PER_POLL, Ordering::AcqRel);
+            }
+        }
+    }
+
+    pub fn ensure_started() -> &'static Result<(), String> {
+        STATUS.get_or_init(|| {
+            let (sender, receiver) = mpsc::sync_channel(1);
+            std::thread::Builder::new()
+                .name("computer-use-mutter-idle-monitor".into())
+                .spawn(move || run(sender))
+                .map_err(|error| format!("failed to start the Mutter idle monitor: {error}"))?;
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .map_err(|error| format!("Mutter idle monitor initialization timed out: {error}"))?
+        })
+    }
+
+    pub fn idle_time_ms() -> Option<f64> {
+        ensure_started().as_ref().ok()?;
+        Some(monotonic_ms().saturating_sub(LAST_PHYSICAL_MS.load(Ordering::Acquire)) as f64)
+    }
 }
 
 #[napi]
@@ -1081,15 +1269,19 @@ pub fn get_input_monitor_capability() -> InputMonitorCapability {
 
     #[cfg(target_os = "linux")]
     {
-        let status = linux_x11_monitor::ensure_started();
+        let status = linux_monitor();
+        let reason = match &status {
+            Err(reason) => reason.clone(),
+            Ok("mutter_idle_monitor") => "GNOME Wayland: Mutter's idle clock, minus the agent's own input; it says when the person \
+                acted, not what, so a takeover needs sustained input".into(),
+            Ok(_) => "best-effort X11 monitor excludes XTEST sources, but arbitrary virtual/uinput devices cannot be proven physical".into(),
+        };
         return InputMonitorCapability {
-        supported: status.is_ok(),
-        backend: if status.is_ok() { "xinput2_raw_non_xtest" } else { "unavailable" }.into(),
-        distinguishes_injected: false,
-        recommended_poll_ms: 20,
-        reason: status.as_ref().err().cloned().or_else(|| Some(
-            "best-effort X11 monitor excludes XTEST sources, but arbitrary virtual/uinput devices cannot be proven physical; Wayland is unsupported".into(),
-        )),
+            supported: status.is_ok(),
+            backend: status.clone().unwrap_or("unavailable").into(),
+            distinguishes_injected: false,
+            recommended_poll_ms: if status == Ok("mutter_idle_monitor") { 100 } else { 20 },
+            reason: Some(reason),
         };
     }
 }

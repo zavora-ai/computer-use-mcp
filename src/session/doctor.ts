@@ -237,7 +237,9 @@ export async function runDoctor(options: {
           ...(!listed ? [`Window listing failed: ${(backends.windowList as { error?: string } | undefined)?.error ?? 'unknown'}.`] : []),
           ...(partial ? ['GNOME on Wayland lists only XWayland windows to other programs (Shell.Eval is disabled since GNOME 41).'] : []),
           ...(!capture ? ['Install grim (sway, Hyprland), scrot or ImageMagick (X11), or python3-gi for the desktop portal (GNOME, KDE).'] : []),
-          ...(!backends.input ? [backends.session === 'wayland' ? 'Install ydotool and run ydotoold with access to /dev/uinput.' : 'Install xdotool.'] : []),
+          ...(!backends.input ? [backends.session === 'wayland'
+            ? 'Use GNOME 46 or KDE Plasma 6.1 or later (input through the RemoteDesktop portal and libei), or an X11 session. ydotool with its daemon is the last resort: it needs /dev/uinput, which lets any program type anywhere.'
+            : 'Install xdotool.'] : []),
         ],
       })
     } catch (error) {

@@ -280,6 +280,56 @@ jobs:
         env:
           COMPUTER_USE_NATIVE_PATH: ${{ github.workspace }}/${{ matrix.os.binary }}
 
+  # 7.7.x: the live Linux check on real (headless) desktops. The unit tests run under Xvfb with no window manager, so
+  # activation, window geometry and the window-manager hints were never exercised. Xfce's and Openbox's window managers
+  # cover the X11 flavours (Xubuntu, Lubuntu and the others run X11); sway's headless backend covers wlroots, where it
+  # has no input devices, so its input checks are skipped. libei input is tested by the native unit tests against a
+  # test EIS server (linux_ei::live::tests), which need no desktop.
+  linux-desktops:
+    name: Linux desktop — ${{ matrix.desktop }}
+    needs: build-native
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [xfwm4, openbox, sway]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download native binary
+        uses: actions/download-artifact@v4
+        with:
+          name: computer-use-napi.linux-x64.node
+
+      - name: Copy binary to generic name
+        run: cp computer-use-napi.linux-x64.node computer-use-napi.node
+
+      - name: Build TypeScript
+        run: npm run build:ts
+
+      - name: Install the desktop and the tools the server drives
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dbus-daemon x11-utils xdotool wmctrl xclip imagemagick zenity > /dev/null
+          case "${{ matrix.desktop }}" in
+            sway) sudo apt-get install -y -qq sway grim > /dev/null ;;
+            *) sudo apt-get install -y -qq xvfb ${{ matrix.desktop }} > /dev/null ;;
+          esac
+
+      - name: Live check on ${{ matrix.desktop }} (headless)
+        run: bash scripts/ci-linux-desktop.sh ${{ matrix.desktop }}
+        env:
+          COMPUTER_USE_NATIVE_PATH: ${{ github.workspace }}/computer-use-napi.linux-x64.node
+
   package:
     name: Verify package contents
     needs: test

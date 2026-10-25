@@ -234,6 +234,16 @@ export interface NativeModule {
   keyUp?(keys: string[]): void
   // Apps
   activateApp(bundleId: string, timeoutMs?: number): { bundleId: string; activated: boolean; displayName?: string }
+  /**
+   * 7.7.x (Linux): start an installed app from its desktop entry with `gio launch`, returning at once. `process` is the
+   * program the entry runs, for `linuxProcessRunning`; an app with no entry is `{ launched: false, reason: 'not_installed' }`.
+   */
+  launchApp?(bundleId: string): {
+    launched: boolean; reason?: string; bundleId: string; desktopEntry?: string; desktopId?: string; name?: string
+    process?: string | null; launcher?: string; searched?: string[]
+  }
+  /** 7.7.x (Linux): is a process with this name running? */
+  linuxProcessRunning?(name: string): boolean
   getFrontmostApp(): { bundleId: string; displayName: string; pid: number } | null
   getWindow(windowId: number): WindowRecord | null
   getCursorWindow(): WindowRecord | null
@@ -303,6 +313,8 @@ export interface NativeModule {
     screenshot: string | null
     screenshotPortal: boolean
     input: string | null
+    /** 7.7.x: the input route (`libei`, `ydotool`, `xtest`, `none`) and, for libei, whether the portal session is open. */
+    inputDetail?: { route: string; detail: string }
   }
   releaseDisplayAwake?(): void
 

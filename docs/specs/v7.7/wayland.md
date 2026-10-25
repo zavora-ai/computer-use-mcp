@@ -1,7 +1,7 @@
 # Wayland: what 7.7.0 does, and the libei plan
 
-Status: design note for K7, 2026-10-24. The window and capture backends below shipped in 7.7.0. Input through libei
-has not been written yet.
+Status: design note for K7, 2026-10-24; libei input added 2026-10-25. The window and capture backends below shipped in
+7.7.0. Input through the RemoteDesktop portal and libei is in `native/src/linux_ei.rs` (see *What was built* below).
 
 ## Where 7.6 stood
 
@@ -74,6 +74,44 @@ Proposed shape:
    helper is just another delivery path behind `mouse.rs` and `keyboard.rs`.
 6. **Tests.** Mutter has a headless mode with an EIS test server (`mutter --headless --virtual-monitor`). A CI job on
    that is the gate before libei is preferred over ydotool.
+
+## What was built (2026-10-25)
+
+- `native/src/linux_ei.rs`, inside the addon rather than a helper: `reis` is a pure Rust implementation of the
+  protocol and `zbus` speaks the portal, so there is no C library to link. One thread owns the D-Bus connection (the
+  portal session lives as long as it does) and the EIS socket (pings are answered there); input calls send it batches.
+- `COMPUTER_USE_LINUX_INPUT=auto` (the default) on Wayland: libei when the RemoteDesktop portal is version 2 or later,
+  then a ydotool that can reach its daemon or `/dev/uinput`, otherwise a refusal that names the fix. XTEST is used on
+  Wayland only when asked for (`xtest`), because it reaches XWayland windows only and would otherwise fail silently.
+- Consent: `SelectDevices` with `persist_mode: 2` and the saved `restore_token`, so GNOME asks once. Until the person
+  answers, input returns `approval_pending`; a refusal is `remote_desktop_declined` and is not asked again in that
+  process.
+- Clicks, double clicks, Control-click, held-button drags with modifiers, scroll, key combos, `key_down`/`key_up` and
+  `type` all go through libei. Typing maps characters to key codes on a US layout; a character it cannot type is an
+  error that says to paste instead. Reading the keymap the compositor sends (XKB) is the next step.
+- Checked on Ubuntu 24.04 (GNOME 46.2, arm64 VM): the first input showed GNOME's dialog, later sessions connected in
+  about 300 ms with no dialog, a move took 2 ms, `scripts/linux-check.mjs` passed its click, type and read-back checks
+  through libei, and a native Wayland zenity received typed text exactly.
+- Takeover and the user-active guard on GNOME Wayland: XInput2 through XWayland sees physical input only over X
+  windows, so on native Wayland the monitor reads Mutter's own idle clock (`org.gnome.Mutter.IdleMonitor`) instead.
+  That clock counts every input, the agent's libei events included (measured: Mutter registers them before the send
+  returns), so activity while the agent's input is in flight or within 150 ms of it is set aside. The clock says when,
+  not what: a takeover needs about 300 ms of sustained input, and a single key or click alone does not pause the agent.
+  Checked with a second process moving the pointer through its own libei session during `linux-check.mjs --takeover`:
+  paused (`taken_over`) 834 ms after GO, the held keys released, resumed after the input stopped; 40 moves and typing by
+  the server itself counted as no physical input. KDE and wlroots desktops have no such clock yet.
+
+## Launching apps (2026-10-25)
+
+`open_application` on Linux only focused an app that already had a window, so it could not open a closed one. Now an
+app with no window is started from its desktop entry (`native/src/linux_apps.rs`): the entry is found by id, by the
+last part of a snap or Flatpak id (`firefox_firefox`, `org.mozilla.firefox`), by the program it runs or by its name,
+across `XDG_DATA_HOME`, `XDG_DATA_DIRS` and the snap and Flatpak export directories, and started with `gio launch`
+(`gtk-launch` when gio is missing), so the entry's own command runs and nothing is built from the model's text. The
+call waits up to 15 s: a window it can list is activated (`effect: verified`); on GNOME Wayland, where a native
+window cannot be listed, a running process is reported as launched with `effect: unverified` and a note to look first.
+`discover_applications` reads the same directories, so the snap Firefox on Ubuntu is found. Checked on Ubuntu 24.04:
+with Firefox closed, `open_application {bundle_id: "firefox"}` started the snap and it came to the front in about 8 s.
 
 Order: AT-SPI window listing on GNOME first (no new dependency), then the libei helper behind
 `COMPUTER_USE_LINUX_INPUT=libei`, then libei as the default where `ConnectToEIS` is available.

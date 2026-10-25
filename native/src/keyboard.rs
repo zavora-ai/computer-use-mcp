@@ -1,20 +1,11 @@
 // ── Linux implementation ──────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 mod linux {
+    use crate::linux_ei::{Action, Route};
     use crate::linux_tools::run;
     use napi_derive::napi;
     use std::collections::HashMap;
     use std::sync::OnceLock;
-
-    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
-
-    fn is_wayland() -> bool {
-        *IS_WAYLAND.get_or_init(|| {
-            std::env::var("XDG_SESSION_TYPE")
-                .map(|v| v == "wayland")
-                .unwrap_or(false)
-        })
-    }
 
     static LINUX_KEY_MAP: OnceLock<HashMap<&'static str, u32>> = OnceLock::new();
 
@@ -166,13 +157,43 @@ mod linux {
         }
     }
 
+    /// The input route (7.7.x: libei on GNOME 46+ and KDE Plasma 6.1+); a Wayland session with none is a named error.
+    fn route() -> napi::Result<Route> {
+        match crate::linux_ei::route() {
+            Route::Unavailable(reason) => Err(napi::Error::from_reason(reason)),
+            route => Ok(route),
+        }
+    }
+
+    /// Every key in a combo down, then every key up in reverse, `repeat` times, as libei key events (evdev codes).
+    fn ei_key_combo(combo: &str, repeat: i32) -> napi::Result<()> {
+        let map = key_map();
+        let codes = combo
+            .to_lowercase()
+            .split('+')
+            .map(|part| {
+                map.get(part.trim())
+                    .map(|code| x11_to_evdev(*code))
+                    .ok_or_else(|| napi::Error::from_reason(format!("Unknown key in combo: {combo}")))
+            })
+            .collect::<napi::Result<Vec<u32>>>()?;
+        let mut actions = Vec::new();
+        for _ in 0..repeat.max(1) {
+            actions.extend(codes.iter().map(|&code| Action::Key { code, press: true }));
+            actions.extend(codes.iter().rev().map(|&code| Action::Key { code, press: false }));
+        }
+        crate::linux_ei::send(actions)
+    }
+
     #[napi]
     pub fn key_press(combo: String, repeat: Option<i32>) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
         let repeat = repeat.unwrap_or(1);
 
-        if is_wayland() {
-            return ydotool_key_combo(&combo, repeat);
+        match route()? {
+            Route::Ei => return ei_key_combo(&combo, repeat),
+            Route::Ydotool => return ydotool_key_combo(&combo, repeat),
+            _ => {}
         }
 
         // X11 path
@@ -225,10 +246,28 @@ mod linux {
         // 7.7.0 (C4): a latched call is an error, not a silent success; (L1, L2) the tool's output is captured and a
         // missing or failing tool is a named error.
         crate::activity::ensure_not_emergency_stopped()?;
-        if is_wayland() {
-            run("ydotool", &["type", "--", &text])?;
-        } else {
-            run("xdotool", &["type", "--clearmodifiers", "--", &text])?;
+        match route()? {
+            Route::Ei => {
+                // Every character is resolved before any key goes out; the latch is checked between chunks, so a Stop
+                // ends typing part-way and says so (C4).
+                let actions = crate::linux_ei::type_actions(&text).map_err(napi::Error::from_reason)?;
+                let mut sent = 0usize;
+                for chunk in actions.chunks(64) {
+                    if crate::activity::ensure_not_emergency_stopped().is_err() {
+                        return Err(napi::Error::from_reason(format!(
+                            "Stopped by the emergency latch after {sent} of {} key events", actions.len()
+                        )));
+                    }
+                    crate::linux_ei::send(chunk.to_vec())?;
+                    sent += chunk.len();
+                }
+            }
+            Route::Ydotool => {
+                run("ydotool", &["type", "--", &text])?;
+            }
+            _ => {
+                run("xdotool", &["type", "--clearmodifiers", "--", &text])?;
+            }
         }
         Ok(())
     }
@@ -264,9 +303,18 @@ mod linux {
         if codes.is_empty() {
             return Ok(());
         }
-        if is_wayland() {
-            let sequence: Vec<(u32, bool)> = codes.iter().map(|c| (*c, down)).collect();
-            return ydotool_keys(&sequence);
+        match crate::linux_ei::route() {
+            Route::Ei => {
+                return crate::linux_ei::send(
+                    codes.iter().map(|&code| Action::Key { code: x11_to_evdev(code), press: down }).collect(),
+                )
+            }
+            Route::Ydotool => {
+                let sequence: Vec<(u32, bool)> = codes.iter().map(|c| (*c, down)).collect();
+                return ydotool_keys(&sequence);
+            }
+            Route::Unavailable(reason) => return Err(napi::Error::from_reason(reason)),
+            Route::Xtest => {}
         }
         unsafe {
             use x11::xlib::*;

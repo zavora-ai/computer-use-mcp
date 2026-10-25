@@ -6,6 +6,10 @@
 //
 //   npm ci && npm run build && node scripts/linux-check.mjs              (from a source checkout)
 //   node scripts/linux-check.mjs --takeover                               (adds a step where you move the mouse)
+//   node scripts/linux-check.mjs --skip-input                             (no input route: SKIP the input checks)
+//
+// CI runs it unattended on headless desktops through scripts/ci-linux-desktop.sh (Xvfb with xfwm4 or openbox, and
+// sway's headless backend, where there is no input device, so --skip-input).
 //
 // Every check prints PASS or FAIL with what it saw. Send the whole output back, with the doctor block it prints first.
 import { spawn, spawnSync } from 'node:child_process'
@@ -22,11 +26,13 @@ const { createComputerUseServer } = await import('../dist/server.js')
 const { connectInProcess } = await import('../dist/client.js')
 
 const takeover = process.argv.includes('--takeover')
+const skipInput = process.argv.includes('--skip-input')
 const results = []
 const check = (name, ok, detail = '') => {
   results.push({ name, ok })
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  — ${String(detail).slice(0, 240)}` : ''}`)
 }
+const skip = (name, reason) => console.log(`SKIP  ${name}  — ${reason}`)
 const text = r => r.content.find(c => c.type === 'text')?.text ?? ''
 const parse = r => { try { return JSON.parse(text(r)) } catch { return { raw: text(r) } } }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -48,20 +54,6 @@ try {
   check('doctor platform check passes on Linux (7.7)', doctor.checks?.find(c => c.id === 'platform')?.status === 'pass')
   check('doctor names the Linux backends (7.7)', Boolean(backends), backends?.summary)
 
-  // 2. Windows carry real geometry (7.6 reported every X11 window at 0,0 sized 0x0).
-  const listed = parse(await client.callTool('list_windows', {}))
-  const windows = Array.isArray(listed.windows) ? listed.windows : Array.isArray(listed) ? listed : []
-  const sized = windows.filter(w => w.bounds?.width > 0 && w.bounds?.height > 0)
-  check('list_windows returns windows', windows.length > 0, `${windows.length} windows`)
-  check('windows have real bounds, not 0x0 (L3)', sized.length > 0, sized.slice(0, 3).map(w => `${w.bundleId} ${w.bounds.width}x${w.bounds.height}`).join(', '))
-
-  // 3. Full-screen captures, and JPEG quality honoured (L3).
-  const low = await client.callTool('screenshot', { full_screen: true, quality: 20, width: 1024 })
-  const high = await client.callTool('screenshot', { full_screen: true, quality: 95, width: 1024, resend: true })
-  const size = r => r.content.find(c => c.type === 'image')?.data?.length ?? 0
-  check('full-screen screenshot returns an image', size(low) > 0, text(low).split('\n')[0])
-  check('JPEG quality is honoured (quality 95 is larger than 20)', size(high) > size(low) * 1.3, `${size(low)} vs ${size(high)} base64 bytes`)
-
   // 4. A window to drive: zenity's editable text box. We own the process.
   if (!has('zenity')) throw new Error('zenity is not installed: sudo apt install zenity')
   zenity = spawn('zenity', ['--text-info', '--editable', `--title=${TITLE}`, '--width=640', '--height=420'], { stdio: ['ignore', 'pipe', 'ignore'] })
@@ -75,6 +67,23 @@ try {
   }
   check('the zenity window is listed by its title', Boolean(found), found ? `app ${found.bundleId}, window ${found.windowId}` : 'not seen in 15 s')
   if (!found) throw new Error('no zenity window; cannot continue')
+
+  // Windows carry real geometry (7.6 reported every X11 window at 0,0 sized 0x0). Listed once zenity's window
+  // exists, so an otherwise empty desktop (a headless CI one, or GNOME on Wayland with no XWayland windows) is not a
+  // false failure.
+  const listed = parse(await client.callTool('list_windows', {}))
+  const windows = Array.isArray(listed.windows) ? listed.windows : Array.isArray(listed) ? listed : []
+  const sized = windows.filter(w => w.bounds?.width > 0 && w.bounds?.height > 0)
+  check('list_windows returns windows', windows.length > 0, `${windows.length} windows`)
+  check('windows have real bounds, not 0x0 (L3)', sized.length > 0, sized.slice(0, 3).map(w => `${w.bundleId} ${w.bounds.width}x${w.bounds.height}`).join(', '))
+
+  // Full-screen captures, and JPEG quality honoured (L3), with zenity on screen: an empty desktop is one flat colour,
+  // which compresses to the same size at any quality.
+  const low = await client.callTool('screenshot', { full_screen: true, quality: 20, width: 1024 })
+  const high = await client.callTool('screenshot', { full_screen: true, quality: 95, width: 1024, resend: true })
+  const size = r => r.content.find(c => c.type === 'image')?.data?.length ?? 0
+  check('full-screen screenshot returns an image', size(low) > 0, text(low).split('\n')[0])
+  check('JPEG quality is honoured (quality 95 is larger than 20)', size(high) > size(low) * 1.3, `${size(low)} vs ${size(high)} base64 bytes`)
   const appeared = parse(await client.callTool('wait_for_window', { target_app: found.bundleId, title: TITLE, timeout_ms: 5000 }))
   check('wait_for_window finds it', appeared.found === true, JSON.stringify(appeared.window ?? appeared).slice(0, 160))
   const win = appeared.window ?? found
@@ -87,28 +96,34 @@ try {
   check('a window screenshot returns an image', size(shot) > 0, text(shot).split('\n')[0])
 
   // 5. Input: one run_steps call clicks into the text box and types (K2); the coordinate is sent as text (A1).
-  const cx = Math.round(win.bounds.x + win.bounds.width / 2)
-  const cy = Math.round(win.bounds.y + win.bounds.height / 2)
-  const phrase = 'computer-use 7.7 on linux'
-  const steps = parse(await client.callTool('run_steps', {
-    target_window_id: win.windowId,
-    steps: [
-      { tool: 'click', args: { coordinate: `${cx},${cy}` } },
-      { tool: 'type', args: { text: phrase } },
-    ],
-  }))
-  check('run_steps clicked and typed in one call (K2, A1)', steps.completed === 2, JSON.stringify(steps).slice(0, 200))
-  check('run_steps reports route batch and an effect (K1)', steps.route === 'batch' && typeof steps.effect === 'string', `route ${steps.route}, effect ${steps.effect}`)
+  if (skipInput) {
+    for (const name of ['run_steps clicked and typed in one call (K2, A1)', 'run_steps reports route batch and an effect (K1)', 'the typed text reads back exactly']) {
+      skip(name, '--skip-input: this desktop has no input route here')
+    }
+  } else {
+    const cx = Math.round(win.bounds.x + win.bounds.width / 2)
+    const cy = Math.round(win.bounds.y + win.bounds.height / 2)
+    const phrase = 'computer-use 7.7 on linux'
+    const steps = parse(await client.callTool('run_steps', {
+      target_window_id: win.windowId,
+      steps: [
+        { tool: 'click', args: { coordinate: `${cx},${cy}` } },
+        { tool: 'type', args: { text: phrase } },
+      ],
+    }))
+    check('run_steps clicked and typed in one call (K2, A1)', steps.completed === 2, JSON.stringify(steps).slice(0, 200))
+    check('run_steps reports route batch and an effect (K1)', steps.route === 'batch' && typeof steps.effect === 'string', `route ${steps.route}, effect ${steps.effect}`)
 
-  // Read the text back through the clipboard: select all, copy, read.
-  await client.callTool('key', { text: 'ctrl+a', target_window_id: win.windowId })
-  await client.callTool('key', { text: 'ctrl+c', target_window_id: win.windowId })
-  await sleep(300)
-  const copied = text(await client.callTool('read_clipboard', {}))
-  check('the typed text reads back exactly', copied.includes(phrase), JSON.stringify(copied.slice(0, 80)))
+    // Read the text back through the clipboard: select all, copy, read.
+    await client.callTool('key', { text: 'ctrl+a', target_window_id: win.windowId })
+    await client.callTool('key', { text: 'ctrl+c', target_window_id: win.windowId })
+    await sleep(300)
+    const copied = text(await client.callTool('read_clipboard', {}))
+    check('the typed text reads back exactly', copied.includes(phrase), JSON.stringify(copied.slice(0, 80)))
+  }
 
   // 6. Optional: a person taking over pauses the agent (X11 counts physical input through XInput 2).
-  if (takeover) {
+  if (takeover && !skipInput) {
     console.log('\n>>> In 3 seconds a 6-second hold starts. When you see GO, move the mouse for two seconds. <<<')
     await sleep(3000)
     const started = Date.now()
