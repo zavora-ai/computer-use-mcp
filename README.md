@@ -96,8 +96,9 @@ anything that can reach the port. Fine on your own machine, never on a shared ho
 
 ## Set up your agent
 
-Requires **Node.js 20+** and an interactive desktop. The published package bundles
-native modules for macOS, Windows and Linux, on x64 and arm64.
+Requires **Node.js 20+** and an interactive desktop. npm installs the native module
+for your platform (macOS, Windows or Linux, on x64 or arm64) from its own package;
+the main package also carries all six as a fallback.
 
 Add this to your agent's MCP server configuration:
 
@@ -121,9 +122,9 @@ Before using desktop tools:
 
 | Platform | Setup |
 |---|---|
-| macOS 14+ | Grant the host app Accessibility (called Device Control and Data Access from macOS 27) and Screen Recording access. The host is the app that launches the server (your terminal, Cursor or Claude Desktop), not `node`. Input Monitoring lets the user-active guard see when you are typing or moving the mouse. App scripting may also request Automation access. Until Accessibility is granted, input tools refuse with `accessibility_permission_denied` rather than silently doing nothing. |
-| Windows | Run in a signed-in desktop session. Protected or elevated windows may need matching privileges. |
-| Linux | Use a graphical session with the required X11/Wayland utilities. Accessibility support needs AT-SPI. See [platform details](docs/ARCHITECTURE.md). |
+| macOS 14+ | Grant the host app Accessibility (called Device Control and Data Access from macOS 27) and Screen Recording access. The host is the app that launches the server (your terminal, Cursor or Claude Desktop), not `node`. Input Monitoring lets the user-active guard see when you are typing or moving the mouse. App scripting may also request Automation access. Until Accessibility is granted, input tools refuse with `accessibility_permission_denied` rather than silently doing nothing. The capture helper (fast captures and OCR) and the status card are compiled on first use, so install the Xcode Command Line Tools (`xcode-select --install`). |
+| Windows | Run in a signed-in desktop session. Protected or elevated windows may need matching privileges. Coordinates are physical pixels at any display scale. |
+| Linux | Use an X11 or Wayland session. On GNOME 46+ and KDE Plasma 6.1+, Wayland input goes through the desktop's RemoteDesktop portal: you approve once and the choice is remembered. Elsewhere on Wayland install `ydotool`. Accessibility needs AT-SPI (`python3-gi`, `gir1.2-atspi-2.0`). See [testing on Linux](docs/TESTING-LINUX.md) and [platform details](docs/ARCHITECTURE.md). |
 
 Ask your agent to run `doctor` to check capabilities. The `computer-use-mcp` command checks
 its own install first (dependencies, build, native module) and names the fix on stderr if
@@ -135,12 +136,12 @@ prompts are normal setup requirements. Downloads is not guaranteed to bypass tho
 | Capability | Examples |
 |---|---|
 | Discover applications | Find installed and running apps, identify their targets, and choose an automation approach. |
-| Read the interface | Capture a window, zoom into a region, inspect accessibility controls and find a button or field; read a window's text by on-device OCR when an app draws its own UI; wait for a window, for text, or for the screen to settle instead of polling screenshots. |
+| Read the interface | Capture a window, zoom into a region, inspect accessibility controls and find a button or field; read a window's text by on-device OCR when an app draws its own UI (macOS); wait for a window, for text, or for the screen to settle instead of polling screenshots. |
 | Operate applications | Click controls (`click` with button and count), fill forms, select menus, type text, drag paths and use keyboard shortcuts; set a session target once instead of naming the window on every call; run a known sequence in one call (`run_steps`). Every action says whether it was verified, and every refusal names a safe next call. |
-| Use app scripting | AppleScript/JXA on macOS and PowerShell on Windows. |
+| Use app scripting | AppleScript/JXA on macOS, PowerShell on Windows, and bash or PowerShell on Linux. |
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
-| Stay in control | A desktop status card (on by default on macOS and Windows; `COMPUTER_USE_STATUS_CARD=true` on Linux) shows what the agent is doing with Pause and Stop, and `ctrl+alt+escape` stops it. Moving the mouse or typing pauses the agent until you stop. Neither the card nor the agent's pointer appears in its screenshots (on Linux the card is painted out of them, and it reserves a strip of the desktop instead of floating on top). |
+| Stay in control | A desktop status card (on by default on macOS and Windows; `COMPUTER_USE_STATUS_CARD=true` on Linux) shows what the agent is doing with Pause and Stop, and `ctrl+alt+escape` stops it. Moving the mouse or typing pauses the agent until you stop. A locked screen is refused by name, and on macOS and Windows the display stays awake while the agent works. Neither the card nor the agent's pointer appears in its screenshots (on Linux the card is painted out of them, and it reserves a strip of the desktop instead of floating on top). |
 
 The default profile, **`desktop`**, exposes 37 tools on macOS: observation,
 coordinates, OCR for apps that draw their own UI, waits and the session target.
@@ -232,12 +233,14 @@ browser fixture. These live checks need their documented platform prerequisites.
 
 ## Documentation and support
 
-- [v7.7.0 release notes](docs/releases/v7.7.0.md): honest results, `run_steps`, a person in control by default, faster captures
+- [v7.7.0 release notes](docs/releases/v7.7.0.md): honest results, `run_steps`, a person in control by default, faster captures, Linux on Wayland, a native package per platform
 - [v7.6.1 release notes](docs/releases/v7.6.1.md): the review fixes and the desktop status card
 - [v7.6.0 release notes](docs/releases/v7.6.0.md) (includes 7.5.0: [its notes](docs/releases/v7.5.0.md))
 - [v7.4.0 release notes and rollout checklist](docs/releases/v7.4.0.md)
 - [Reviews](docs/reviews/): the 2026-10-09 review and design pass behind 7.6.0, the 2026-10-11 three-pass review behind 7.6.1, and the 2026-10-23 competitor study behind 7.7.0
+- [v8 roadmap](docs/specs/v8/roadmap.md): what comes next
 - [Tool usage and agent setup](AGENTS.md)
+- [Testing on Linux](docs/TESTING-LINUX.md) and [in UTM virtual machines](docs/TESTING-IN-UTM.md)
 - [Architecture and platform support](docs/ARCHITECTURE.md)
 - [Sessions, Tasks, browser isolation and supervision](docs/STRATEGY.md)
 - [Token and interaction efficiency](docs/EFFICIENCY.md)

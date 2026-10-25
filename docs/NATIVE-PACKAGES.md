@@ -137,19 +137,32 @@ publishing must be configured separately for each name after its creation.
 See [npm's new-package announcement](https://github.blog/changelog/2026-10-02-npm-staged-publishing-now-supports-creating-new-packages/)
 and [trusted publishing documentation](https://docs.npmjs.com/trusted-publishers/).
 
-For the first release, a maintainer can provide the temporary repository secret
-`NPM_NATIVE_STAGE_TOKEN`: a granular **stage-only** token authorized to create
-the six names under `@zavora-ai`. It is used only in the native staging step;
-the main package continues to use its existing OIDC configuration. Every first
-tarball is still staged with provenance from GitHub Actions and requires
-maintainer approval. Staging creates npm's `0.0.0-stage` placeholder; the real
-native version becomes installable only after approval.
+For the first release, a maintainer provides the temporary repository secret
+`NPM_NATIVE_STAGE_TOKEN`, because trusted publishing cannot create a package name. Without it the native staging step
+stops before anything is staged and says so (before 7.7.0, npm answered only `ENEEDAUTH`). The steps:
 
-Configure each newly created native package's trusted publisher with organization
-`zavora-ai`, repository `computer-use-mcp`, workflow filename `ci.yml`, and staged
-publishing permission. Approve the six matching versions, remove the temporary
-secret and revoke the bootstrap token. Subsequent runs use OIDC with
-`id-token: write`, without a persistent npm write token. npm's required CLI
-version is 11.15.0 or later, with Node 22.14.0 or later; the release job uses
-Node 24. A newly configured trusted publisher must be validated within npm's
-documented expiry window.
+1. On npmjs.com, create a granular access token with the permission **Read and write (stage only)**, selected for
+   the `@zavora-ai` scope, with the shortest expiry that covers the release (1 to 7 days) and without bypassing 2FA.
+   A stage-only token can stage but never publish directly. Add it as the repository secret `NPM_NATIVE_STAGE_TOKEN`.
+2. Push or re-run the release on `main`. The native step stages the six tarballs with the token, provenance and
+   `--access public`; the main package stages through its existing OIDC configuration. npm creates each new name with
+   a public placeholder and keeps the real version pending until approval.
+3. Compare the pending tarballs with the run's `release-evidence-<sha>` artifact (`npm stage list`,
+   `npm stage download <id>`), then approve the six native packages first and the main package last, each with 2FA
+   (`npm stage approve <id>` or the Staged Packages tab on npmjs.com).
+4. Configure trusted publishing for the six new names at once (one 2FA prompt), and confirm with `npm trust list`:
+
+   ```sh
+   for t in darwin-arm64 darwin-x64 win32-x64 win32-arm64 linux-x64 linux-arm64; do
+     npm trust github "@zavora-ai/computer-use-mcp-$t" --file ci.yml --repo zavora-ai/computer-use-mcp --allow-stage-publish -y
+   done
+   ```
+
+5. Delete the secret and revoke the token. Later runs stage all seven packages through OIDC with `id-token: write`
+   and no npm write token. npm expires a trusted-publisher configuration that has not completed a release within 48
+   hours of being created, so stage the next release soon or recreate the configuration.
+
+npm's required CLI version is 11.15.0 or later, with Node 22.14.0 or later; the release job uses Node 24. Sources:
+[staged publishing](https://docs.npmjs.com/staged-publishing),
+[stage-only tokens](https://github.blog/changelog/2026-09-18-stage-only-npm-tokens-for-safer-automation),
+[unvalidated configurations expire](https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire).
