@@ -70,6 +70,29 @@ pub fn parse_wmctrl_geometry(line: &str) -> Option<(u32, i64, i32, i64, i64, i64
     Some((id, desktop, pid, x, y, width, height, title))
 }
 
+/// Why `wmctrl -l` failed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum WmctrlFailure {
+    /// The window manager runs but has not published a client list: some (xfwm4) publish it only once they manage a
+    /// window, so this is an empty desktop, not an error.
+    NoWindowsYet,
+    /// No EWMH window manager answers on this display.
+    NoWindowManager,
+    Other,
+}
+
+pub fn classify_wmctrl_failure(output: &str, manager_running: bool) -> WmctrlFailure {
+    if output.contains("Cannot get client list properties") {
+        if manager_running {
+            WmctrlFailure::NoWindowsYet
+        } else {
+            WmctrlFailure::NoWindowManager
+        }
+    } else {
+        WmctrlFailure::Other
+    }
+}
+
 /// `wmctrl -d`: the line whose second field is `*` is the current desktop.
 pub fn parse_current_desktop(listing: &str) -> Option<i64> {
     listing.lines().find_map(|line| {
@@ -119,6 +142,68 @@ pub fn parse_sway_tree(tree: &Value) -> Vec<LinuxWindow> {
 }
 
 /// `hyprctl clients -j`: `address` is a 64-bit hex string; the window id is its low 32 bits.
+/// One monitor as a Wayland compositor reports it, in logical pixels (7.7.x: a Wayland session without XWayland has
+/// no X display to ask for its size).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Output {
+    pub name: String,
+    pub x: i64,
+    pub y: i64,
+    pub width: i64,
+    pub height: i64,
+    pub scale: f64,
+}
+
+/// `swaymsg -t get_outputs -r`: active outputs, `rect` already logical.
+pub fn parse_sway_outputs(outputs: &Value) -> Vec<Output> {
+    outputs
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|output| output["active"].as_bool().unwrap_or(true))
+        .filter_map(|output| {
+            let rect = &output["rect"];
+            Some(Output {
+                name: output["name"].as_str().unwrap_or_default().to_string(),
+                x: rect["x"].as_i64()?,
+                y: rect["y"].as_i64()?,
+                width: rect["width"].as_i64()?,
+                height: rect["height"].as_i64()?,
+                scale: output["scale"].as_f64().filter(|scale| *scale > 0.0).unwrap_or(1.0),
+            })
+        })
+        .collect()
+}
+
+/// `hyprctl monitors -j`: sizes are physical pixels, so divide by the scale for logical ones.
+pub fn parse_hyprland_monitors(monitors: &Value) -> Vec<Output> {
+    monitors
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|monitor| !monitor["disabled"].as_bool().unwrap_or(false))
+        .filter_map(|monitor| {
+            let scale = monitor["scale"].as_f64().filter(|scale| *scale > 0.0).unwrap_or(1.0);
+            Some(Output {
+                name: monitor["name"].as_str().unwrap_or_default().to_string(),
+                x: monitor["x"].as_i64()?,
+                y: monitor["y"].as_i64()?,
+                width: (monitor["width"].as_f64()? / scale).round() as i64,
+                height: (monitor["height"].as_f64()? / scale).round() as i64,
+                scale,
+            })
+        })
+        .collect()
+}
+
+/// The whole desktop the outputs span (the X11 answer is the same: the root window covers every monitor).
+pub fn desktop_bounds(outputs: &[Output]) -> Option<(i64, i64, f64)> {
+    let width = outputs.iter().map(|o| o.x + o.width).max()?;
+    let height = outputs.iter().map(|o| o.y + o.height).max()?;
+    let scale = outputs.iter().map(|o| o.scale).fold(1.0, f64::max);
+    Some((width, height, scale))
+}
+
 pub fn parse_hyprland_clients(clients: &Value) -> Vec<LinuxWindow> {
     clients
         .as_array()
@@ -238,6 +323,30 @@ mod live {
         )
     }
 
+    /// The monitors of a Wayland compositor that can report them (sway, Hyprland).
+    pub fn outputs() -> napi::Result<Vec<Output>> {
+        let outputs = match compositor() {
+            "sway" => parse_sway_outputs(&json_from("swaymsg", &["-t", "get_outputs", "-r"])?),
+            "hyprland" => parse_hyprland_monitors(&json_from("hyprctl", &["monitors", "-j"])?),
+            other => {
+                return Err(napi::Error::from_reason(format!(
+                    "Cannot open the X display, and the screen size of this {other} session cannot be read without one \
+                     (sway and Hyprland can report it; elsewhere XWayland is needed)"
+                )))
+            }
+        };
+        if outputs.is_empty() {
+            return Err(napi::Error::from_reason("The compositor reports no active output"));
+        }
+        Ok(outputs)
+    }
+
+    fn json_from(tool: &str, args: &[&str]) -> napi::Result<Value> {
+        let output = linux_tools::run(tool, args)?;
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| napi::Error::from_reason(format!("{tool} returned unreadable JSON: {error}")))
+    }
+
     fn sway_windows() -> napi::Result<Vec<LinuxWindow>> {
         let output = linux_tools::run("swaymsg", &["-t", "get_tree", "-r"])?;
         let tree: Value = serde_json::from_slice(&output.stdout)
@@ -259,7 +368,22 @@ mod live {
     /// X11, or XWayland windows on a Wayland session: `wmctrl -l -p -G` with real geometry. The app is the process
     /// name, as before.
     fn wmctrl_windows() -> napi::Result<Vec<LinuxWindow>> {
-        let listing = linux_tools::run("wmctrl", &["-l", "-p", "-G"])?;
+        let listing = linux_tools::output("wmctrl", &["-l", "-p", "-G"])?;
+        if !listing.status.success() {
+            let said = format!("{}{}", String::from_utf8_lossy(&listing.stdout), String::from_utf8_lossy(&listing.stderr));
+            let manager_running = linux_tools::output("wmctrl", &["-m"]).map(|o| o.status.success()).unwrap_or(false);
+            return match classify_wmctrl_failure(&said, manager_running) {
+                WmctrlFailure::NoWindowsYet => Ok(Vec::new()),
+                WmctrlFailure::NoWindowManager => Err(napi::Error::from_reason(
+                    "No window manager is running on this display: window listing (wmctrl) needs one that follows EWMH",
+                )),
+                WmctrlFailure::Other => Err(napi::Error::from_reason(format!(
+                    "wmctrl failed ({}): {}",
+                    listing.status,
+                    said.trim().chars().take(300).collect::<String>()
+                ))),
+            };
+        }
         let current = linux_tools::output("wmctrl", &["-d"])
             .ok()
             .and_then(|output| parse_current_desktop(&String::from_utf8_lossy(&output.stdout)));
@@ -352,13 +476,14 @@ mod live {
 
     /// The window and screenshot backends this session would use, for `doctor`.
     pub fn backends() -> Value {
-        let screenshot = ["grim", "gnome-screenshot", "scrot", "import"]
-            .into_iter()
-            .find(|tool| linux_tools::available(tool));
-        let input = if is_wayland() {
-            ["ydotool", "xdotool"].into_iter().find(|tool| linux_tools::available(tool))
-        } else {
-            ["xdotool"].into_iter().find(|tool| linux_tools::available(tool))
+        // The order screenshot.rs tries them in: grim only works on Wayland (wlroots), scrot and import only on X11.
+        let tools: &[&str] = if is_wayland() { &["grim", "gnome-screenshot"] } else { &["scrot", "gnome-screenshot", "import"] };
+        let screenshot = tools.iter().copied().find(|tool| linux_tools::available(tool));
+        // 7.7.x: the route input really takes (libei, ydotool, XTEST), not just which tools are installed.
+        let route = crate::linux_ei::route();
+        let input = match route {
+            crate::linux_ei::Route::Unavailable(_) => None,
+            ref route => Some(route.name()),
         };
         json!({
             "session": if is_wayland() { "wayland" } else { "x11" },
@@ -367,6 +492,7 @@ mod live {
             "screenshot": screenshot,
             "screenshotPortal": is_wayland() && linux_tools::available("python3"),
             "input": input,
+            "inputDetail": crate::linux_ei::describe(),
         })
     }
 }
@@ -386,6 +512,32 @@ mod tests {
         assert_eq!(untitled.7, "");
         assert!(parse_wmctrl_geometry("0x01e00004  1 812").is_none());
         assert!(parse_wmctrl_geometry("").is_none());
+    }
+
+    #[test]
+    fn wayland_outputs_give_the_screen_size_without_an_x_display() {
+        let sway = serde_json::json!([
+            { "name": "HEADLESS-1", "active": true, "scale": 1.0, "rect": { "x": 0, "y": 0, "width": 1600, "height": 1000 } },
+            { "name": "DP-2", "active": true, "scale": 2.0, "rect": { "x": 1600, "y": 0, "width": 1280, "height": 720 } },
+            { "name": "off", "active": false, "rect": { "x": 0, "y": 0, "width": 9999, "height": 9999 } },
+        ]);
+        let outputs = parse_sway_outputs(&sway);
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(desktop_bounds(&outputs), Some((2880, 1000, 2.0)));
+        let hyprland = serde_json::json!([
+            { "name": "eDP-1", "x": 0, "y": 0, "width": 2880, "height": 1800, "scale": 2.0, "disabled": false },
+        ]);
+        let monitors = parse_hyprland_monitors(&hyprland);
+        assert_eq!((monitors[0].width, monitors[0].height), (1440, 900));
+        assert_eq!(desktop_bounds(&[]), None);
+    }
+
+    #[test]
+    fn an_empty_desktop_lists_no_windows_and_a_missing_window_manager_says_so() {
+        let said = "Cannot get client list properties. \n(_NET_CLIENT_LIST or _WIN_CLIENT_LIST)\n";
+        assert_eq!(classify_wmctrl_failure(said, true), WmctrlFailure::NoWindowsYet);
+        assert_eq!(classify_wmctrl_failure(said, false), WmctrlFailure::NoWindowManager);
+        assert_eq!(classify_wmctrl_failure("Cannot open display.", true), WmctrlFailure::Other);
     }
 
     #[test]

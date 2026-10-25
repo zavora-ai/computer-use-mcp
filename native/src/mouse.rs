@@ -3,23 +3,10 @@
 mod linux {
     use napi_derive::napi;
     use std::sync::atomic::{AtomicU8, Ordering};
-    use std::sync::OnceLock;
+    use crate::linux_ei::Route;
 
-    static IS_WAYLAND: OnceLock<bool> = OnceLock::new();
     /// Buttons this process pressed and has not released (bits: 1 left, 2 right, 4 middle); released by the latch.
     static AGENT_BUTTONS_HELD: AtomicU8 = AtomicU8::new(0);
-
-    fn is_wayland() -> bool {
-        *IS_WAYLAND.get_or_init(|| {
-            std::env::var("XDG_SESSION_TYPE")
-                .map(|v| v == "wayland")
-                .unwrap_or(false)
-        })
-    }
-
-    fn ydotool_available() -> bool {
-        crate::linux_tools::available("ydotool")
-    }
 
     mod x11_impl {
         use std::ptr;
@@ -229,17 +216,99 @@ mod linux {
         }
     }
 
-    fn use_ydotool() -> bool {
-        is_wayland() && ydotool_available()
+    /// libei input (7.7.x): the RemoteDesktop portal on GNOME 46+ and KDE Plasma 6.1+, so a Wayland session needs
+    /// neither a root daemon nor `/dev/uinput`. Same refusals and held-button tracking as every other route.
+    mod ei_impl {
+        use crate::linux_ei::{evdev_button, send, Action, KEY_LEFTCTRL};
+
+        pub fn mouse_move(x: f64, y: f64) -> napi::Result<()> {
+            send(vec![Action::Move { x, y }])
+        }
+
+        pub fn mouse_click(x: f64, y: f64, btn: u32, count: i32, additive: bool) -> napi::Result<()> {
+            let code = evdev_button(btn);
+            let mut first = vec![Action::Move { x, y }];
+            if additive {
+                first.push(Action::Key { code: KEY_LEFTCTRL, press: true });
+            }
+            let mut result = Ok(());
+            for i in 0..count {
+                let mut batch = if i == 0 { std::mem::take(&mut first) } else { Vec::new() };
+                batch.push(Action::Button { code, press: true });
+                batch.push(Action::Button { code, press: false });
+                result = send(batch);
+                if result.is_err() {
+                    break;
+                }
+                if i < count - 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+            }
+            if additive {
+                // Released even when a click failed, so Control is never left down.
+                let _ = send(vec![Action::Key { code: KEY_LEFTCTRL, press: false }]);
+            }
+            result
+        }
+
+        pub fn button_event(btn: u32, press: bool, at: Option<(f64, f64)>) -> napi::Result<()> {
+            let mut batch = Vec::new();
+            if let Some((x, y)) = at {
+                batch.push(Action::Move { x, y });
+            }
+            batch.push(Action::Button { code: evdev_button(btn), press });
+            send(batch)
+        }
+
+        pub fn mouse_scroll(dy: i32, dx: i32) -> napi::Result<()> {
+            send(vec![Action::Scroll { dx, dy }])
+        }
+
+        /// The same press / drag / release contract as the X11 path: modifiers go down before the button event and up
+        /// after it, and a drag is motion only.
+        pub fn pointer_event(x: f64, y: f64, btn: u32, modifiers: &[u32], which: u8) -> napi::Result<()> {
+            let mut batch = Vec::new();
+            if which != 1 {
+                batch.extend(modifiers.iter().map(|&code| Action::Key { code, press: true }));
+            }
+            batch.push(Action::Move { x, y });
+            match which {
+                0 => batch.push(Action::Button { code: evdev_button(btn), press: true }),
+                2 => batch.push(Action::Button { code: evdev_button(btn), press: false }),
+                _ => {}
+            }
+            if which != 1 {
+                batch.extend(modifiers.iter().rev().map(|&code| Action::Key { code, press: false }));
+            }
+            send(batch)
+        }
+    }
+
+    /// The input route for this process; a Wayland session with no usable route is an error that names the fix.
+    fn route() -> napi::Result<Route> {
+        match crate::linux_ei::route() {
+            Route::Unavailable(reason) => Err(napi::Error::from_reason(reason)),
+            route => Ok(route),
+        }
+    }
+
+    /// evdev codes for the modifiers a pointer gesture can hold (libei sends key codes).
+    fn evdev_modifier(modifier: &str) -> u32 {
+        match modifier {
+            "shift" => 42,
+            "ctrl" | "control" => 29,
+            "alt" | "option" => 56,
+            _ => 125,
+        }
     }
 
     #[napi]
     pub fn mouse_move(x: f64, y: f64) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
-        if use_ydotool() {
-            wayland_impl::mouse_move(x as i32, y as i32)
-        } else {
-            x11_impl::mouse_move(x as i32, y as i32)
+        match route()? {
+            Route::Ei => ei_impl::mouse_move(x, y),
+            Route::Ydotool => wayland_impl::mouse_move(x as i32, y as i32),
+            _ => x11_impl::mouse_move(x as i32, y as i32),
         }
     }
 
@@ -309,18 +378,24 @@ mod linux {
             .iter()
             .map(|modifier| x11_modifier_keysym(modifier))
             .collect::<napi::Result<Vec<_>>>()?;
-        if is_wayland() {
+        let route = route()?;
+        if route == Route::Ydotool {
             // ydotool cannot express a held-button path, so say so rather than
             // emitting a gesture that silently does the wrong thing.
             return Err(napi::Error::from_reason(
-                "Button-aware drags are unavailable on Wayland; use X11 or the accessibility tools",
+                "Button-aware drags are unavailable through ydotool; use libei (GNOME 46+, KDE Plasma 6.1+), X11 or the accessibility tools",
             ));
         }
         let bit = super::button_bit(button);
         if which == 2 {
             AGENT_BUTTONS_HELD.fetch_and(!bit, Ordering::AcqRel);
         }
-        x11_impl::pointer_event(x as i32, y as i32, btn, &keysyms, which)?;
+        if route == Route::Ei {
+            let codes: Vec<u32> = modifiers.iter().map(|modifier| evdev_modifier(modifier)).collect();
+            ei_impl::pointer_event(x, y, btn, &codes, which)?;
+        } else {
+            x11_impl::pointer_event(x as i32, y as i32, btn, &keysyms, which)?;
+        }
         if which == 0 {
             AGENT_BUTTONS_HELD.fetch_or(bit, Ordering::AcqRel);
         }
@@ -339,16 +414,13 @@ mod linux {
                 )))
             }
         };
-        if is_wayland() {
-            if additive { return Err(napi::Error::from_reason("Additive selection is unavailable on Wayland; use accessibility selection")); }
-            if !ydotool_available() {
-                return Err(napi::Error::from_reason(format!(
-                    "ydotool is not installed: {}", crate::linux_tools::install_hint("ydotool")
-                )));
+        match route()? {
+            Route::Ei => ei_impl::mouse_click(x, y, btn, count, additive),
+            Route::Ydotool => {
+                if additive { return Err(napi::Error::from_reason("Additive selection is unavailable through ydotool; use accessibility selection")); }
+                wayland_impl::mouse_click(x as i32, y as i32, btn, count)
             }
-            wayland_impl::mouse_click(x as i32, y as i32, btn, count)
-        } else {
-            x11_impl::mouse_click(x as i32, y as i32, btn, count, additive)
+            _ => x11_impl::mouse_click(x as i32, y as i32, btn, count, additive),
         }
     }
 
@@ -368,11 +440,13 @@ mod linux {
         } else {
             AGENT_BUTTONS_HELD.fetch_and(!1, Ordering::AcqRel);
         }
-        if use_ydotool() {
-            wayland_impl::mouse_move(x as i32, y as i32)?;
-            wayland_impl::button_event(1, press)?;
-        } else {
-            x11_impl::button_event(1, press, Some((x as i32, y as i32)))?;
+        match route()? {
+            Route::Ei => ei_impl::button_event(1, press, Some((x, y)))?,
+            Route::Ydotool => {
+                wayland_impl::mouse_move(x as i32, y as i32)?;
+                wayland_impl::button_event(1, press)?;
+            }
+            _ => x11_impl::button_event(1, press, Some((x as i32, y as i32)))?,
         }
         if press {
             AGENT_BUTTONS_HELD.fetch_or(1, Ordering::AcqRel);
@@ -387,10 +461,10 @@ mod linux {
             if held & bit == 0 {
                 continue;
             }
-            let _ = if use_ydotool() {
-                wayland_impl::button_event(btn, false)
-            } else {
-                x11_impl::button_event(btn, false, None)
+            let _ = match crate::linux_ei::route() {
+                Route::Ei => ei_impl::button_event(btn, false, None),
+                Route::Ydotool => wayland_impl::button_event(btn, false),
+                _ => x11_impl::button_event(btn, false, None),
             };
         }
     }
@@ -398,26 +472,27 @@ mod linux {
     #[napi]
     pub fn mouse_scroll(dy: i32, dx: i32) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
-        if use_ydotool() {
-            wayland_impl::mouse_scroll(dy, dx)
-        } else {
-            x11_impl::mouse_scroll(dy, dx)
+        match route()? {
+            Route::Ei => ei_impl::mouse_scroll(dy, dx),
+            Route::Ydotool => wayland_impl::mouse_scroll(dy, dx),
+            _ => x11_impl::mouse_scroll(dy, dx),
         }
     }
 
     #[napi]
     pub fn mouse_drag(x: f64, y: f64) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
-        if use_ydotool() {
-            wayland_impl::mouse_move(x as i32, y as i32)
-        } else {
-            x11_impl::mouse_move(x as i32, y as i32)
+        match route()? {
+            Route::Ei => ei_impl::mouse_move(x, y),
+            Route::Ydotool => wayland_impl::mouse_move(x as i32, y as i32),
+            _ => x11_impl::mouse_move(x as i32, y as i32),
         }
     }
 
     #[napi]
     pub fn cursor_position() -> napi::Result<serde_json::Value> {
-        let (rx, ry) = if use_ydotool() {
+        // Wayland gives no program the pointer position; XWayland's is the best there is on every route.
+        let (rx, ry) = if crate::linux_ei::route() == Route::Ydotool {
             wayland_impl::cursor_position()?
         } else {
             x11_impl::cursor_position()?

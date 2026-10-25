@@ -92,7 +92,7 @@ Run `node scripts/linux-check.mjs` on each and send the output. What to expect:
 | X11 (any desktop) | `wmctrl`, with real geometry | `scrot`, ImageMagick `import` for one window | `xdotool` |
 | sway | `swaymsg` | `grim`, cropped to the window | `ydotool` (start `ydotoold` with access to `/dev/uinput`) |
 | Hyprland | `hyprctl` | `grim`, cropped to the window | `ydotool` |
-| GNOME on Wayland | only XWayland windows (GNOME stops other programs listing its windows) | `gnome-screenshot`, then the desktop portal (GNOME asks you once) | `ydotool` |
+| GNOME on Wayland | only XWayland windows (GNOME stops other programs listing its windows) | `gnome-screenshot`, then the desktop portal (GNOME asks you once) | the RemoteDesktop portal and libei on GNOME 46+ (GNOME asks you once; no ydotool needed) |
 
 On GNOME Wayland, expect `doctor` to warn that only XWayland windows are listed, and expect zenity (a native Wayland
 window there) to be missing from the list. That is a known limit, so please confirm you see it. The plan for it is in

@@ -18,6 +18,8 @@ export interface WindowHandlerContext {
   runScript(language: string, script: string, timeoutMs: number): Promise<SpawnResult>
   /** v7.5 (R4): refuse activation while the user is active (unless force). */
   guard?: UserActivityGuard
+  /** The clock for waits (tests advance it); `Date.now` by default. */
+  now?: () => number
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string {
@@ -27,6 +29,58 @@ function stringArg(args: Record<string, unknown>, key: string): string {
 
 function numberArg(args: Record<string, unknown>, key: string, fallback: number): number {
   return typeof args[key] === 'number' ? args[key] : fallback
+}
+
+/** How long `open_application` waits for a launched Linux app to show a window or at least a process. */
+export const LAUNCH_WAIT_MS = 15_000
+/** Once the process runs, how long to keep looking for a window that this desktop lets us list. */
+export const LAUNCH_WINDOW_GRACE_MS = 3_000
+
+/**
+ * Start a Linux app from its desktop entry and wait for it (7.7.x). A window that can be listed is activated and the
+ * result is verified. On GNOME Wayland only XWayland windows can be listed, so an app that draws natively (Firefox,
+ * GNOME's own apps) is reported launched with its process running and the effect unverified: look before acting.
+ */
+async function launchAndWait(bundleId: string, context: WindowHandlerContext): Promise<ToolResult> {
+  const { native, targets } = context
+  const launched = native.launchApp!(bundleId)
+  if (!launched.launched) {
+    return errJson({
+      error: 'app_not_installed', bundle_id: bundleId, activated: false, reason: launched.reason ?? 'not_installed',
+      searched: launched.searched,
+      remediation: ['No desktop entry matches that name. Use discover_applications to find the installed id (for example firefox_firefox for the snap).'],
+    })
+  }
+  const names = [...new Set([bundleId, launched.process, launched.desktopId].filter((name): name is string => !!name))]
+  const now = context.now ?? Date.now
+  const started = now()
+  let processSince: number | undefined
+  while (now() - started < LAUNCH_WAIT_MS) {
+    if (context.signal?.aborted) throw new Error('open_application was cancelled while the app was starting')
+    for (const name of names) {
+      const window = await offThread(native, 'activateApp', name, 1_000)
+      if (window.activated) {
+        targets.update({ bundleId: name }, 'activation')
+        return { ...okJson({ launched: true, activated: true, bundle_id: name, desktop_entry: launched.desktopEntry }), contract: { effect: 'verified' } }
+      }
+    }
+    if (processSince === undefined && launched.process && native.linuxProcessRunning?.(launched.process)) processSince = now()
+    if (processSince !== undefined && now() - processSince >= LAUNCH_WINDOW_GRACE_MS) {
+      return {
+        ...okJson({
+          launched: true, activated: false, process_running: true, bundle_id: bundleId, desktop_entry: launched.desktopEntry,
+          note: `${launched.name ?? bundleId} is running, but this desktop does not let programs list its window (a native Wayland window on GNOME), so focus was not confirmed. Take a screenshot before acting.`,
+        }),
+        contract: { effect: 'unverified' },
+      }
+    }
+    await context.sleep(500)
+  }
+  return errJson({
+    error: 'launch_timeout', bundle_id: bundleId, launched: true, activated: false, desktop_entry: launched.desktopEntry,
+    reason: launched.process ? `no window and no ${launched.process} process within ${LAUNCH_WAIT_MS / 1000} s` : 'no window appeared',
+    remediation: ['The launcher ran but the app did not appear. Take a screenshot (it may be asking something), or wait_for_window.'],
+  })
 }
 
 /**
@@ -153,6 +207,10 @@ export async function handleWindowTool(
     const bundleId = stringArg(args, 'bundle_id')
     guardActivation(bundleId, `open and focus ${bundleId}`)
     const result = await offThread(native, 'activateApp', bundleId, 3_000)
+    // 7.7.x (Linux): an app with no window is started from its desktop entry, then waited for.
+    if (!result.activated && (result as { reason?: string }).reason === 'not_running' && typeof native.launchApp === 'function') {
+      return await launchAndWait(bundleId, context)
+    }
     if (result.activated) targets.update({ bundleId }, 'activation')
     await context.sleep(300)
     if (!result.activated) {

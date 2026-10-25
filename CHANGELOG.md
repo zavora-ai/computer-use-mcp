@@ -39,6 +39,21 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   on wlroots compositors, and the XDG desktop portal is the Wayland screenshot of last resort. `doctor` reports
   `linux_backends`. See [`docs/specs/v7.7/wayland.md`](docs/specs/v7.7/wayland.md) for what is still missing and the
   libei plan.
+- **Wayland input through the RemoteDesktop portal and libei** (GNOME 46+, KDE Plasma 6.1+). The person approves once
+  in a system dialog and the choice is remembered; no root daemon, `ydotool` or `/dev/uinput`. Clicks, double and
+  Control-clicks, held-button drags with modifiers, scroll, key combos, `key_down`/`key_up` and `type` all go through
+  it. `COMPUTER_USE_LINUX_INPUT` (`auto`, `libei`, `ydotool`, `xtest`) picks the route; on Wayland `auto` refuses with
+  the fix rather than sending XTEST events only XWayland windows would get. `LIBEI_SOCKET` connects to an EIS socket
+  directly, without the portal. Typing maps characters on a US layout.
+- **Taking over pauses the agent on GNOME Wayland too.** No program sees global input there, so the monitor reads
+  Mutter's idle clock and sets aside the agent's own input; it needs about 300 ms of sustained input.
+- **`open_application` starts a Linux app that is not running** from its desktop entry with `gio launch`, found by id,
+  snap or Flatpak id, program or name across the XDG, snap and Flatpak directories. A window it can list is activated;
+  a native Wayland window GNOME will not list is reported launched and unverified. `discover_applications` reads the
+  same directories, so the snap Firefox on Ubuntu is found.
+- **Linux desktops in CI.** `scripts/ci-linux-desktop.sh` runs `scripts/linux-check.mjs` on Xvfb with xfwm4 and with
+  Openbox and on headless sway, each with its own display, runtime directory and D-Bus bus; the `linux-desktops` job
+  runs all three. libei is tested against an in-process EIS server.
 
 ### Changed
 
@@ -93,6 +108,9 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   staged and awaiting approval, and warns instead of failing on a published native whose bytes differ (Windows builds
   are not reproducible). `build:ts` runs `tsc` through Node (no `npx.cmd`), and `npm run build` uses a portable
   `scripts/build-native.mjs`.
+- **Linux without an X display reports its screen size** from the compositor (`swaymsg`, `hyprctl`), so screenshots work
+  on sway and Hyprland without XWayland. An xfwm4 desktop with no windows yet lists none instead of an error, a missing
+  window manager is named, and `doctor` names the capture tool that is really used (grim only on Wayland).
 
 ## v7.6.1 (2026-10-11)
 

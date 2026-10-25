@@ -15,6 +15,18 @@ interface Options {
 }
 const officeNames = /microsoft (word|excel|powerpoint|outlook|onenote|teams|access|publisher)|libreoffice|openoffice/i
 
+/**
+ * The XDG `applications` directories (7.7.x): `XDG_DATA_HOME`, `XDG_DATA_DIRS`, and where snap and Flatpak export
+ * entries. Before, only ~/.local/share, /usr/local/share and /usr/share were read, so a snap such as Firefox on Ubuntu
+ * was never found. The native launcher reads the same list.
+ */
+export function linuxApplicationDirs(env: NodeJS.ProcessEnv, home = homedir()): string[] {
+  const roots = [env.XDG_DATA_HOME || join(home, '.local/share'),
+    ...(env.XDG_DATA_DIRS || '/usr/local/share:/usr/share').split(':').filter(Boolean),
+    '/var/lib/snapd/desktop', '/var/lib/flatpak/exports/share', join(home, '.local/share/flatpak/exports/share')]
+  return [...new Set(roots.map(root => join(root, 'applications')))]
+}
+
 /** Reads bounded application registrations, never executes an app or a desktop-file command. */
 export async function discoverApplications(args: { query?: string; limit?: number; include_capabilities?: boolean }, options: Options) {
   const limit = args.limit ?? 20
@@ -32,7 +44,7 @@ export async function discoverApplications(args: { query?: string; limit?: numbe
   if (options.platform === 'darwin' || options.platform === 'linux') {
     const roots = options.roots ?? (options.platform === 'darwin'
       ? [join(homedir(), 'Applications'), '/Applications', '/System/Applications']
-      : [join(homedir(), '.local/share/applications'), '/usr/local/share/applications', '/usr/share/applications'])
+      : linuxApplicationDirs(process.env))
     const visit = async (directory: string, depth: number): Promise<void> => {
       if (!check()) return
       let entries

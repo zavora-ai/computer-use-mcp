@@ -5,53 +5,67 @@ mod linux {
     use std::ptr;
     use x11::xlib::*;
 
-    #[napi]
-    pub fn get_display_size(display_id: Option<u32>) -> napi::Result<serde_json::Value> {
+    /// The X screen's size, or None when there is no X display (a Wayland session without XWayland).
+    fn x_screens() -> Option<Vec<(u64, u64)>> {
         unsafe {
             let dpy = XOpenDisplay(ptr::null());
             if dpy.is_null() {
-                return Err(napi::Error::from_reason("Cannot open X display"));
+                return None;
             }
-            let screen = display_id.unwrap_or(0) as i32;
-            let screen = if screen < XScreenCount(dpy) {
-                screen
-            } else {
-                XDefaultScreen(dpy)
-            };
-            let w = XDisplayWidth(dpy, screen) as u64;
-            let h = XDisplayHeight(dpy, screen) as u64;
+            let screens = (0..XScreenCount(dpy))
+                .map(|i| (XDisplayWidth(dpy, i) as u64, XDisplayHeight(dpy, i) as u64))
+                .collect();
             XCloseDisplay(dpy);
-            Ok(serde_json::json!({
-                "width": w, "height": h,
-                "pixelWidth": w, "pixelHeight": h,
-                "scaleFactor": 1.0,
-                "displayId": screen,
-            }))
+            Some(screens)
         }
+    }
+
+    fn size_json(width: i64, height: i64, scale: f64, id: usize) -> serde_json::Value {
+        serde_json::json!({
+            "width": width, "height": height,
+            "pixelWidth": (width as f64 * scale).round() as i64, "pixelHeight": (height as f64 * scale).round() as i64,
+            "scaleFactor": scale,
+            "displayId": id,
+        })
+    }
+
+    #[napi]
+    pub fn get_display_size(display_id: Option<u32>) -> napi::Result<serde_json::Value> {
+        if let Some(screens) = x_screens() {
+            let index = display_id.map(|id| id as usize).filter(|id| *id < screens.len()).unwrap_or(0);
+            let (w, h) = screens.get(index).copied().unwrap_or((0, 0));
+            return Ok(size_json(w as i64, h as i64, 1.0, index));
+        }
+        // 7.7.x: no X display (sway or Hyprland without XWayland): the compositor's outputs, as one desktop like X11's.
+        let outputs = crate::linux_desktop::outputs()?;
+        if let Some(output) = display_id.and_then(|id| outputs.get(id as usize)) {
+            return Ok(size_json(output.width, output.height, output.scale, display_id.unwrap_or(0) as usize));
+        }
+        let (width, height, scale) = crate::linux_desktop::desktop_bounds(&outputs).unwrap_or((0, 0, 1.0));
+        Ok(size_json(width, height, scale, 0))
     }
 
     #[napi]
     pub fn list_displays() -> napi::Result<serde_json::Value> {
-        unsafe {
-            let dpy = XOpenDisplay(ptr::null());
-            if dpy.is_null() {
-                return Err(napi::Error::from_reason("Cannot open X display"));
-            }
-            let count = XScreenCount(dpy);
-            let mut result = Vec::new();
-            for i in 0..count {
-                let w = XDisplayWidth(dpy, i) as u64;
-                let h = XDisplayHeight(dpy, i) as u64;
-                result.push(serde_json::json!({
-                    "width": w, "height": h,
-                    "pixelWidth": w, "pixelHeight": h,
-                    "scaleFactor": 1.0,
-                    "displayId": i,
-                }));
-            }
-            XCloseDisplay(dpy);
-            Ok(serde_json::json!(result))
+        if let Some(screens) = x_screens() {
+            return Ok(serde_json::json!(screens
+                .iter()
+                .enumerate()
+                .map(|(i, (w, h))| size_json(*w as i64, *h as i64, 1.0, i))
+                .collect::<Vec<_>>()));
         }
+        let outputs = crate::linux_desktop::outputs()?;
+        Ok(serde_json::json!(outputs
+            .iter()
+            .enumerate()
+            .map(|(i, output)| {
+                let mut entry = size_json(output.width, output.height, output.scale, i);
+                entry["x"] = output.x.into();
+                entry["y"] = output.y.into();
+                entry["name"] = output.name.clone().into();
+                entry
+            })
+            .collect::<Vec<_>>()))
     }
 }
 

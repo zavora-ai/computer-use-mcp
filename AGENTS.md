@@ -91,7 +91,8 @@ chars in Safari · Login"; typed text is never shown), the last few actions with
 - **The emergency chord** `ctrl+alt+escape` stops the agent on macOS and Windows (the card shows it).
   `COMPUTER_USE_EMERGENCY_CHORD` names another chord; `off` disarms it.
 - **Taking over pauses the agent.** Deliberate physical input during an action (a click, a key, or a real mouse
-  movement; zero-length moves do not count) pauses the agent with `taken_over`. It resumes by itself 5 s after the
+  movement; zero-length moves do not count) pauses the agent with `taken_over`. On GNOME Wayland the source is the
+  compositor's idle clock minus the agent's own input, so there it takes about 300 ms of sustained input. It resumes by itself 5 s after the
   person stops, and the card says "You took over". `COMPUTER_USE_TAKEOVER=false` turns this off, for a host that moves
   the mouse itself.
 - **A locked screen is refused by name.** Input and capture return `screen_locked`, `session_disconnected` (Remote
@@ -183,6 +184,7 @@ constant time.
 | `COMPUTER_USE_RESEND_UNCHANGED` | 7.7: `true` sends a capture's image even when it is identical to the last one sent. |
 | `COMPUTER_USE_SCRAPE_ALLOW_PRIVATE`, `COMPUTER_USE_SCRAPE_ALLOWED_HOSTS` | 7.7: `scrape` fetches public addresses only (each redirect checked). `true` lifts the rule; a comma-separated host list allows those hosts whatever they resolve to. |
 | `COMPUTER_USE_WINDOWS_DPI_AWARENESS` | 7.7 (Windows): the process is per-monitor DPI aware (v2), so every coordinate is a physical pixel; `unaware` restores the coordinates virtualised to 96 DPI. |
+| `COMPUTER_USE_LINUX_INPUT` | Linux input route: `auto` (default), `libei`, `ydotool` or `xtest`. On Wayland `auto` uses the RemoteDesktop portal and libei where the desktop offers it (GNOME 46+, KDE Plasma 6.1+): the person approves once in a system dialog, the choice is remembered (restore token in `~/.local/state/computer-use-mcp/`), and no root daemon or `/dev/uinput` is needed. Without the portal it uses a working ydotool, and otherwise refuses with the fix; `xtest` drives XWayland windows only. `COMPUTER_USE_PORTAL_WAIT_MS` (default 25000) is how long the first input waits for the dialog, and `COMPUTER_USE_DEBUG_LIBEI=true` traces the portal and libei steps to stderr. |
 | `COMPUTER_USE_USER_IDLE_MS` | v7.5: refuse to activate an app or post keyboard/mouse input within this many ms of the user's last physical input (default `4000` on macOS; `0` disables; Windows and Linux only when set). Such a call returns `user_active` unless it passes `force: true` or uses `delivery: "pid"`. The guard needs Input Monitoring for the host app; without it the guard allows everything and `doctor` reports the clock as unavailable. |
 
 ### Hosting and runtime
@@ -1054,7 +1056,7 @@ usable controls.
 
 | Tool | macOS | Windows | Linux |
 |---|---|---|---|
-| screenshot, zoom, click (and its aliases), type, key, scroll, mouse_move | ✅ | ✅ | ✅ X11; Wayland needs `ydotool` |
+| screenshot, zoom, click (and its aliases), type, key, scroll, mouse_move | ✅ | ✅ | ✅ X11; Wayland: libei on GNOME 46+ and KDE Plasma 6.1+, else `ydotool` |
 | read_window_text, click_text, wait_for_text, wait_for_stable (OCR, ScreenCaptureKit) | ✅ macOS 14+ | ❌ not listed | ❌ not listed |
 | wait_for_window, set_target, get_target | ✅ | ✅ | ✅ |
 | clipboard (read/write) | ✅ | ✅ | ✅ |
