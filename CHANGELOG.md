@@ -67,9 +67,10 @@ ship here too.
   snap or Flatpak id, program or name across the XDG, snap and Flatpak directories. A window it can list is activated;
   a native Wayland window GNOME will not list is reported launched and unverified. `discover_applications` reads the
   same directories, so the snap Firefox on Ubuntu is found.
-- **Linux desktops in CI.** `scripts/ci-linux-desktop.sh` runs `scripts/linux-check.mjs` on Xvfb with xfwm4 and with
-  Openbox and on headless sway, each with its own display, runtime directory and D-Bus bus; the `linux-desktops` job
-  runs all three. libei is tested against an in-process EIS server.
+- **Linux desktops in CI.** `scripts/ci-linux-desktop.sh` runs `scripts/linux-check.mjs` on Xvfb with xfwm4 or
+  Openbox, or on headless sway, each with its own display, runtime directory and D-Bus bus; the `linux-desktops` job
+  runs Openbox and sway. xfwm4 is out of the job for now: on Xvfb its check never got past `doctor` in any CI run.
+  libei is tested against an in-process EIS server.
 - **A native package per platform.** npm installs `@zavora-ai/computer-use-mcp-<platform>-<arch>` (darwin, win32 and
   linux on x64 and arm64) as an optional dependency pinned to the same version, so the addon for the host comes from its
   own package. The main package still carries all six binaries through 7.x, so an install that skips optional
@@ -172,12 +173,12 @@ ship here too.
   anything is staged and names the secret (trusted publishing cannot create a package name; npm only said
   `ENEEDAUTH`). `build:ts` runs `tsc` through Node (no `npx.cmd`), and `npm run build` uses a portable
   `scripts/build-native.mjs`.
-- **Linux captures on X11 no longer hang.** Under xfwm4 on Xvfb, ImageMagick's `import -window root` did not return, so
-  `screenshot` (and `doctor`'s capture check) waited for good; the CI job sat on it for hours until a later push
-  cancelled the run. An X11 session is now read through Xlib (`XGetImage` on the root window, cut to the window when
-  one is named), so a capture needs no tool; `scrot`, `gnome-screenshot` and `import` remain the fallback. Every tool
-  the server runs on Linux is stopped after a time limit (60 s; 10 s for a capture tool), so one that waits for
-  something that never comes is an error naming it instead of a hang.
+- **A Linux tool can no longer hang a call.** Every tool the server runs on Linux is stopped after a time limit (60 s;
+  10 s for a capture tool), so one that waits for something that never comes is an error naming it. X11 captures read
+  the root window through Xlib (`XGetImage`, cut to the window when one is named) and need no capture tool; `scrot`,
+  `gnome-screenshot` and ImageMagick's `import` remain the fallback. Found because the xfwm4 CI check sat for hours
+  with `import` running; with the Xlib capture it still never gets past `doctor` there, so that hang is not
+  understood yet and xfwm4 is out of CI.
 - **Linux without an X display reports its screen size** from the compositor (`swaymsg`, `hyprctl`), so screenshots work
   on sway and Hyprland without XWayland. An xfwm4 desktop with no windows yet lists none instead of an error, a missing
   window manager is named, and `doctor` names the capture tool that is really used (grim only on Wayland).
