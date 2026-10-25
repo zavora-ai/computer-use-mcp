@@ -1068,7 +1068,7 @@ usable controls.
 | wait_for_window, set_target, get_target | ✅ | ✅ | ✅ |
 | clipboard (read/write) | ✅ | ✅ | ✅ |
 | window management (list, activate, hide/unhide) | ✅ | ✅ | ✅ |
-| UI automation (get_ui_tree, find_element, click_element) | ✅ | ✅ | ✅ AT-SPI |
+| UI automation (get_ui_tree, get_focused_element, find_element, click_element) | ✅ | ✅ | ✅ AT-SPI (GTK 3 and GTK 4) |
 | run_script | AppleScript, JXA | PowerShell | bash, PowerShell (`pwsh`) |
 | get_app_dictionary, list_menu_bar | ✅ | ❌ macOS only | ❌ macOS only |
 | filesystem | ✅ | ✅ | ✅ |

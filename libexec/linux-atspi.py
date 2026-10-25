@@ -9,7 +9,10 @@ from gi.repository import Atspi
 
 request = json.load(sys.stdin)
 args = request['args']
-window = request['window']
+window = request.get('window')
+# get_ui_tree honours max_depth (default 10); a search walks as deep as the bridge allows, because GTK 4 nests its
+# controls 15 to 20 levels down and a 10-level search could never find them (issue #21). The node caps keep both bounded.
+TREE_NODES, SEARCH_NODES, SEARCH_DEPTH = 500, 3000, 30
 roles = {'frame': 'AXWindow', 'dialog': 'AXWindow', 'push button': 'AXButton',
          'text': 'AXTextField', 'entry': 'AXTextField', 'password text': 'AXSecureTextField',
          'label': 'AXStaticText', 'check box': 'AXCheckBox', 'combo box': 'AXComboBox',
@@ -74,11 +77,71 @@ def find_window():
     })
 
 
+def has_state(node, state):
+    try:
+        return node.get_state_set().contains(state)
+    except Exception:  # noqa: BLE001  (a node can go away while it is read)
+        return False
+
+
+def offscreen(node):
+    """A helper window parked off screen or a few pixels wide (xfwm4 keeps a 5x5 one at -1000,-1000 that claims to be
+    active and focused)."""
+    component = node.get_component_iface()
+    if not component:
+        return False
+    rect = component.get_extents(Atspi.CoordType.SCREEN)
+    return rect.width <= 10 or rect.height <= 10 or rect.x + rect.width <= 0 or rect.y + rect.height <= 0
+
+
+def focused():
+    """The focused accessible, or None. AT-SPI has no global focus query, so a frame is walked for the node that says
+    it is focused: first the window the server reports as focused (by pid and title), then any frame that says it is
+    active. The second alone is not enough: GTK 4 dialogs do not always set ACTIVE, and a window manager's hidden
+    window may claim it."""
+    frames = []
+    if window:
+        try:
+            frames.append(find_window())
+        except Structured:
+            pass
+    for app in children(Atspi.get_desktop(0)):
+        if app is not None:
+            frames.extend(frame for frame in children(app) if frame is not None and frame not in frames
+                          and has_state(frame, Atspi.StateType.ACTIVE) and not offscreen(frame))
+    seen = [0]
+
+    def walk(node, depth):
+        seen[0] += 1
+        if has_state(node, Atspi.StateType.FOCUSED) and not offscreen(node):
+            return node
+        if depth >= SEARCH_DEPTH or seen[0] >= SEARCH_NODES:
+            return None
+        for child in children(node):
+            if child is not None:
+                found = walk(child, depth + 1)
+                if found is not None:
+                    return found
+        return None
+
+    for frame in frames:
+        found = walk(frame, 0)
+        if found is not None:
+            info = facts(found)
+            info['children'] = []
+            return info
+    return None
+
+
 def run():
+    if request['tool'] == 'get_focused_element':
+        return focused()
     root = find_window()
     visited = []
     count = [0]
-    limit = min(max(int(args.get('max_depth', 10)), 1), 30)
+    search = request['tool'] != 'get_ui_tree'
+    limit = SEARCH_DEPTH if search else min(max(int(args.get('max_depth', 10)), 1), SEARCH_DEPTH)
+    nodes = SEARCH_NODES if search else TREE_NODES
 
     def tree(node, depth):
         count[0] += 1
@@ -86,10 +149,10 @@ def run():
         visited.append((node, info))
         child_count = node.get_child_count()
         info['children'] = []
-        info['truncated'] = child_count > 0 and (depth >= limit or count[0] >= 500)
+        info['truncated'] = child_count > 0 and (depth >= limit or count[0] >= nodes)
         if not info['truncated']:
             for child in children(node):
-                if count[0] >= 500:
+                if count[0] >= nodes:
                     info['truncated'] = True
                     break
                 info['children'].append(tree(child, depth + 1))

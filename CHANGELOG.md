@@ -92,6 +92,12 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   cropped as pixels of the capture: on Linux, which scales that capture to 1024 wide, a region on a 1920-wide screen
   came from the wrong place (or off the image), and on a Retina Mac without the capture helper it covered a quarter
   of the area. It is now scaled into the capture.
+- **Linux accessibility on GTK 4, and the focused element** (issue #21). `find_element`, `click_element`,
+  `set_value`, `press_button` and `fill_form` walked 10 levels of the AT-SPI tree, and GTK 4 puts its controls 15 to 20
+  levels down, so every search of a GTK 4 window failed with "AT-SPI search truncated". A search now walks up to 30
+  levels and 3,000 nodes; `get_ui_tree` still honours `max_depth`. `get_focused_element` works on Linux (it answered
+  "unavailable on this Linux backend"): the bridge looks in the window the window manager reports as focused, then in
+  any frame AT-SPI says is active, skipping off-screen helper windows (xfwm4 keeps a 5x5 one that claims focus).
 - **Stopped gestures release what they pressed.** Releases bypass the emergency latch; all three mouse buttons are
   tracked on every platform, and the latch releases every held button and key (Linux released nothing before).
   `hold_key` validates every key before pressing any and is now press, an awaited timer and release, so Pause, Stop
