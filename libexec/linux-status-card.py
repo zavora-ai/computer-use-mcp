@@ -460,13 +460,17 @@ def main():
     if not isinstance(Gdk.Display.get_default(), GdkX11.X11Display):
         sys.stderr.write('linux-status-card: needs the X11 backend (run with GDK_BACKEND=x11)\n')
         sys.exit(3)
-    Card()
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, 15, Gtk.main_quit)  # SIGTERM from the server
-    Gtk.main()
     try:
-        os.remove(geometry_path)
-    except OSError:
-        pass
+        Card()
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, 15, Gtk.main_quit)  # SIGTERM from the server
+        Gtk.main()
+    finally:
+        # Also after an exception: a card.json left behind would keep a grey box in captures where no card is (the
+        # server checks the pid as well, for a card that was killed).
+        try:
+            os.remove(geometry_path)
+        except OSError:
+            pass
 
 
 if __name__ == '__main__':

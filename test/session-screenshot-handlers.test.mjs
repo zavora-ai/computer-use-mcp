@@ -90,12 +90,28 @@ test('agent pointer projection annotates the image without moving the OS cursor'
   assert.equal(f.native.calls.some(call => call[0] === 'annotate'), true)
 })
 
-test('zoom validates bounds and crops a lossless full-resolution capture', async () => {
+test('zoom validates bounds and crops a lossless capture, the region mapped from screen points', async () => {
   const f = fixture()
   await assert.rejects(f.handler.handle('zoom', { region: [3, 0, 2, 1] }), /Invalid region/)
   const result = await f.handler.handle('zoom', { region: [1, 2, 21, 32] })
   assert.equal(result.content[1].text, '20x30 (zoomed from 800x600)')
-  assert.deepEqual(f.native.calls.at(-1), ['crop', 'raw', 1, 2, 21, 32, 0])
+  // The 1200x800 screen is an 800x600 image: the region is scaled into it, rounded outward.
+  assert.deepEqual(f.native.calls.at(-1), ['crop', 'raw', 0, 1, 14, 24, 0])
+})
+
+test('zoom on a capture the native layer scaled (Linux, 1024 wide) or doubled (Retina) cuts the region the agent named', async () => {
+  const linux = fixture({
+    getDisplaySize: () => ({ width: 1920, height: 1080 }),
+    takeScreenshot: (...args) => { linux.native.calls.push(['screenshot', ...args]); return { base64: 'raw', width: 1024, height: 576, mimeType: 'image/png', hash: 'h' } },
+  })
+  await linux.handler.handle('zoom', { region: [1500, 100, 1700, 200] })
+  assert.deepEqual(linux.native.calls.at(-1), ['crop', 'raw', 800, 53, 907, 107, 0], 'it used to crop 1500..1700 of a 1024-wide image')
+  const retina = fixture({
+    getDisplaySize: () => ({ width: 1440, height: 900 }),
+    takeScreenshot: (...args) => { retina.native.calls.push(['screenshot', ...args]); return { base64: 'raw', width: 2880, height: 1800, mimeType: 'image/png', hash: 'h' } },
+  })
+  await retina.handler.handle('zoom', { region: [100, 50, 300, 150] })
+  assert.deepEqual(retina.native.calls.at(-1), ['crop', 'raw', 200, 100, 600, 300, 0], 'two pixels per point')
 })
 
 test('a screen capture reports an exact mapping from image pixels to click coordinates', async () => {

@@ -154,6 +154,31 @@ function modernClientCapabilities(ctx: ServerContext): Record<string, unknown> |
     : {}
 }
 
+/** How long a legacy client has to answer the progress barrier's `ping` before the result is written anyway. */
+const PROGRESS_BARRIER_TIMEOUT_MS = 1_000
+
+/**
+ * 7.7.0 (K10): returns once the client has handled the progress notifications already written for a call, so the
+ * result written next cannot discard them. Writing them first is not enough. When the notifications and the result
+ * reach the client in one read, the pinned SDK client settles the response at once, which removes the call's progress
+ * handler, and handles notifications a microtask later, so each is dropped as "unknown token". A legacy-era client
+ * answers a `ping` only after the notifications queued ahead of it, so the result goes out after that answer. Elsewhere
+ * it stays one event-loop turn, which narrows the race but does not close it: the 2026-07-28 era has no
+ * server-to-client request, and over HTTP the client's answer has no way back to a stateless request, so the ping only
+ * waited out its timeout.
+ */
+async function progressHandled(ctx: ServerContext, modern: boolean): Promise<void> {
+  if (!modern && !ctx.http) {
+    try {
+      await ctx.mcpReq.send({ method: 'ping' }, { timeout: PROGRESS_BARRIER_TIMEOUT_MS, signal: ctx.mcpReq.signal })
+      return
+    } catch {
+      // A client that does not answer ping, or a cancelled call: fall back to one turn.
+    }
+  }
+  await new Promise<void>(resolve => setImmediate(resolve))
+}
+
 function approvalMessage(tool: string, args: Readonly<Record<string, unknown>>, details: Parameters<ElicitApproval>[0]): string {
   const scope: string[] = [`tool: ${tool}`]
   const add = (label: string, value: unknown) => {
@@ -587,10 +612,7 @@ export class ToolRegistry {
           // response (or after transport close under parallel CI load).
           if (pendingProgressNotifications.length > 0) {
             await Promise.all(pendingProgressNotifications)
-            // Give transports that schedule notification delivery separately
-            // from response delivery one turn to flush the already-awaited
-            // progress frames before the terminal tool result is returned.
-            await new Promise<void>(resolve => setImmediate(resolve))
+            await progressHandled(extra, capabilities !== undefined)
           }
           return toMcpToolResult(result, this.#options.structuredContent)
         },

@@ -11,6 +11,8 @@ import { insideRect, maskCardInCaptures, maskRects, captureArea } from '../dist/
 import { LinuxCardPresenter, OperatorControl, defaultCardPresenter, linuxCardFailure, statusCardEnabled } from '../dist/session/operator-control.js'
 import { REFUSALS } from '../dist/session/contract.js'
 import { createSession } from '../dist/session.js'
+import { InputHandler } from '../dist/session/input-handlers.js'
+import { TargetStateController } from '../dist/session/target-state.js'
 
 const root = join(fileURLToPath(import.meta.url), '..', '..')
 const settle = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms))
@@ -75,6 +77,21 @@ test('every capture passes through the mask while the card is up, and nothing ch
   assert.equal(viaWorker.base64, 'masked:737,36,276,124', 'the worker-thread variant is masked too')
 })
 
+test('a window capture that came back as the whole screen is masked as the screen', () => {
+  // GNOME Wayland has no window capture (no grim), so the portal returns the screen; X11 falls back to scrot without
+  // ImageMagick. The window is on the left, away from the card, so masking it as a window capture painted nothing.
+  const left = { bounds: { x: 40, y: 60, width: 500, height: 400 } }
+  const native = fakeNative({ getWindow: id => (id === 7 ? left : null) })
+  const shot = maskCardInCaptures(native, () => CARD).takeScreenshot(1024, undefined, 80, undefined, 7)
+  assert.equal(shot.base64, 'masked:737,36,276,124', 'the card painted where it is on the screen')
+  assert.deepEqual(captureArea(native, 7, { width: 1024, height: 640 }), { x: 0, y: 0, width: 1280, height: 800 })
+  assert.deepEqual(captureArea(native, 7, { width: 500, height: 400 }), left.bounds, 'a window-shaped image is the window')
+  // A window shaped like the screen could be either, so the card is painted for both readings.
+  const screenShaped = { bounds: { x: 0, y: 0, width: 640, height: 400 } }
+  const both = maskCardInCaptures(fakeNative({ getWindow: () => screenShaped }), () => CARD).takeScreenshot(1024, undefined, 80, undefined, 7)
+  assert.equal(both.base64, 'masked:737,36,276,124')
+})
+
 test('a native module without maskImage withholds the capture rather than show the card', () => {
   const native = fakeNative({ maskImage: undefined })
   const wrapped = maskCardInCaptures(native, () => CARD)
@@ -102,6 +119,36 @@ test('the control reports the card rectangle only for a presenter that shows in 
   await settle()
   assert.equal(macos.cardRegion(), undefined, 'a card excluded from capture needs no mask')
   macos.close()
+})
+
+test('a card that died without removing card.json leaves no grey box and no refused clicks', async () => {
+  const dead = Number(spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout)
+  const region = async pid => {
+    const directory = mkdtempSync(join(tmpdir(), 'card-test-'))
+    const presenter = { kind: 'fake-linux', visibleInCaptures: true, start(dir) { writeFileSync(join(dir, 'card.json'), JSON.stringify({ frame: { x: 924, y: 48, width: 340, height: 150 }, pid })) }, stop() {} }
+    const control = new OperatorControl({ card: { presenter, directory, pollMs: 10 } })
+    control.begin({ tool: 'click', label: 'click' }, { mutates: true })
+    await settle()
+    try { return control.cardRegion() } finally { control.close() }
+  }
+  assert.equal(await region(dead), undefined, 'the card process is gone (killed or crashed), so its strip is free again')
+  assert.deepEqual(await region(process.pid), CARD, 'a live card is still masked')
+})
+
+test('a click on the card is refused before anything is activated', async () => {
+  const order = []
+  const native = {
+    listDisplays: () => [{ x: 0, y: 0, width: 1280, height: 800 }], getDisplaySize: () => ({ width: 1280, height: 800 }),
+    getWindow: () => null, listWindows: () => [], getFrontmostApp: () => ({ bundleId: 'other' }),
+    mouseMove: () => order.push('move'), mouseClick: () => order.push('click'), mouseButton: () => order.push('button'),
+  }
+  const focus = { ensure: async () => { order.push('activate') }, strategyFor: () => 'best_effort' }
+  const input = new InputHandler({ native, targets: new TargetStateController(native), focus, platform: 'linux', sleep: async () => {}, protectedRegion: () => CARD })
+  await assert.rejects(input.clickAt({ x: 1100, y: 100 }, 'left', 1, 'click', { target_app: 'gedit' }), error => error.details?.error === 'status_card_protected')
+  for (const [tool, args] of [['mouse_move', { coordinate: [1100, 100] }], ['left_click_drag', { start_coordinate: [400, 300], coordinate: [1100, 100] }]]) {
+    await assert.rejects(input.handle(tool, { ...args, target_app: 'gedit' }), error => error.details?.error === 'status_card_protected', tool)
+  }
+  assert.deepEqual(order, [], 'the target app was not activated and nothing moved')
 })
 
 test('a session refuses clicks on the card and paints it out of screenshots', async () => {

@@ -316,9 +316,10 @@ export class InputHandler {
       return { ...ok(`Clicked (${Math.round(x)}, ${Math.round(y)})${this.#pidNote(chosen, outcome)}`),
         contract: { delivery: 'pid', effect: pidEffect(outcome) } }
     }
-    await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
     const { x, y } = point
+    // Before activating anything: a point off the screens, or on the status card, is refused with nothing changed.
     this.#validateCoordinates(x, y)
+    await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
     this.#native.mouseMove(x, y)
     await this.#sleep(50)
     this.#native.mouseClick(x, y, button, count)
@@ -430,9 +431,9 @@ export class InputHandler {
 
     if (tool === 'mouse_move') {
       const resolved = target()
-      await focus(resolved)
       const [x, y] = coordinate()
       this.#validateCoordinates(x, y)
+      await focus(resolved)
       this.#native.mouseMove(x, y)
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
       return ok(`Moved to (${x}, ${y})`)
@@ -440,11 +441,11 @@ export class InputHandler {
 
     if (tool === 'left_click_drag') {
       const resolved = target()
-      await focus(resolved)
       const to = coordinate()
       const from = args.start_coordinate ? coordinate('start_coordinate') : to
       const path = Array.isArray(args.path) ? args.path as [number, number][] : [from, to]
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      await focus(resolved)
       this.#native.mouseMove(from[0], from[1])
       await this.#sleep(50)
       signal?.throwIfAborted()
@@ -622,7 +623,6 @@ export class InputHandler {
 
     if (tool === 'mouse_drag') {
       const resolved = target()
-      await focus(resolved)
       const path = (Array.isArray(args.path) ? args.path : []) as [number, number][]
       if (path.length < 2) return this.#noCoordinates()
       const button = typeof args.button === 'string' ? args.button : 'left'
@@ -642,6 +642,7 @@ export class InputHandler {
         }
       }
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      await focus(resolved)
 
       const [startX, startY] = path[0]
       this.#native.mouseMove(startX, startY)
