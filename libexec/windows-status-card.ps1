@@ -132,6 +132,8 @@ $timer.Add_Tick({
       $dot.Fill = '#E8A33D'; $pause.Content = 'Resume'; $pause.IsEnabled = $true; $stop.IsEnabled = $true
       if ($null -ne $script:frame -and [string]$script:frame.reason -eq 'takeover') {
         $title.Text = "You took over · $elapsed"; $action.Text = 'The agent waits while you use the mouse or keyboard, and resumes when you stop.'
+      } elseif ($null -ne $script:frame -and $script:frame.watching) {
+        $title.Text = "Agent paused · $elapsed"; $action.Text = 'The watch sees nothing and nothing is changed until you resume.'
       } else {
         $title.Text = "Agent paused · $elapsed"; $action.Text = 'Mutations are refused; it can still look. Resume when you are ready.'
       }
@@ -141,6 +143,10 @@ $timer.Add_Tick({
       $waiting = if ($null -ne $script:frame) { [string]$script:frame.waiting } else { '' }
       if ($waiting -eq 'user_active') { $dot.Fill = '#E8A33D'; $title.Text = "Agent waiting for you · $elapsed"; $action.Text = 'You are typing or moving the mouse; it resumes when you stop.' }
       elseif ($waiting -eq 'approval') { $dot.Fill = '#E8A33D'; $title.Text = "Agent needs approval · $elapsed"; $action.Text = $current }
+      elseif ($null -ne $script:frame -and $script:frame.watching -and -not $script:frame.action) {
+        # 7.8: watching without acting: say what it can see, and that Pause stops it seeing.
+        $dot.Fill = '#A855F7'; $title.Text = "Agent is watching this PC · $elapsed"; $action.Text = "Sees $([string]$script:frame.watching.target). Pause and it sees nothing."
+      }
       else {
         $dot.Fill = '#3B82F6'; $title.Text = "Agent is using this PC · $elapsed"; $action.Text = $current
         $chord = if ($null -ne $script:frame) { [string]$script:frame.chord } else { '' }

@@ -166,6 +166,7 @@ window#card { background-color: transparent; }
 .dot.blue { background-color: #0a84ff; }
 .dot.orange { background-color: #ff9f0a; }
 .dot.red { background-color: #ff453a; }
+.dot.purple { background-color: #bf5af2; }
 #card button { min-height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; box-shadow: none;
   background-image: none; text-shadow: none; }
 """
@@ -409,6 +410,9 @@ class Card:
             if frame.get('reason') == 'takeover':
                 title = 'You took over · %s' % elapsed
                 action = 'The agent waits while you use the mouse or keyboard, and resumes when you stop.'
+            elif frame.get('watching'):
+                title = 'Agent paused · %s' % elapsed
+                action = 'The watch sees nothing and nothing is changed until you resume.'
             else:
                 title = 'Agent paused · %s' % elapsed
                 action = 'Mutations are refused; it can still look. Resume when you are ready.'
@@ -425,6 +429,11 @@ class Card:
             elif frame.get('waiting') == 'approval':
                 color, title = 'orange', 'Agent needs approval · %s' % elapsed
                 action = current or "A gated action is waiting for the host's approval."
+            elif frame.get('watching') and not current:
+                # 7.8: watching without acting: say what it can see, and that Pause stops it seeing.
+                watching = frame['watching']
+                color, title = 'purple', 'Agent is watching this computer · %s' % elapsed_text(watching.get('since') or 0)
+                action = 'Sees %s. Pause and it sees nothing.' % watching.get('target', 'the screen')
             else:
                 color, title = 'blue', 'Agent is using this computer · %s' % elapsed
                 action = current or ('Idle · %s stops it from any app' % keys if keys else 'Idle')

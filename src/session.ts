@@ -23,7 +23,7 @@ import {
   DEFAULT_SESSION_LOCK_PATH,
   LockError,
 } from './session/lock.js'
-import { createLegacyPolicyRuntime } from './session/legacy-policy.js'
+import { createLegacyPolicyRuntime, sensitiveApps } from './session/legacy-policy.js'
 import { createFocusController } from './session/focus.js'
 import { TargetStateController } from './session/target-state.js'
 import { VirtualPointerController } from './session/virtual-pointer.js'
@@ -44,6 +44,7 @@ import { createMacosHelper, type MacosHelper } from './session/macos-helper.js'
 import { defaultPidDeliveryPath, PidDeliveryStore } from './session/pid-delivery.js'
 import { createUserActivityGuard, type UserActivityGuard } from './session/user-activity.js'
 import { maskCardInCaptures } from './session/card-guard.js'
+import { LiveWatcher } from './session/live-watcher.js'
 import { OperatorControl, defaultCardPresenter, describeAction, emergencyChord, statusCardEnabled, takeoverEnabled } from './session/operator-control.js'
 import {
   errJson,
@@ -83,6 +84,8 @@ export interface Session {
   ): Promise<ToolResult>
   /** Last screenshot from this session, if any (for cache-only resource; K15). */
   getLastScreenshot?(): { mimeType: string; data: string; capturedAt: number; targetArgs?: Record<string, unknown> } | undefined
+  /** 7.8: the live share watcher, idle until the live tools or a host start it. */
+  live?: LiveWatcher
 }
 
 export type ElicitApproval = (ctx: {
@@ -226,6 +229,7 @@ export function createSession(opts: SessionOptions = {}): Session {
       process.removeListener('exit', forceRelease)
       // 7.6.1: apps hidden by prepare_display that the agent never restored come back when the session ends.
       try { focus.restoreHidden() } catch { /* best effort */ }
+      try { liveWatcher.close() } catch { /* nothing was being watched */ }
       try { control.close() } catch { /* the card is optional */ }
       try { macosHelper?.close?.() } catch { /* the warm helper exits with this process anyway */ }
       if (awakeTimer) clearTimeout(awakeTimer)
@@ -301,6 +305,13 @@ export function createSession(opts: SessionOptions = {}): Session {
     visionEnabled,
     defaultProvider,
     ...(macosHelper ? { helper: macosHelper } : {}),
+  })
+  // 7.8: the live share watcher, idle until a host or the live tools start it; it shows on the card while it watches.
+  const liveWatcher = new LiveWatcher({
+    native: n,
+    ...(macosHelper ? { helper: macosHelper } : {}),
+    control,
+    sensitiveApps: sensitiveApps(process.env, IS_WINDOWS),
   })
 
   const legacyPolicy = createLegacyPolicyRuntime({
@@ -798,6 +809,8 @@ export function createSession(opts: SessionOptions = {}): Session {
     const effective = mutates ? control.signal(signal) : signal
     const tracked = !context?.preflight && getToolMeta(tool)?.job !== 'meta'
     if (tracked) control.begin(describeAction(tool, args, resolvedFor(args)), { mutates })
+    // The watcher marks what changes while (and just after) the agent acts as the agent's own doing.
+    if (mutates) liveWatcher.agentActing(true)
     let outcome: 'done' | 'failed' = 'failed'
     try {
       const result = mutates
@@ -807,6 +820,7 @@ export function createSession(opts: SessionOptions = {}): Session {
       if (tracked) control.waiting(result.isError && result.structuredContent?.error === 'user_active' ? 'user_active' : null)
       return result
     } finally {
+      if (mutates) liveWatcher.agentActing(false)
       if (tracked) control.finish(outcome)
     }
   }
@@ -816,6 +830,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     close: () => { closeRequested = true; dispose() },
     retain: () => { references++; let released = false; return () => { if (!released) { released = true; references--; dispose() } } },
     getLastScreenshot: () => screenshotHandler.lastScreenshot(),
+    live: liveWatcher,
   }
 }
 
