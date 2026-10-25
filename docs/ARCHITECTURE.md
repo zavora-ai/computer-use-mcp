@@ -153,7 +153,7 @@ Files are limited to 1 MiB per MCP resource read; directory listings are limited
 | Tasks extension | Implemented | Durable within the server process; polling/cancel/update supported |
 | Legacy logging/roots/elicitation | Retained | Compatibility during the 2026 deprecation window |
 | Sampling | Not advertised | Deprecated in 2026 and unnecessary for deterministic desktop operations |
-| MCP Apps | Not advertised | No server-owned interactive UI resource |
+| MCP Apps | Advertised when the run console (`runConsole`, `computer-use-mcp-console`) or a desktop broker (`desktopBroker`) is on | The run console serves `ui://computer-use/run-console/v1`, a desktop broker `ui://computer-use/session-console/v1`; the default stdio server has neither and does not advertise the extension |
 | Auth extensions | Not advertised by the local server | Authentication belongs to the remote embedding host; false auth claims are forbidden |
 
 ## Logging and privacy
