@@ -512,8 +512,18 @@ export class ScreenshotHandler {
             + 'locally, rebuild it — this export is missing rather than failing.',
         )
       }
+      // The region is in screen points, the space of click; the capture is in its own pixels (Linux scales it to 1024
+      // wide, a Retina capture has two pixels per point). Cropping the region as image pixels cut the wrong part.
+      const display = this.#native.getDisplaySize()
+      const sx = display.width ? source.width / display.width : 1
+      const sy = display.height ? source.height / display.height : 1
+      const ox = display.x ?? 0
+      const oy = display.y ?? 0
       const cropped = this.#native.cropImage(
-        source.base64, x1, y1, x2, y2, typeof args.quality === 'number' ? args.quality : 0,
+        source.base64,
+        Math.max(0, Math.floor((x1 - ox) * sx)), Math.max(0, Math.floor((y1 - oy) * sy)),
+        Math.ceil((x2 - ox) * sx), Math.ceil((y2 - oy) * sy),
+        typeof args.quality === 'number' ? args.quality : 0,
       )
       return { content: [
         { type: 'image', data: cropped.base64, mimeType: cropped.mimeType },

@@ -41,20 +41,32 @@ export function maskRects(card: CardRect, capture: CardRect, image: { width: num
   return x2 > x1 && y2 > y1 ? [x1, y1, x2 - x1, y2 - y1] : undefined
 }
 
+const sameShape = (image: { width: number; height: number }, area: { width: number; height: number }): boolean =>
+  Math.abs(image.width / image.height - area.width / area.height) < 0.02
+
 /**
- * The screen area a capture covers: the window's bounds for a window capture, the whole screen for a screen capture.
- * Undefined when it cannot be told (an X11 capture of the focused window, which has neither id nor the screen's
- * shape), and then nothing is masked.
+ * The screen areas a capture may cover: the window's bounds for a window capture, the whole screen for a screen
+ * capture. A window capture can come back as the whole screen (GNOME Wayland has no window capture, so the portal
+ * returns the screen; X11 falls back to scrot when ImageMagick is missing), so a window capture shaped like the screen
+ * and not like the window is the screen, and one shaped like both is masked both ways. Empty when it cannot be told
+ * (an X11 capture of the focused window, which has neither id nor the screen's shape), and then nothing is masked.
  */
-export function captureArea(native: NativeModule, windowId: number | null | undefined, image: { width: number; height: number }): CardRect | undefined {
-  if (typeof windowId === 'number') {
-    const bounds = native.getWindow?.(windowId)?.bounds
-    return bounds && bounds.width > 0 && bounds.height > 0 ? bounds : undefined
-  }
+export function captureAreas(native: NativeModule, windowId: number | null | undefined, image: { width: number; height: number }): CardRect[] {
+  if (!image.width || !image.height) return []
   const display = native.getDisplaySize()
-  if (!display.width || !display.height || !image.width || !image.height) return undefined
-  const sameShape = Math.abs(image.width / image.height - display.width / display.height) < 0.02
-  return sameShape ? { x: 0, y: 0, width: display.width, height: display.height } : undefined
+  const screen = display.width && display.height && sameShape(image, display)
+    ? { x: 0, y: 0, width: display.width, height: display.height }
+    : undefined
+  if (typeof windowId !== 'number') return screen ? [screen] : []
+  const bounds = native.getWindow?.(windowId)?.bounds
+  const window = bounds && bounds.width > 0 && bounds.height > 0 ? bounds : undefined
+  if (window && screen && !sameShape(image, window)) return [screen]
+  return [window, screen].filter((area): area is CardRect => area !== undefined)
+}
+
+/** The area a capture covers, the window's when it could be either (see `captureAreas`). */
+export function captureArea(native: NativeModule, windowId: number | null | undefined, image: { width: number; height: number }): CardRect | undefined {
+  return captureAreas(native, windowId, image)[0]
 }
 
 /** A capture with the card painted out, its hash recomputed so unchanged-capture detection sees the masked image. */
@@ -62,9 +74,8 @@ function masked(native: NativeModule, region: () => CardRect | undefined, image:
   const card = region()
   if (!card || !image?.base64) return image
   const [, , quality, previousHash, windowId] = args as [unknown, unknown, number | undefined, string | undefined, number | undefined]
-  const area = captureArea(native, windowId, image)
-  const rects = area ? maskRects(card, area, image) : undefined
-  if (!rects) return image
+  const rects = captureAreas(native, windowId, image).flatMap(area => maskRects(card, area, image) ?? [])
+  if (rects.length === 0) return image
   if (typeof native.maskImage !== 'function') {
     throw new StructuredToolError('The native module cannot mask the status card out of captures', {
       error: 'card_mask_unavailable',

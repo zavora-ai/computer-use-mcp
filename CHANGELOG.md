@@ -29,8 +29,10 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   through python3-gi (`libexec/linux-status-card.py`), on X11 and on GNOME and KDE Wayland through XWayland. Instead of
   floating on top it is a dock window that reserves a strip on the right of the desktop (`_NET_WM_STRUT_PARTIAL`), so
   maximized windows shrink to make room; a fullscreen window still covers it. X11 cannot exclude a window from capture,
-  so the card reports its rectangle and the session paints it grey in every capture (a new native `maskImage`) and
-  refuses pointer actions inside it with `status_card_protected`; its buttons are kept off the accessibility bus.
+  so the card reports its rectangle and the session paints it grey in every capture (a new native `maskImage`),
+  including a window capture that came back as the whole screen (always, on GNOME Wayland), and refuses pointer
+  actions inside it with `status_card_protected` before anything is activated; its buttons are kept off the
+  accessibility bus. A card that was killed or crashed leaves no grey box or refused area behind.
   `doctor` names a missing python3-gi or X display. Checked on GNOME 46 Wayland (a maximized window went from 1214 to
   842 px wide and back), xfwm4 and Openbox.
 - **Windows geometry and capture.** The process is per-monitor DPI aware (v2), so input, window bounds, displays,
@@ -86,6 +88,10 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
 
 ### Fixed
 
+- **`zoom` without a target cuts the region you named.** The region is in screen points, as `click` is, but it was
+  cropped as pixels of the capture: on Linux, which scales that capture to 1024 wide, a region on a 1920-wide screen
+  came from the wrong place (or off the image), and on a Retina Mac without the capture helper it covered a quarter
+  of the area. It is now scaled into the capture.
 - **Stopped gestures release what they pressed.** Releases bypass the emergency latch; all three mouse buttons are
   tracked on every platform, and the latch releases every held button and key (Linux released nothing before).
   `hold_key` validates every key before pressing any and is now press, an awaited timer and release, so Pause, Stop

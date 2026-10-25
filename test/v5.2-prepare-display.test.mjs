@@ -30,6 +30,8 @@ function createMockNative({ prepareResult } = {}) {
     ],
     listWindows: () => [],
     getWindow: () => null,
+    // A screen for the click to land on: coordinates are checked before the target is focused.
+    getDisplaySize: () => ({ width: 1440, height: 900 }),
     // Pump
     drainRunloop: () => {},
     // Mutating

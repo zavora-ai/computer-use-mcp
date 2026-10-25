@@ -20,7 +20,7 @@
  * the same two files), whose veto-and-abort shape this keeps.
  */
 
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -120,6 +120,15 @@ function mergeSignals(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
   return controller.signal
 }
 
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
 export class OperatorControl {
   readonly #native: Partial<Pick<NativeModule, 'triggerNativeEmergencyStop' | 'isNativeEmergencyStopActive'>>
   readonly #now: () => number
@@ -206,13 +215,17 @@ export class OperatorControl {
 
   /**
    * Where the card is on screen, when it is up and shows in captures (Linux); undefined otherwise. Read from the
-   * `card.json` the card writes, padded by a few pixels for anti-aliasing at its edge.
+   * `card.json` the card writes, padded by a few pixels for anti-aliasing at its edge. A card that died without
+   * removing the file (killed, crashed, its X connection gone) has given its strip back, so its pid is checked:
+   * otherwise captures would keep a grey box, and clicks there would be refused, where nothing is.
    */
   cardRegion(): CardRect | undefined {
     if (this.#closed || !this.#presenter?.visibleInCaptures || !this.#directory) return undefined
     if (!this.#launched && !this.#launching) return undefined
-    let frame: Partial<CardRect> | undefined
-    try { frame = (JSON.parse(readFileSync(join(this.#directory, 'card.json'), 'utf8')) as { frame?: Partial<CardRect> }).frame } catch { return undefined }
+    let card: { frame?: Partial<CardRect>; pid?: unknown }
+    try { card = JSON.parse(readFileSync(join(this.#directory, 'card.json'), 'utf8')) as typeof card } catch { return undefined }
+    if (typeof card.pid === 'number' && !processAlive(card.pid)) return undefined
+    const frame = card.frame
     if (!frame || ![frame.x, frame.y, frame.width, frame.height].every(value => typeof value === 'number' && Number.isFinite(value))) return undefined
     const pad = 2
     return { x: frame.x! - pad, y: frame.y! - pad, width: frame.width! + 2 * pad, height: frame.height! + 2 * pad }
