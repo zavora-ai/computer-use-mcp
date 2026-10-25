@@ -154,32 +154,89 @@ mod platform {
         }
     }
 
-    fn role_to_control_type(role: &str) -> UIA_CONTROLTYPE_ID {
-        match role {
-            "AXButton" => UIA_ButtonControlTypeId,
-            "AXTextField" | "AXTextArea" => UIA_EditControlTypeId,
-            "AXStaticText" => UIA_TextControlTypeId,
-            "AXCheckBox" => UIA_CheckBoxControlTypeId,
-            "AXComboBox" => UIA_ComboBoxControlTypeId,
-            "AXList" => UIA_ListControlTypeId,
-            "AXCell" => UIA_ListItemControlTypeId,
-            "AXMenu" => UIA_MenuControlTypeId,
-            "AXMenuItem" => UIA_MenuItemControlTypeId,
-            "AXMenuBar" => UIA_MenuBarControlTypeId,
-            "AXTabGroup" => UIA_TabControlTypeId,
-            "AXOutline" => UIA_TreeControlTypeId,
-            "AXRow" => UIA_TreeItemControlTypeId,
-            "AXWindow" => UIA_WindowControlTypeId,
-            "AXGroup" => UIA_GroupControlTypeId,
-            "AXSlider" => UIA_SliderControlTypeId,
-            "AXProgressIndicator" => UIA_ProgressBarControlTypeId,
-            "AXScrollBar" => UIA_ScrollBarControlTypeId,
-            "AXToolbar" => UIA_ToolBarControlTypeId,
-            "AXLink" => UIA_HyperlinkControlTypeId,
-            "AXImage" => UIA_ImageControlTypeId,
-            "AXRadioButton" => UIA_RadioButtonControlTypeId,
-            _ => UIA_CONTROLTYPE_ID(0),
+    /// What `control_type_to_role` reports for a control type it has no name for.
+    const UNKNOWN_ROLE: &str = "AXUnknown";
+
+    /// 7.7.1: every role `get_ui_tree` reports, with all the control types it stands for, so a search by a reported
+    /// role finds the element: `AXGroup` is a group or a pane, `AXRadioButton` a radio button or a tab item, and
+    /// `AXWebArea` a document. `AXTextArea` stays accepted as another name for an edit control.
+    const ROLES: &[(&str, &[UIA_CONTROLTYPE_ID])] = &[
+        ("AXButton", &[UIA_ButtonControlTypeId]),
+        ("AXTextField", &[UIA_EditControlTypeId]),
+        ("AXTextArea", &[UIA_EditControlTypeId]),
+        ("AXStaticText", &[UIA_TextControlTypeId]),
+        ("AXCheckBox", &[UIA_CheckBoxControlTypeId]),
+        ("AXComboBox", &[UIA_ComboBoxControlTypeId]),
+        ("AXList", &[UIA_ListControlTypeId]),
+        ("AXCell", &[UIA_ListItemControlTypeId]),
+        ("AXMenu", &[UIA_MenuControlTypeId]),
+        ("AXMenuItem", &[UIA_MenuItemControlTypeId]),
+        ("AXMenuBar", &[UIA_MenuBarControlTypeId]),
+        ("AXTabGroup", &[UIA_TabControlTypeId]),
+        ("AXRadioButton", &[UIA_RadioButtonControlTypeId, UIA_TabItemControlTypeId]),
+        ("AXOutline", &[UIA_TreeControlTypeId]),
+        ("AXRow", &[UIA_TreeItemControlTypeId]),
+        ("AXWindow", &[UIA_WindowControlTypeId]),
+        ("AXGroup", &[UIA_GroupControlTypeId, UIA_PaneControlTypeId]),
+        ("AXSlider", &[UIA_SliderControlTypeId]),
+        ("AXProgressIndicator", &[UIA_ProgressBarControlTypeId]),
+        ("AXScrollBar", &[UIA_ScrollBarControlTypeId]),
+        ("AXToolbar", &[UIA_ToolBarControlTypeId]),
+        ("AXLink", &[UIA_HyperlinkControlTypeId]),
+        ("AXImage", &[UIA_ImageControlTypeId]),
+        ("AXWebArea", &[UIA_DocumentControlTypeId]),
+    ];
+
+    fn role_control_types(role: &str) -> Option<&'static [UIA_CONTROLTYPE_ID]> {
+        ROLES.iter().find(|(name, _)| *name == role).map(|(_, types)| *types)
+    }
+
+    /// Every control type some role names; `AXUnknown` is the rest.
+    fn mapped_control_types() -> Vec<UIA_CONTROLTYPE_ID> {
+        let mut all: Vec<UIA_CONTROLTYPE_ID> = ROLES.iter().flat_map(|(_, types)| types.iter().copied()).collect();
+        all.sort_by_key(|ct| ct.0);
+        all.dedup();
+        all
+    }
+
+    /// The roles a search accepts (`find_element`, `click_element`, `set_value`): the table's names and `AXUnknown`.
+    #[napi]
+    pub fn uia_roles() -> Vec<String> {
+        ROLES.iter().map(|(name, _)| name.to_string()).chain(std::iter::once(UNKNOWN_ROLE.to_string())).collect()
+    }
+
+    /// One condition that is true for any of the control types.
+    fn any_control_type(automation: &IUIAutomation, types: &[UIA_CONTROLTYPE_ID]) -> napi::Result<IUIAutomationCondition> {
+        unsafe {
+            let mut combined: Option<IUIAutomationCondition> = None;
+            for ct in types {
+                let v = windows::core::VARIANT::from(ct.0);
+                let c = automation
+                    .CreatePropertyCondition(UIA_ControlTypePropertyId, &v)
+                    .map_err(|e| napi::Error::from_reason(format!("condition: {e}")))?;
+                combined = Some(match combined {
+                    None => c,
+                    Some(previous) => automation
+                        .CreateOrCondition(&previous, &c)
+                        .map_err(|e| napi::Error::from_reason(format!("or_cond: {e}")))?,
+                });
+            }
+            match combined {
+                Some(c) => Ok(c),
+                None => automation.CreateFalseCondition().map_err(|e| napi::Error::from_reason(format!("false_cond: {e}"))),
+            }
         }
+    }
+
+    /// The condition for a role: its control types; for `AXUnknown`, none of the mapped ones. A role the table does
+    /// not name matches nothing (before 7.7.1 it was dropped and the search matched every role).
+    fn role_condition(automation: &IUIAutomation, role: &str) -> napi::Result<IUIAutomationCondition> {
+        if role == UNKNOWN_ROLE {
+            let mapped = any_control_type(automation, &mapped_control_types())?;
+            return unsafe { automation.CreateNotCondition(&mapped) }
+                .map_err(|e| napi::Error::from_reason(format!("not_cond: {e}")));
+        }
+        any_control_type(automation, role_control_types(role).unwrap_or(&[]))
     }
 
     fn element_to_json(elem: &IUIAutomationElement) -> serde_json::Value {
@@ -297,14 +354,7 @@ mod platform {
         unsafe {
             let mut conds: Vec<IUIAutomationCondition> = Vec::new();
             if let Some(r) = role {
-                let ct = role_to_control_type(r);
-                if ct.0 != 0 {
-                    let v = windows::core::VARIANT::from(ct.0 as i32);
-                    let c = automation
-                        .CreatePropertyCondition(UIA_ControlTypePropertyId, &v)
-                        .map_err(|e| napi::Error::from_reason(format!("condition: {e}")))?;
-                    conds.push(c);
-                }
+                conds.push(role_condition(automation, r)?);
             }
             if let Some(name) = label {
                 let bstr = windows::core::BSTR::from(name);
@@ -546,6 +596,54 @@ mod platform {
         Ok(
             serde_json::json!({"pressed": false, "reason": "windows_menu_navigation_not_yet_implemented"}),
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Every control type `control_type_to_role` names, so the table can be checked against it.
+        const NAMED: &[UIA_CONTROLTYPE_ID] = &[
+            UIA_ButtonControlTypeId, UIA_EditControlTypeId, UIA_TextControlTypeId, UIA_CheckBoxControlTypeId,
+            UIA_ComboBoxControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuControlTypeId,
+            UIA_MenuItemControlTypeId, UIA_MenuBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+            UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_WindowControlTypeId, UIA_GroupControlTypeId,
+            UIA_SliderControlTypeId, UIA_ProgressBarControlTypeId, UIA_ScrollBarControlTypeId, UIA_ToolBarControlTypeId,
+            UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_RadioButtonControlTypeId, UIA_DocumentControlTypeId,
+            UIA_PaneControlTypeId,
+        ];
+
+        #[test]
+        fn every_reported_role_finds_its_control_type() {
+            for &ct in NAMED {
+                let role = control_type_to_role(ct);
+                assert_ne!(role, UNKNOWN_ROLE, "control type {} has a name", ct.0);
+                let types = role_control_types(role).unwrap_or_else(|| panic!("{role} is missing from ROLES"));
+                assert!(types.contains(&ct), "{role} does not search control type {}", ct.0);
+            }
+        }
+
+        #[test]
+        fn panes_are_groups_and_tab_items_are_radio_buttons() {
+            assert!(role_control_types("AXGroup").unwrap().contains(&UIA_PaneControlTypeId));
+            assert!(role_control_types("AXRadioButton").unwrap().contains(&UIA_TabItemControlTypeId));
+            assert_eq!(role_control_types("AXWebArea"), Some(&[UIA_DocumentControlTypeId][..]));
+        }
+
+        #[test]
+        fn unknown_names_are_not_roles_and_unknown_is_the_rest() {
+            assert_eq!(role_control_types("AXButon"), None);
+            assert_eq!(role_control_types(""), None);
+            let mapped = mapped_control_types();
+            for &ct in NAMED {
+                assert!(mapped.contains(&ct));
+            }
+            assert!(!mapped.contains(&UIA_CustomControlTypeId));
+            assert_eq!(control_type_to_role(UIA_CustomControlTypeId), UNKNOWN_ROLE);
+            let roles = uia_roles();
+            assert!(roles.iter().any(|r| r == UNKNOWN_ROLE));
+            assert_eq!(roles.len(), ROLES.len() + 1);
+        }
     }
 }
 

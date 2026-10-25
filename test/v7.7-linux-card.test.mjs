@@ -231,7 +231,8 @@ test('Linux gets the card when asked for; it stays opt-in, and its refusals are 
   assert.ok(REFUSALS.card_mask_unavailable)
 })
 
-test('the card script is valid Python', () => {
+// On Windows `python3` is usually the Microsoft Store alias, which runs (exit 9009) instead of failing to spawn.
+test('the card script is valid Python', { skip: process.platform === 'win32' && 'the Linux card is Linux only; python3 on Windows is often the Store alias' }, () => {
   const compiled = spawnSync('python3', ['-c', 'import ast, sys; ast.parse(open(sys.argv[1]).read())', join(root, 'libexec', 'linux-status-card.py')], { encoding: 'utf8' })
   if (compiled.error) return // no python3 on this machine
   assert.equal(compiled.status, 0, compiled.stderr)

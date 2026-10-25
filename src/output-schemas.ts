@@ -112,6 +112,11 @@ export const GetActiveSpaceOutput = z.object({
   active_space_id: z.number().nullable(),
 })
 
+/** 7.7.1: a Windows virtual desktop's id is its GUID string (`{EC309B65-…}`), the `uuid` list_spaces reports. */
+export const GetActiveSpaceOutputWindows = z.object({
+  active_space_id: z.string().nullable(),
+})
+
 export const DisplaySizeOutput = z.object({
   width: z.number(),
   height: z.number(),
@@ -132,4 +137,10 @@ export const PRIORITY_OUTPUT_SCHEMAS: Record<string, z.ZodTypeAny> = {
   get_frontmost_app: FrontmostAppOutput,
   get_active_space: GetActiveSpaceOutput,
   get_display_size: DisplaySizeOutput,
+}
+
+/** The output schema a tool registers with on a platform: the shared one, except where Windows answers differently. */
+export function outputSchemaFor(name: string, platform: NodeJS.Platform): z.ZodTypeAny | undefined {
+  if (platform === 'win32' && name === 'get_active_space') return GetActiveSpaceOutputWindows
+  return PRIORITY_OUTPUT_SCHEMAS[name]
 }

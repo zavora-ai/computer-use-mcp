@@ -347,6 +347,8 @@ export interface NativeModule {
     label: string,
     value: string,
   ): { set: boolean; reason?: string }
+  /** 7.7.1, Windows only: the roles a UI Automation search accepts (what get_ui_tree reports, plus aliases). */
+  uiaRoles?(): string[]
   /** Walk the app's menu bar and return nested menu structure. */
   getMenuBar(bundleId: string): MenuBarEntry[]
   /** Press a named menu item, optionally nested under a submenu. */

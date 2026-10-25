@@ -96,8 +96,8 @@ any extra setup.
 
 `computer-use-mcp-http` listens on `127.0.0.1:3100` and refuses any other address, so the Mac reaches it through the
 tunnel described in the next section. Put configuration in front of it as usual:
-`COMPUTER_USE_STATUS_CARD=true computer-use-mcp-http` on Linux, or
-`$env:COMPUTER_USE_STATUS_CARD='true'; computer-use-mcp-http` in PowerShell. On Linux the card needs
+`COMPUTER_USE_STATUS_CARD=true computer-use-mcp-http` on Linux. On Windows the card is on by default since 7.7.1
+(`$env:COMPUTER_USE_STATUS_CARD='false'` in PowerShell turns it off). On Linux the card needs
 python3-gi and GTK 3 and an X display (XWayland on GNOME and KDE Wayland); it reserves a strip on the right of the
 desktop rather than floating on top.
 

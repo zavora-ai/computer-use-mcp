@@ -49,6 +49,29 @@ function powershellEncodedArgs(script: string): string[] {
   return ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
 }
 
+/**
+ * 7.7.1: a Windows tool's script, wrapped so a failure reaches stderr as one plain line. Unwrapped, `-EncodedCommand`
+ * with redirected streams serializes errors as `#< CLIXML` with ANSI colour codes, which was what the caller saw.
+ */
+function windowsPowerShellArgs(script: string): string[] {
+  return powershellEncodedArgs(
+    `$ErrorActionPreference = 'Stop'\ntry {\n${script}\n} catch {\n  [Console]::Error.WriteLine($_.Exception.Message)\n  exit 1\n}`,
+  )
+}
+
+const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g')
+
+/** Plain text from PowerShell's stderr: the error lines of a `#< CLIXML` block decoded, and colour codes removed. */
+export function plainPowerShellError(stderr: string): string {
+  let text = stderr
+  if (text.trimStart().startsWith('#< CLIXML')) {
+    text = [...text.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map(match => match[1]).join('')
+      .replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+  }
+  return text.replace(ANSI_SGR, '').split(/\r?\n/).map(line => line.trimEnd()).filter(Boolean).join('\n').trim()
+}
+
 function xmlEscape(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
@@ -305,7 +328,10 @@ export async function handleAdminTool(
       if (!name) return { content: [{ type: 'text', text: 'name required for set' }], isError: true }
       const value = typeof args.value === 'string' ? args.value : ''
       const type = typeof args.type === 'string' ? args.type : 'String'
-      script = `New-ItemProperty -Path ${powershellLiteral(registryPath)} -Name ${powershellLiteral(name)} -Value ${powershellLiteral(value)} -PropertyType ${type} -Force`
+      // 7.7.1: create the key (and missing parents) first; New-ItemProperty alone fails on a key that does not exist.
+      script = `$key = ${powershellLiteral(registryPath)}
+if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
+New-ItemProperty -LiteralPath $key -Name ${powershellLiteral(name)} -Value ${powershellLiteral(value)} -PropertyType ${type} -Force | Out-Null`
       success = `Set ${registryPath}\\${name}`
     } else if (mode === 'delete') {
       script = name
@@ -318,8 +344,11 @@ export async function handleAdminTool(
     } else {
       return { content: [{ type: 'text', text: `Unknown registry mode: ${mode}` }], isError: true }
     }
-    const result = await context.spawnBounded(executable, powershellEncodedArgs(script), 10_000)
-    if (result.code !== 0) return { content: [{ type: 'text', text: result.stderr }], isError: true }
+    const result = await context.spawnBounded(executable, windowsPowerShellArgs(script), 10_000)
+    if (result.code !== 0) {
+      const reason = plainPowerShellError(result.stderr) || (result.timedOut ? 'timed out after 10 s' : `exit code ${result.code}`)
+      return { content: [{ type: 'text', text: `registry ${mode} ${registryPath} failed: ${reason}` }], isError: true }
+    }
     return ok(success ?? (result.stdout.trim() || '(empty)'))
   }
 
@@ -338,9 +367,14 @@ $xml.LoadXml(${powershellLiteral(xml)})
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(${powershellLiteral(appId)}).Show($toast)
 `
-    const result = await context.spawnBounded(context.getPowerShellExe(), powershellEncodedArgs(script), 10_000)
-    return result.code === 0 ? ok('Notification sent')
-      : { content: [{ type: 'text', text: result.stderr || 'Failed to send notification' }], isError: true }
+    // 7.7.1: always Windows PowerShell 5.1. The WinRT type syntax above exists only on .NET Framework; PowerShell 7,
+    // which getPowerShellExe() prefers when it is installed, cannot load the toast types.
+    const result = await context.spawnBounded('powershell.exe', windowsPowerShellArgs(script), 10_000)
+    if (result.code !== 0) {
+      const reason = plainPowerShellError(result.stderr) || (result.timedOut ? 'timed out after 10 s' : `exit code ${result.code}`)
+      return { content: [{ type: 'text', text: `notification failed (powershell.exe): ${reason}` }], isError: true }
+    }
+    return ok('Notification sent (Windows accepted it; Focus Assist or Do Not Disturb can still keep it off screen)')
   }
 
   if (tool === 'scrape') {

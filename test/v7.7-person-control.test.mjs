@@ -86,9 +86,9 @@ test('a takeover is never armed without physical-input counters, and a person\'s
   control.close()
 })
 
-test('defaults: card on on macOS only, chord armed on macOS and Windows, takeover on; each can be turned off', () => {
+test('defaults: card on on macOS and Windows (7.7.1), chord armed on macOS and Windows, takeover on; each can be turned off', () => {
   assert.equal(statusCardEnabled({}, 'darwin'), true)
-  assert.equal(statusCardEnabled({}, 'win32'), false)
+  assert.equal(statusCardEnabled({}, 'win32'), true)
   assert.equal(statusCardEnabled({}, 'linux'), false)
   assert.equal(statusCardEnabled({ COMPUTER_USE_STATUS_CARD: 'false' }, 'darwin'), false)
   assert.equal(statusCardEnabled({ COMPUTER_USE_STATUS_CARD: 'true' }, 'win32'), true)

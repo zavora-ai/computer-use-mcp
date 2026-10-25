@@ -160,6 +160,22 @@ async function similarLabels(
   }
 }
 
+/**
+ * 7.7.1 (Windows): refuse a role UI Automation has no control type for, with the roles it has. Before 7.7.1 the native
+ * search dropped such a role and matched every element; it now matches none, and this says why. macOS roles are
+ * open-ended AX strings and are not checked.
+ */
+function unknownWindowsRole(native: NativeModule, isWindows: boolean, role: string | undefined): ToolResult | undefined {
+  if (!isWindows || role === undefined || typeof native.uiaRoles !== 'function') return undefined
+  const roles = native.uiaRoles()
+  if (roles.includes(role)) return undefined
+  const wanted = role.toLowerCase()
+  const similar = [...roles]
+    .sort((left, right) => levenshtein(left.toLowerCase(), wanted) - levenshtein(right.toLowerCase(), wanted))
+    .slice(0, 3)
+  return errJson({ error: 'unknown_role', role, message: `Windows has no role "${role}"`, valid_roles: roles, similar_roles: similar })
+}
+
 /** Accessibility, scripting, and capability-advisor handlers. */
 /**
  * osascript reports a refused Apple event as `Not authorized to send Apple events
@@ -196,6 +212,8 @@ export async function handleAccessibilityTool(
     const label = typeof args.label === 'string' ? args.label : undefined
     const value = typeof args.value === 'string' ? args.value : undefined
     if (!role && !label && !value) throw new Error('find_element requires at least one of: role, label, value')
+    const refused = unknownWindowsRole(native, isWindows, role)
+    if (refused) return refused
     return ok(JSON.stringify(sanitizeAccessibilityResult(await offThread(
       native, 'findElement', windowId(args), role, label, value,
       typeof args.max_results === 'number' ? args.max_results : undefined,
@@ -205,6 +223,11 @@ export async function handleAccessibilityTool(
   if (['click_element', 'set_value', 'press_button', 'fill_form'].includes(tool)) {
     const target = context.targets.resolve({ window_id: args.window_id })
     if (target.windowId == null) throw new Error(`${tool} requires window_id`)
+    // Checked before focusing: a call that cannot match anything should not move the person's focus.
+    if (tool === 'click_element' || tool === 'set_value') {
+      const refused = unknownWindowsRole(native, isWindows, typeof args.role === 'string' ? args.role : undefined)
+      if (refused) return refused
+    }
     await context.focus.ensure(target, context.focus.strategyFor(tool, args), { tool, force: args.force === true })
 
     if (tool === 'click_element') {
@@ -287,6 +310,7 @@ export async function handleAccessibilityTool(
       const label = typeof field.label === 'string' ? field.label : ''
       const value = typeof field.value === 'string' ? field.value : ''
       if (!role) failures.push({ role, label, reason: 'invalid_entry' })
+      else if (unknownWindowsRole(native, isWindows, role)) failures.push({ role, label, reason: 'unknown_role' })
       else {
         const result = native.setElementValue(target.windowId, role, label, value)
         if (result.set) succeeded += 1

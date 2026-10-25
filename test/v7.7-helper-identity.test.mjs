@@ -28,7 +28,8 @@ const signing = () => {
   return { calls, run }
 }
 
-test('a copy of the helper is signed with an identifier of its own', async () => {
+// The helper is macOS only; Windows has no POSIX mode bits for the executable check.
+test('a copy of the helper is signed with an identifier of its own', { skip: process.platform === 'win32' && 'POSIX file modes; the helper is macOS only' }, async () => {
   const c = cache()
   const s = signing()
   const copy = await ownHelperCopy(c.shared, s.run)

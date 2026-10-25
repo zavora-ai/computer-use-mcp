@@ -254,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "windows", ignore = "PathBuf joins with backslashes on Windows; the discovery runs on Linux only")]
     fn application_dirs_follow_xdg_and_add_snap_and_flatpak_once() {
         let dirs = application_dirs(None, Some("/usr/share/ubuntu:/usr/share/:/var/lib/snapd/desktop"), Some("/home/p"));
         let dirs: Vec<String> = dirs.iter().map(|d| d.to_string_lossy().to_string()).collect();

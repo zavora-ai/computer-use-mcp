@@ -70,7 +70,7 @@ test('an app with no desktop entry is app_not_installed, and one that never appe
   assert.ok(LAUNCH_WAIT_MS >= 10_000)
 })
 
-test('discovery reads the XDG directories and the snap and Flatpak exports', () => {
+test('discovery reads the XDG directories and the snap and Flatpak exports', { skip: process.platform === 'win32' && 'path.join uses backslashes on Windows; the discovery runs on Linux only' }, () => {
   const dirs = linuxApplicationDirs({ XDG_DATA_DIRS: '/usr/share/ubuntu:/usr/share/' }, '/home/p')
   assert.equal(dirs[0], '/home/p/.local/share/applications')
   assert.ok(dirs.includes('/usr/share/applications'))

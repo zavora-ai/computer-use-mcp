@@ -25,7 +25,7 @@ import {
   type ProfileName,
   type ToolMeta,
 } from '../tool-catalog.js'
-import { PRIORITY_OUTPUT_SCHEMAS } from '../output-schemas.js'
+import { outputSchemaFor } from '../output-schemas.js'
 import { coerceToShape } from './coerce.js'
 import { toMcpToolResult, type ToolResult } from '../result.js'
 
@@ -379,7 +379,7 @@ export class ToolRegistry {
         ? { ...definition.inputSchema, approval_token: this.#options.approvalTokenSchema }
         : definition.inputSchema
       const outputSchema = this.#options.structuredContent
-        ? PRIORITY_OUTPUT_SCHEMAS[definition.name]
+        ? outputSchemaFor(definition.name, platform)
         : undefined
       const fullMeta = {
         'computer-use/focusRequired': meta.focusRequired,
