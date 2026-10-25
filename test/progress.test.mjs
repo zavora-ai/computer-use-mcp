@@ -41,6 +41,41 @@ test('filesystem search emits progress notifications when a progressToken is pre
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
 })
 
+// 7.7.0 (K10): the SDK client settles a response as soon as it reads it and handles notifications a microtask later,
+// so progress that reaches it in the same read as the result was dropped as "unknown token". Holding the client's
+// event loop once the call is sent makes the server's notifications and its result pile up into one read, which full-
+// suite load used to cause about one run in three. The server must not write the result until the client has handled
+// the progress.
+test('progress written before the result survives a client that reads both at once', async () => {
+  const root = makeTree()
+  const t = new StdioClientTransport({ command: 'node', args: ['dist/server.js'], env: { ...process.env } })
+  const send = t.send.bind(t)
+  t.send = async (message, options) => {
+    await send(message, options)
+    if (message.method === 'tools/call') {
+      const until = Date.now() + 500
+      while (Date.now() < until) { /* busy: read nothing until the server has written everything */ }
+    }
+  }
+  const c = new Client({ name: 'progress-agent', version: '1.0.0' })
+  const errors = []
+  c.onerror = error => errors.push(String(error?.message ?? error))
+  await c.connect(t)
+  try {
+    const progress = []
+    const r = await c.callTool(
+      { name: 'filesystem', arguments: { mode: 'search', path: root, pattern: '*', recursive: true } },
+      { onprogress: (p) => progress.push(p) },
+    )
+    assert.ok(!r.isError, 'search should succeed')
+    assert.ok(progress.length >= 1, `expected >=1 progress notification, got ${progress.length}: ${errors.join('; ')}`)
+    assert.deepEqual(errors.filter(e => e.includes('unknown token')), [])
+  } finally {
+    await c.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('filesystem search without a progressToken still returns results (no token → no progress path)', async () => {
   const root = makeTree()
   try {

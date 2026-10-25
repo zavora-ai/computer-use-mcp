@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 const macOnly = { skip: process.platform !== 'darwin' && 'macOS-only integration test' }
 import { execFileSync, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -285,9 +286,9 @@ test('a dead owner is always reclaimable, with or without a start time', async (
   for (const extra of [{}, { startedAt: Date.now() - 1_000 }]) {
     const lockPath = newLockPath()
     const sleeper = spawn(process.execPath, ['-e', ''], { detached: true, stdio: 'ignore' })
-    sleeper.unref()
     const deadPid = sleeper.pid
-    await new Promise(resolve => setTimeout(resolve, 200))
+    // Dead means reaped, not a fixed sleep: under full-suite load `node -e ''` can outlive 200 ms.
+    await once(sleeper, 'exit')
     fs.writeFileSync(lockPath, JSON.stringify({ pid: deadPid, renewedAt: Date.now(), ...extra }), { mode: 0o600 })
     const handle = acquireSessionLock(lockPath)
     try {
