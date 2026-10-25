@@ -48,6 +48,7 @@ test('checkInstall names node_modules, dist and the native addon when they are m
     assert.match(text, /npm ci/)
     assert.match(text, /dist\/server\.js is missing/)
     assert.match(text, /native addon for darwin-arm64 is missing/)
+    assert.match(text, /@zavora-ai\/computer-use-mcp-darwin-arm64/, '7.7.0: names the platform package npm installs')
     assert.match(text, /npm run build:native/)
     // A present addon clears that problem.
     await mkdir(join(root, 'dist'), { recursive: true })

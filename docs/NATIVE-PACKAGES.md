@@ -27,14 +27,17 @@ The resolution order remains:
 
 1. An existing file at `COMPUTER_USE_NATIVE_PATH`.
 2. `@zavora-ai/computer-use-mcp-<platform>-<arch>/computer-use-napi.<platform>-<arch>.node`.
-3. The platform binary bundled in the main package.
-4. The generic `computer-use-napi.node` bundled in the main package.
+3. `computer-use-napi.<platform>-<arch>.node` in the package root: a source checkout's build.
+4. The generic `computer-use-napi.node` in the package root, also a checkout's build.
 
-The universal main tarball retains all six binaries during 7.x. Installs using
-`--omit=optional`, or encountering an unavailable optional package, still use
-the bundled native addon. An explicit native path retains its existing behavior.
-Bundlers can keep the matching native package external and ship its `.node`
-file separately, or use the existing path override when staging a binary.
+Since 7.7.0 the main package is thin, the way Claude Code, Codex and esbuild ship: it carries no binary of its own
+(2.5 MB unpacked, against 10.8 MB for 7.6.1 with all six binaries). npm installs only the platform package whose `os`
+and `cpu` match the machine and skips the other five without downloading them. An install with `--omit=optional`, a
+registry or mirror that lacks the platform package, or a lockfile made on another OS that left it out, installs
+without error but gets no addon: the launcher then exits 2 naming
+`@zavora-ai/computer-use-mcp-<platform>-<arch>` and the fix, and loading reports the same. An explicit native path
+retains its existing behavior. Bundlers can keep the matching native package external and ship its `.node` file
+separately, or use the path override when staging a binary.
 
 ## Source checkout validation
 
@@ -53,9 +56,9 @@ set the path to the downloaded build artifact. Validation and smoke steps run th
 verifier before their existing checks. Missing-addon fixtures temporarily clear
 and restore the override within their own test process. The consumer installation
 step has no source override and clears any inherited override in
-its disposable child environment. It still proves that a normal npm install
-loads the matching platform package and that optional-package failures fall back
-to bundled binaries. No production resolver order or override semantics change.
+its disposable child environment. It proves that a normal npm install downloads and loads only the matching platform
+package, that the main package carries no binary, and that an omitted or unavailable
+platform package is reported with the fix.
 
 ## Versioning and packing
 
@@ -90,14 +93,14 @@ job after `build-native`. It packs all six targets and uploads the tarballs as
 x64/arm64 test jobs install these exact tarballs through a temporary local
 registry and load the addon through the main package. The test checks automatic
 host selection, override precedence, a source checkout with an already installed
-platform package, loading with bundled binaries removed, and platform/generic
-bundled fallback when optional packages are omitted or unavailable. Metadata and
+platform package, that the main package carries no binary, and the named fix when the
+platform package is omitted or unavailable. Metadata and
 contents are checked for all six targets, including cross-compiled macOS x64.
 
 After all existing release gates pass, the upstream main-push release job:
 
 1. Downloads the tested native tarballs and all six root binaries.
-2. Packs and verifies the universal main package and exact optional version pins.
+2. Packs the main package and verifies that it carries no binary and pins all six native packages at its version.
 3. Attests the six binaries and all seven tarballs; retains the main SBOM
    attestation and uploads immutable release evidence.
 4. Validates every native tarball's integrity, then asks npm whether the main

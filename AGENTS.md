@@ -176,7 +176,7 @@ constant time.
 |---|---|
 | `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6; on macOS 37 tools against 78 for `full`). Bounds the maximum exposed tool surface. Profiles nest: core, then desktop, then ax, scripting or windows-admin, then full. |
 | `COMPUTER_USE_ACTIVE_PROFILE` | Starting profile within that bound; may be narrowed at runtime but never widened past `COMPUTER_USE_PROFILE`. |
-| `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: separately installed platform package → bundled binary). |
+| `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: the platform package npm installed, `@zavora-ai/computer-use-mcp-<platform>-<arch>`, then a checkout's build in the package root; since 7.7.0 the npm package carries no binary of its own). |
 | `COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN=true` | v7.6: advertise `approval_token` on every mutating tool's schema again, as before 7.6 (off by default; the token is accepted in `_meta` either way). |
 | `COMPUTER_USE_FULL_WIRE_META=true` | v7.6: put all seven `computer-use/*` `_meta` fields on every listed tool, as before 7.6 (default: `focusRequired` and `mutates` only; `get_tool_metadata` always returns the full set). |
 | `COMPUTER_USE_LEGACY_FOCUS_TAG=true` | Restore the legacy `[focusRequired: X]` description suffix (off by default in v7; still in `_meta` / `get_tool_metadata`). |

@@ -29,16 +29,24 @@ const require = createRequire(import.meta.url)
  * Resolution order (Appendix D — additive, back-compatible):
  *   1. `COMPUTER_USE_NATIVE_PATH` env override
  *   2. optional platform package `@zavora-ai/computer-use-mcp-${platform}-${arch}`
- *   3. legacy package-root `computer-use-napi.${platform}-${arch}.node`
- *   4. legacy package-root generic `computer-use-napi.node`
+ *   3. package-root `computer-use-napi.${platform}-${arch}.node` (a source checkout's build)
+ *   4. package-root generic `computer-use-napi.node`
  * Throws a doctor-friendly error when none resolve.
  *
- * Exported for tests. If optional packages are omitted or unavailable,
- * resolution falls through to the legacy root binary.
+ * Exported for tests. Since 7.7.0 the npm package carries no binary of its own: an install gets the addon only from
+ * the platform package, so 3 and 4 serve source checkouts.
  */
 export interface AddonResolverOptions {
   /** Test/embedding seam that avoids mutating the process-wide node_modules tree. */
   resolveOptionalPackage?: (specifier: string) => string
+}
+
+/** What to do when no addon resolves (7.7.0): npm skips an optional dependency without failing the install. */
+export function missingAddonFix(platform: string, arch: string): string {
+  const name = `@zavora-ai/computer-use-mcp-${platform}-${arch}`
+  return `npm installs the addon as the optional package ${name}: reinstall without --omit=optional (or --no-optional), ` +
+    `or install ${name} at the same version as @zavora-ai/computer-use-mcp. In a checkout, run \`npm run build:native\`. ` +
+    `Or set COMPUTER_USE_NATIVE_PATH to an explicit .node path.`
 }
 
 export function resolveAddonPath(options: AddonResolverOptions = {}): string {
@@ -89,9 +97,7 @@ export function resolveAddonPath(options: AddonResolverOptions = {}): string {
   if (existsSync(generic)) return generic
 
   throw new Error(
-    `Native binary missing for ${platform}-${arch}. ` +
-    `Reinstall @zavora-ai/computer-use-mcp (the tarball bundles every platform binary), ` +
-    `rebuild via \`npm run build:native\` in a checkout, or set COMPUTER_USE_NATIVE_PATH to an explicit .node path. ` +
+    `Native binary missing for ${platform}-${arch}. ${missingAddonFix(platform, arch)} ` +
     `Tried: ${attempts.join(', ')}.`,
   )
 }

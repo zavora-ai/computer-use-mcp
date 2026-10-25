@@ -97,8 +97,10 @@ anything that can reach the port. Fine on your own machine, never on a shared ho
 ## Set up your agent
 
 Requires **Node.js 20+** and an interactive desktop. npm installs the native module
-for your platform (macOS, Windows or Linux, on x64 or arm64) from its own package;
-the main package also carries all six as a fallback.
+for your platform (macOS, Windows or Linux, on x64 or arm64) from its own package,
+`@zavora-ai/computer-use-mcp-<platform>-<arch>`, chosen by OS and CPU, so an install
+downloads one binary. Installing with optional dependencies turned off
+(`--omit=optional`) leaves it out, and the server says how to fix that.
 
 Add this to your agent's MCP server configuration:
 

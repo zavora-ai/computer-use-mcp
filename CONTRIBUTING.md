@@ -122,8 +122,8 @@ compares the actual resolved path, and loads the addon without desktop actions.
 Use the build target matching `process.arch` (ARM64 Windows Node uses the existing
 `build:native:win:arm64` command). Keep the same process-scoped override when
 running other source commands. Restart a running host after rebuilding; loaded
-native modules are cached. Production loading order, custom overrides and bundled
-fallback remain unchanged. The verifier specifically checks the checkout build;
+native modules are cached. Production loading order and custom overrides are
+unchanged; a published install gets its addon only from the platform package. The verifier specifically checks the checkout build;
 an intentionally different custom addon can still be used through the normal loader.
 
 ### TypeScript changes
