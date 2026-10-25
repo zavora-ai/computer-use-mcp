@@ -66,7 +66,7 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 
 ## The status card: a person can see, pause and stop the agent (7.6.1; on by default on macOS in 7.7)
 
-On macOS (and on Windows with `COMPUTER_USE_STATUS_CARD=true`) a small always-on-top card appears on the first desktop
+On macOS (and on Windows and Linux with `COMPUTER_USE_STATUS_CARD=true`) a small card appears on the first desktop
 action; `COMPUTER_USE_STATUS_CARD=false` turns it off. It shows "Agent is using
 this Mac · 1:42", the current action as the server resolved it ("click (640, 410) in TextEdit · Untitled", "type 24
 chars in Safari · Login"; typed text is never shown), the last few actions with ✓/✕, and two buttons.
@@ -80,10 +80,17 @@ chars in Safari · Login"; typed text is never shown), the last few actions with
 - `control_status` (core, read-only) returns the state, since when, and what the agent is waiting on. An agent that
   receives `paused_by_user` should wait and retry or report; one that receives `stopped_by_user` should report what it
   has and finish.
-- The card is excluded from screen capture on both platforms, so the agent never sees its own controls and injected text
-  cannot point it at them; it watches the server's pid and closes when the server is gone.
-- macOS: a Swift panel compiled on first use (needs the Xcode Command Line Tools, like the capture helper). Windows:
-  PowerShell and WPF (the lineage of PR #40). Linux: the control state and `control_status` work; there is no card yet.
+- The card is excluded from screen capture on macOS and Windows, so the agent never sees its own controls and injected
+  text cannot point it at them; it watches the server's pid and closes when the server is gone.
+- macOS: a Swift panel compiled on first use (needs the Xcode Command Line Tools, like the capture helper), kept on top.
+  Windows: PowerShell and WPF (the lineage of PR #40), kept on top.
+- Linux (7.7, opt-in): GTK 3 through python3-gi (`sudo apt install python3-gi gir1.2-gtk-3.0`), on X11 and on GNOME or
+  KDE Wayland through XWayland. It is not kept on top: it is a dock window that reserves a 372 px strip on the right of
+  the desktop (`_NET_WM_STRUT_PARTIAL`, on every workspace), so maximized windows shrink to make room, and a fullscreen
+  window still covers it. X11 cannot exclude a window from capture, so the card reports its rectangle and every capture
+  paints it grey (screenshots, `zoom`, `snapshot`, `verify`); a click, press or drag inside it is refused with
+  `status_card_protected`, and its buttons are kept off the accessibility bus. Checked on GNOME 46 Wayland, xfwm4 and
+  Openbox. It stays opt-in because it takes a strip of the desktop from the person's windows.
 - `doctor` reports `status_card`. Hosts embedding the server can drive the same state through `SessionOptions.operatorControl`.
 
 7.7 adds the rest of a person's control, on by default:
@@ -176,7 +183,7 @@ constant time.
 | `COMPUTER_USE_PREPARE_KEEP_VISIBLE` | Comma-separated bundle IDs that `focus_strategy: "prepare_display"` must not hide. Defaults to the target plus the terminal. |
 | `COMPUTER_USE_SPACES_BACKEND` | `auto \| yabai \| mission_control \| cgs` — virtual-desktop backend selection on macOS. |
 | `COMPUTER_USE_PROVIDER`, `COMPUTER_USE_WIDTH`, `COMPUTER_USE_QUALITY`, `COMPUTER_USE_VISION` | Screenshot defaults: provider preset, width, JPEG quality (`0` = PNG), and whether vision is enabled. |
-| `COMPUTER_USE_STATUS_CARD` | The desktop status card (macOS, Windows): what the agent is doing, Pause/Resume, Stop. 7.7: on by default on macOS (`false` turns it off), opt-in (`true`) on Windows. The card never appears in screenshots and closes when the server exits. |
+| `COMPUTER_USE_STATUS_CARD` | The desktop status card (macOS, Windows, Linux): what the agent is doing, Pause/Resume, Stop. 7.7: on by default on macOS (`false` turns it off), opt-in (`true`) on Windows and Linux. The card never appears in screenshots (on Linux it is painted out) and closes when the server exits. |
 | `COMPUTER_USE_EMERGENCY_CHORD` | 7.7: the chord that stops the agent (default `ctrl+alt+escape` on macOS and Windows); `off` disarms it. |
 | `COMPUTER_USE_TAKEOVER` | 7.7: `false` stops deliberate physical input from pausing the agent (`taken_over`). On by default. |
 | `COMPUTER_USE_KEEP_AWAKE` | 7.7: `false` stops the server keeping the display awake while an agent works. |

@@ -151,6 +151,14 @@ export const REFUSALS: Readonly<Record<string, RefusalAdvice>> = {
     hint: 'The person took over the mouse or keyboard. Wait until control_status says running again, then look before acting.',
     next: () => controlStatus,
   },
+  status_card_protected: {
+    hint: 'That point is on the status card the person uses to pause or stop the agent. Never press it; aim elsewhere.',
+    next: () => controlStatus,
+  },
+  card_mask_unavailable: {
+    hint: 'The status card could not be masked out of the capture, so it was withheld. Report it; the person can rebuild or turn the card off.',
+    next: () => controlStatus,
+  },
   emergency_stop_active: {
     hint: 'The emergency stop is latched; nothing that changes the desktop runs until the host resets it. Report and finish.',
     next: () => controlStatus,

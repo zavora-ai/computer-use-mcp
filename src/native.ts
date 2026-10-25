@@ -281,6 +281,8 @@ export interface NativeModule {
      * shows, in the same coordinates input uses.
      */
     capture?: { method: string; occluded: boolean; x: number; y: number; width: number; height: number }
+    /** Linux: the status card was painted out of this capture (`card-guard.ts`). */
+    cardMasked?: boolean
   }
 
   /**
@@ -410,6 +412,8 @@ export interface NativeModule {
   annotateImage(base64Jpeg: string, annotations: string | null, gridCols: number | null, gridRows: number | null, quality: number | null): { base64: string; width: number; height: number; mimeType: string }
   /** Crop a region from a base64 image at full resolution. Cross-platform. */
   cropImage(base64Image: string, x1: number, y1: number, x2: number, y2: number, quality: number | null): { base64: string; width: number; height: number; mimeType: string }
+  /** Linux: fill flat `[x, y, width, height, ...]` image rectangles grey and re-encode (the status card mask). */
+  maskImage?(base64Image: string, rects: number[], quality: number | null): { base64: string; width: number; height: number; mimeType: string }
 
   // ── Native virtual pointer overlay ─────────────────────────────────────
   /** Show a non-activating, always-on-top native overlay pointer. */

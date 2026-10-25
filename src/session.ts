@@ -43,6 +43,7 @@ import { handleAgentDesktopTool } from './session/agent-desktop-handlers.js'
 import { createMacosHelper, type MacosHelper } from './session/macos-helper.js'
 import { defaultPidDeliveryPath, PidDeliveryStore } from './session/pid-delivery.js'
 import { createUserActivityGuard, type UserActivityGuard } from './session/user-activity.js'
+import { maskCardInCaptures } from './session/card-guard.js'
 import { OperatorControl, defaultCardPresenter, describeAction, emergencyChord, statusCardEnabled, takeoverEnabled } from './session/operator-control.js'
 import {
   errJson,
@@ -186,7 +187,8 @@ const CAPTURE_TOOLS = new Set(['screenshot', 'zoom', 'snapshot', 'read_window_te
 // ── Session factory ───────────────────────────────────────────────────────────
 
 export function createSession(opts: SessionOptions = {}): Session {
-  const n = opts.native ?? loadNative()
+  // Where the status card shows in captures (Linux), every capture paints it out; a no-op elsewhere (card-guard.ts).
+  const n = maskCardInCaptures(opts.native ?? loadNative(), () => control.cardRegion())
   const spawnBounded: SpawnBounded = opts.spawnBounded ?? defaultSpawnBounded
   const targetController = new TargetStateController(n)
   const visionEnabled = opts.vision !== false
@@ -325,6 +327,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     guard: userGuard,
     pidStore,
     ...(macosHelper ? { helper: macosHelper } : {}),
+    protectedRegion: () => control.cardRegion(),
   })
   const scripting = new ScriptingService({ native: n, spawnBounded })
   const runScriptHelper = scripting.runScript.bind(scripting)

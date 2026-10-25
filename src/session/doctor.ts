@@ -335,18 +335,33 @@ export async function runDoctor(options: {
     try {
       const control = options.controlStatus()
       const card = control.card as { enabled?: boolean; presenter?: string; launched?: boolean; error?: string | null } | undefined
+      // Linux: the card needs an X display (XWayland on Wayland) and python3-gi with GTK 3; say so before it is needed.
+      let linuxProblem: string | undefined
+      if (isLinux && card?.enabled && !card.launched && !card.error) {
+        if (!process.env.DISPLAY) linuxProblem = 'no X display (DISPLAY is unset; on Wayland, XWayland must be running)'
+        else {
+          const probe = await options.spawnBounded('python3', ['-c', "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], 5_000)
+            .catch(error => ({ code: 1, stdout: '', stderr: failure(error), timedOut: false }))
+          if (probe.code !== 0) linuxProblem = `python3-gi with GTK 3 is missing (${probe.stderr.trim().split('\n').pop() ?? 'import failed'})`
+        }
+      }
       add({
         id: 'status_card',
-        status: !card?.enabled ? 'skip' : card.error ? 'warn' : 'pass',
+        status: !card?.enabled ? 'skip' : card.error || linuxProblem ? 'warn' : 'pass',
         summary: !card?.enabled
           ? 'Desktop status card off (set COMPUTER_USE_STATUS_CARD=true to show the person what the agent does, with Pause and Stop).'
           : card.error
             ? `Desktop status card could not start: ${card.error}`
-            : `Desktop status card ${card.launched ? 'shown' : 'ready'} (${card.presenter}); control state ${String(control.state)}.`,
+            : linuxProblem
+              ? `Desktop status card cannot start: ${linuxProblem}.`
+              : `Desktop status card ${card.launched ? 'shown' : 'ready'} (${card.presenter}); control state ${String(control.state)}.`
+                + (isLinux ? ' It reserves a strip on the right of the desktop; captures paint it grey and clicks on it are refused.' : ''),
         details: control,
         remediation: [platform === 'darwin'
           ? 'The macOS card is compiled on first use with swiftc (Xcode Command Line Tools).'
-          : platform === 'win32' ? 'The Windows card needs powershell.exe on PATH.' : 'No card on this platform yet; the control state still applies.'],
+          : platform === 'win32' ? 'The Windows card needs powershell.exe on PATH.'
+            : isLinux ? 'The Linux card needs python3-gi and GTK 3 (Debian and Ubuntu: sudo apt install python3-gi gir1.2-gtk-3.0) and an X display, which GNOME and KDE Wayland provide through XWayland.'
+              : 'No card on this platform yet; the control state still applies.'],
       })
     } catch (error) {
       add({ id: 'status_card', status: 'warn', summary: failure(error) })
