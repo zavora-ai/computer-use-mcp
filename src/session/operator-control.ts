@@ -8,18 +8,20 @@
  * and in every refusal, so it stops guessing.
  *
  * The card itself is a separate process per platform (`libexec/macos-status-card.swift`, compiled on first use like
- * the capture helper; `libexec/windows-status-card.ps1`), fed through two small files in a private directory:
- * `state.json`, written here atomically, and `control.txt`, written by the card (`running`, `paused`, `stopped`). The
- * card watches this process's pid and exits when it is gone, so a crashed server leaves nothing on screen; it is
- * excluded from screen capture on both platforms, so the agent never sees its own controls.
+ * the capture helper; `libexec/windows-status-card.ps1`; `libexec/linux-status-card.py`), fed through two small files
+ * in a private directory: `state.json`, written here atomically, and `control.txt`, written by the card (`running`,
+ * `paused`, `stopped`). The card watches this process's pid and exits when it is gone, so a crashed server leaves
+ * nothing on screen. On macOS and Windows it is excluded from screen capture, so the agent never sees its own controls;
+ * X11 has no such exclusion, so the Linux card reports where it is (`card.json`) and the session paints that rectangle
+ * out of captures and refuses clicks inside it (`card-guard.ts`).
  *
  * What the card shows is honest: the tool, its key argument, the app and the window it was aimed at, as the session
  * resolved them, never a bucketed verb like "Selecting". Designed from the review of PR #40 (a Windows-only card with
  * the same two files), whose veto-and-abort shape this keeps.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -74,9 +76,17 @@ export interface ControlStatus extends Record<string, unknown> {
 /** Shows the card for a session directory; one per platform, or none. */
 export interface CardPresenter {
   readonly kind: string
+  /**
+   * The card shows up in screen captures (Linux: X11 cannot exclude a window). The card then writes its rectangle to
+   * `card.json`, and the session masks it out of captures and refuses clicks inside it.
+   */
+  readonly visibleInCaptures?: boolean
   start(directory: string): Promise<void> | void
   stop(): void
 }
+
+/** A rectangle in screen pixels (X root pixels on Linux). */
+export interface CardRect { x: number; y: number; width: number; height: number }
 
 export const CONTROL_POLL_MS = 150
 const RECENT_ACTIONS = 4
@@ -192,6 +202,20 @@ export class OperatorControl {
       } : { enabled: false },
       chord: this.#chord,
     }
+  }
+
+  /**
+   * Where the card is on screen, when it is up and shows in captures (Linux); undefined otherwise. Read from the
+   * `card.json` the card writes, padded by a few pixels for anti-aliasing at its edge.
+   */
+  cardRegion(): CardRect | undefined {
+    if (this.#closed || !this.#presenter?.visibleInCaptures || !this.#directory) return undefined
+    if (!this.#launched && !this.#launching) return undefined
+    let frame: Partial<CardRect> | undefined
+    try { frame = (JSON.parse(readFileSync(join(this.#directory, 'card.json'), 'utf8')) as { frame?: Partial<CardRect> }).frame } catch { return undefined }
+    if (!frame || ![frame.x, frame.y, frame.width, frame.height].every(value => typeof value === 'number' && Number.isFinite(value))) return undefined
+    const pad = 2
+    return { x: frame.x! - pad, y: frame.y! - pad, width: frame.width! + 2 * pad, height: frame.height! + 2 * pad }
   }
 
   /** The signal a mutating dispatch should run under: aborted by Pause and Stop. */
@@ -497,16 +521,83 @@ export class WindowsCardPresenter implements CardPresenter {
   stop(): void { try { this.#child?.kill() } catch { /* already gone */ } }
 }
 
+/** How long the Linux card has to put up its window and report where it is. */
+const LINUX_CARD_START_MS = 5000
+
+/**
+ * The Linux card: GTK 3 through python3-gi, on X11 or GNOME Wayland through XWayland (`GDK_BACKEND=x11`). It is a
+ * DOCK window that reserves a strip on the right of the desktop (`_NET_WM_STRUT_PARTIAL`), so maximized windows make
+ * room for it instead of the card floating on top. It shows in captures, so it reports its rectangle in `card.json`
+ * and the session masks it; `NO_AT_BRIDGE=1` keeps its buttons off the accessibility bus.
+ */
+export class LinuxCardPresenter implements CardPresenter {
+  readonly kind = 'linux'
+  readonly visibleInCaptures = true
+  #child: ChildProcess | undefined
+  constructor(private readonly options: { scriptPath?: string; python?: string; env?: NodeJS.ProcessEnv; startMs?: number } = {}) {}
+
+  async start(directory: string): Promise<void> {
+    const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env), GDK_BACKEND: 'x11', NO_AT_BRIDGE: '1' }
+    if (!env.DISPLAY) {
+      throw new Error('No X display (DISPLAY is unset). The Linux card needs X11, or XWayland on a Wayland desktop.')
+    }
+    const python = this.options.python ?? 'python3'
+    const script = this.options.scriptPath ?? libexecPath('linux-status-card.py')
+    const child = spawn(python, [script, directory], { env, stdio: ['ignore', 'ignore', 'pipe'] })
+    this.#child = child
+    let stderr = ''
+    child.stderr?.on('data', chunk => { if (stderr.length < 2000) stderr += String(chunk) })
+    // Up when it has written card.json; a missing python3-gi or display ends it first, with the reason on stderr.
+    const limit = this.options.startMs ?? LINUX_CARD_START_MS
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + limit
+      const finish = (error?: Error) => {
+        clearInterval(timer)
+        child.off('exit', onExit)
+        child.off('error', onError)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onExit = (code: number | null) => finish(new Error(linuxCardFailure(code, stderr)))
+      const onError = (error: Error) => finish(new Error(`${python} could not be started: ${error.message}. Install python3 and python3-gi (gir1.2-gtk-3.0).`))
+      const timer = setInterval(() => {
+        if (existsSync(join(directory, 'card.json'))) finish()
+        else if (Date.now() > deadline) { try { child.kill() } catch { /* already gone */ } finish(new Error(`The card did not come up within ${limit / 1000} s.${stderr ? ` ${stderr.trim()}` : ''}`)) }
+      }, 50)
+      child.once('exit', onExit)
+      child.once('error', onError)
+    })
+    child.on('error', () => { /* the card is optional */ })
+    child.stderr?.removeAllListeners('data')
+    child.stderr?.resume()
+    ;(child.stderr as { unref?: () => void } | null)?.unref?.()
+    child.unref()
+  }
+
+  stop(): void { try { this.#child?.kill() } catch { /* already gone */ } }
+}
+
+/** Why the Linux card exited before it came up, with the package that fixes it. */
+export function linuxCardFailure(code: number | null, stderr: string): string {
+  const detail = stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ')
+  if (/No module named 'gi'|Namespace Gtk not available|ValueError: Namespace/.test(stderr)) {
+    return `python3-gi with GTK 3 is missing (${detail}). Install python3-gi and gir1.2-gtk-3.0.`
+  }
+  return `The card exited with code ${code ?? 'null'} before it came up${detail ? `: ${detail}` : ''}.`
+}
+
 export function defaultCardPresenter(platform: NodeJS.Platform = process.platform): CardPresenter | undefined {
   if (platform === 'darwin') return new MacosCardPresenter()
   if (platform === 'win32') return new WindowsCardPresenter()
+  if (platform === 'linux') return new LinuxCardPresenter()
   return undefined
 }
 
 /**
  * Whether the desktop status card shows. 7.7.0 (K5): on by default on macOS, where it has run since 7.6.1;
  * `COMPUTER_USE_STATUS_CARD=false` turns it off. Windows stays opt-in (`true`) until the card has been run on more
- * hardware; Linux has no card yet.
+ * hardware. Linux is opt-in too: its card takes a strip of the desktop from the person's windows and shows in
+ * captures (masked), and it has run on GNOME and one X11 window manager so far.
  */
 export function statusCardEnabled(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): boolean {
   const raw = env.COMPUTER_USE_STATUS_CARD?.trim().toLowerCase()

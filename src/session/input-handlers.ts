@@ -4,6 +4,8 @@ import { offThread } from './native-async.js'
 import { ok, okJson, type ToolResult } from '../result.js'
 import type { Effect } from './contract.js'
 import { StructuredToolError } from './errors.js'
+import { cardClickRefusal, insideRect } from './card-guard.js'
+import type { CardRect } from './operator-control.js'
 import type { FocusController } from './focus.js'
 import type { ResolvedTarget, TargetStateController } from './target-state.js'
 import { charToUsCombo, explainNativeKeyError, normalizeHeldKeys, normalizeKeyCombo } from './keys.js'
@@ -109,6 +111,7 @@ export class InputHandler {
   readonly #guard: UserActivityGuard | undefined
   readonly #pidStore: PidDeliveryStore | undefined
   readonly #helper: MacosHelper | undefined
+  readonly #protectedRegion: (() => CardRect | undefined) | undefined
 
   constructor(options: {
     native: NativeModule
@@ -123,6 +126,8 @@ export class InputHandler {
     pidStore?: PidDeliveryStore
     /** v7.5: captures the target before/after a first pid delivery to verify it. */
     helper?: MacosHelper
+    /** Screen rectangle no pointer action may land in: the Linux status card, which shows on screen to the agent. */
+    protectedRegion?: () => CardRect | undefined
   }) {
     this.#native = options.native
     this.#targets = options.targets
@@ -133,6 +138,7 @@ export class InputHandler {
     this.#guard = options.guard
     this.#pidStore = options.pidStore
     this.#helper = options.helper
+    this.#protectedRegion = options.protectedRegion
   }
 
   /** Can this platform/native module post input to a process? */
@@ -796,7 +802,8 @@ export class InputHandler {
       const originX = display.x ?? 0, originY = display.y ?? 0
       return x >= originX && y >= originY && x < originX + display.width && y < originY + display.height
     })) throw new Error(`Coordinates (${x}, ${y}) are outside display bounds`)
-
+    const card = this.#protectedRegion?.()
+    if (card && insideRect(x, y, card)) throw cardClickRefusal(x, y, card)
   }
 
   async #pasteText(text: string): Promise<void> {

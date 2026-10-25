@@ -25,6 +25,14 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   is kept awake while an agent works and released after ten quiet minutes (`COMPUTER_USE_KEEP_AWAKE=false`). After
   Stop, the card's Stop button reads Close: it dismisses the card and the agent stays stopped (the card used to stay on
   screen, with both buttons disabled, until the server exited).
+- **A status card on Linux** (opt-in, `COMPUTER_USE_STATUS_CARD=true`): the macOS card's design and controls in GTK 3
+  through python3-gi (`libexec/linux-status-card.py`), on X11 and on GNOME and KDE Wayland through XWayland. Instead of
+  floating on top it is a dock window that reserves a strip on the right of the desktop (`_NET_WM_STRUT_PARTIAL`), so
+  maximized windows shrink to make room; a fullscreen window still covers it. X11 cannot exclude a window from capture,
+  so the card reports its rectangle and the session paints it grey in every capture (a new native `maskImage`) and
+  refuses pointer actions inside it with `status_card_protected`; its buttons are kept off the accessibility bus.
+  `doctor` names a missing python3-gi or X display. Checked on GNOME 46 Wayland (a maximized window went from 1214 to
+  842 px wide and back), xfwm4 and Openbox.
 - **Windows geometry and capture.** The process is per-monitor DPI aware (v2), so input, window bounds, displays,
   captures and UI Automation share one physical coordinate space (`COMPUTER_USE_WINDOWS_DPI_AWARENESS=unaware` restores
   the old behaviour). A window capture tries `PrintWindow` (full content), then Windows.Graphics.Capture, then a crop of

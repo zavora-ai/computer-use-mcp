@@ -234,6 +234,40 @@ sys.exit(1)
             "mimeType": mime,
         }))
     }
+
+    /// Fill rectangles of a base64-encoded image with a flat grey and re-encode it. The Linux status card cannot be
+    /// excluded from screen capture the way the macOS and Windows cards are, so captures paint over the rectangle it
+    /// reports and the agent never sees its own Stop button. `rects` is flat `[x, y, width, height, ...]` in image
+    /// pixels, clamped to the image. quality=0 for PNG, 1-100 for JPEG.
+    #[napi]
+    pub fn mask_image(base64_image: String, rects: Vec<u32>, quality: Option<u32>) -> napi::Result<serde_json::Value> {
+        let img_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&base64_image)
+            .map_err(|e| napi::Error::from_reason(format!("base64 decode: {e}")))?;
+        let img = image::ImageReader::new(std::io::Cursor::new(&img_bytes))
+            .with_guessed_format()
+            .map_err(|e| napi::Error::from_reason(format!("image format: {e}")))?
+            .decode()
+            .map_err(|e| napi::Error::from_reason(format!("image decode: {e}")))?;
+        let mut rgb = img.to_rgb8();
+        let (iw, ih) = (rgb.width(), rgb.height());
+        for rect in rects.chunks_exact(4) {
+            let (x1, y1) = (rect[0].min(iw), rect[1].min(ih));
+            let (x2, y2) = (rect[0].saturating_add(rect[2]).min(iw), rect[1].saturating_add(rect[3]).min(ih));
+            for y in y1..y2 {
+                for x in x1..x2 {
+                    rgb.put_pixel(x, y, image::Rgb([128, 128, 128]));
+                }
+            }
+        }
+        let (buf, mime) = encode(&image::DynamicImage::ImageRgb8(rgb), quality.unwrap_or(80))?;
+        Ok(serde_json::json!({
+            "base64": base64::engine::general_purpose::STANDARD.encode(&buf),
+            "width": iw,
+            "height": ih,
+            "mimeType": mime,
+        }))
+    }
 }
 
 // ── macOS implementation ──────────────────────────────────────────────────────
