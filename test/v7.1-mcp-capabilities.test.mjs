@@ -210,7 +210,7 @@ test('prompt argument completion returns matching running application IDs', asyn
 
 test('registry manifest covers the complete stable v7 tool catalog', () => {
   const manifest = readFileSync(new URL('../mcp-server.toml', import.meta.url), 'utf8')
-  assert.match(manifest, /version = "7\.7\.0"/)
+  assert.match(manifest, /version = "7\.8\.0"/)
   const names = [...manifest.matchAll(/^name = "([^"]+)"$/gm)].map(match => match[1])
   assert.equal(names.length, 80)
   // the manifest describes the package, so it lists every catalog tool whatever the platform

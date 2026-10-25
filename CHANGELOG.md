@@ -46,7 +46,7 @@ Live share, from [the 2026-10-25 live screen-share review](docs/reviews/2026-10-
   delivering frames until its process exited (measured 2026-10-25). The cause turned out to be one shared code
   identity (see the 7.7.0 fix below); a stream remains possible later, now that each server has its own.
 
-## v7.7.0 (unreleased)
+## v7.7.0 (2026-10-25)
 
 The 7.6.2 and 7.7 work orders from [the 2026-10-23 competitor study](docs/reviews/2026-10-23-competitor-study.md),
 tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md), and the fixes from a live check of every Windows tool

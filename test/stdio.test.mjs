@@ -90,7 +90,7 @@ test('server reports version 7.5.0', async () => {
   await withClient(async (client) => {
     const info = client.getServerVersion()
     assert.ok(info, 'server version info should be available after connect')
-    assert.equal(info.version, '7.7.0', 'server version should be 7.7.0')
+    assert.equal(info.version, '7.8.0', 'server version should be 7.8.0')
     assert.equal(info.name, 'computer-use', 'server name should be computer-use')
   })
 })
