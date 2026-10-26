@@ -1,39 +1,11 @@
 # Changelog
 
-## v7.7.1 (unreleased)
-
-Windows fixes from a live check of every Windows tool on 7.7.0 (2026-10-25), tracked in
-[`docs/specs/v7.7.1-windows-fixes`](docs/specs/v7.7.1-windows-fixes/tasks.md). Nothing changes on macOS or Linux.
-
-### Changed
-
-- **The status card is on by default on Windows** (`COMPUTER_USE_STATUS_CARD=false` turns it off), as on macOS. It
-  stays off inside `node --test` unless asked for, so a Windows test run does not open a card per session. The card now
-  counts as launched only once its window has rendered: a PowerShell that exits first (a service or session-0 desktop,
-  CI) or a card that never appears is reported in `control_status` and as a `doctor` warning instead.
-
-### Fixed
-
-- **`left_mouse_down` / `left_mouse_up` act at their `coordinate`.** Windows ignored the coordinate (no
-  `MOUSEEVENTF_MOVE`), so the press or release landed wherever the cursor already was.
-- **`notification` works when PowerShell 7 is installed.** It used the server's PowerShell, which prefers `pwsh`, and
-  the toast types load only in Windows PowerShell 5.1; it now always runs `powershell.exe`.
-- **`registry set` creates a missing key** (and its parents) before setting the value, as the AGENTS.md example
-  expects. `registry` and `notification` errors are one plain line (`registry set <path> failed: <reason>`) instead of
-  PowerShell's `#< CLIXML` serialization with colour codes.
-- **`get_active_space` works on Windows.** It returns the desktop's GUID string, which the output schema (a number)
-  rejected; Windows now registers a schema that takes the string. Other platforms keep theirs unchanged.
-- **Every role `get_ui_tree` reports can be searched for on Windows.** `AXGroup` finds panes as well as groups,
-  `AXRadioButton` finds tab items, and `AXWebArea` and `AXUnknown` filter instead of matching every element. A role
-  Windows does not report is refused with `unknown_role`, `valid_roles` and `similar_roles` (it used to match
-  everything); `fill_form` reports it per field.
-- **Tests and scripts on Windows:** three macOS/Linux-only tests and one Rust test skip on Windows, so `npm test` and
-  `cargo test` are green there; `scripts/live-windows.mjs` uses the `full` profile its admin and scripting checks need.
-
-## v7.7.0 (unreleased)
+## v7.7.0 (2026-10-26)
 
 The 7.6.2 and 7.7 work orders from [the 2026-10-23 competitor study](docs/reviews/2026-10-23-competitor-study.md),
-tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was never released; its fixes ship here.
+tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was never released; its fixes ship here. So do
+the Windows fixes from a live check of every Windows tool on a Windows 11 desktop (2026-10-25), tracked in
+[`docs/specs/v7.7/windows-fixes`](docs/specs/v7.7/windows-fixes/tasks.md).
 
 ### Added
 
@@ -46,8 +18,11 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
 - **`run_steps`** (in `desktop`): up to 30 steps in one call. Every step is validated before any runs, the target is
   focused once, the batch stops at the first failing step and reports the rest as not run, and one capture can follow
   the last step.
-- **A person's control by default.** The status card is on by default on macOS (`COMPUTER_USE_STATUS_CARD=false` turns
-  it off; Windows stays opt-in). The emergency chord `ctrl+alt+escape` is armed by default on macOS and Windows
+- **A person's control by default.** The status card is on by default on macOS and Windows
+  (`COMPUTER_USE_STATUS_CARD=false` turns it off; on Windows it stays off inside `node --test` unless asked for, so a
+  test run does not open a card per session). The Windows card counts as launched only once its window has rendered: a
+  PowerShell that exits first (a service or session-0 desktop, CI) or a card that never appears is reported in
+  `control_status` and as a `doctor` warning. The emergency chord `ctrl+alt+escape` is armed by default on macOS and Windows
   (`COMPUTER_USE_EMERGENCY_CHORD` changes it or `off` disarms it). When the person moves the mouse deliberately, clicks
   or types during an action, the agent pauses with `taken_over` and resumes 5 s after they stop
   (`COMPUTER_USE_TAKEOVER=false` turns this off). A locked screen, a disconnected Remote Desktop session and the
@@ -150,6 +125,22 @@ tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md). 7.6.2 was nev
   not success; newlines in `multi_edit` are typed as Enter; PowerShell output is UTF-8 and decoded across chunks;
   `prepare_display` minimises only app windows and `unhide_app` restores exactly those; the user-active guard ignores
   zero-length mouse moves; captures check every GDI result and copy the first duplicated frame before using it.
+- **Windows tools from the 2026-10-25 live check:**
+  - **`left_mouse_down` / `left_mouse_up` act at their `coordinate`.** Windows ignored it (no `MOUSEEVENTF_MOVE`), so
+    the press or release landed wherever the cursor already was.
+  - **`notification` works when PowerShell 7 is installed.** It used the server's PowerShell, which prefers `pwsh`, and
+    the toast types load only in Windows PowerShell 5.1; it now always runs `powershell.exe`.
+  - **`registry set` creates a missing key** (and its parents) before setting the value, as the AGENTS.md example
+    expects. `registry` and `notification` errors are one plain line (`registry set <path> failed: <reason>`) instead
+    of PowerShell's `#< CLIXML` serialization with colour codes.
+  - **`get_active_space` works on Windows.** It returns the desktop's GUID string, which the output schema (a number)
+    rejected; Windows registers a schema that takes the string. Other platforms keep theirs.
+  - **Every role `get_ui_tree` reports can be searched for.** `AXGroup` finds panes as well as groups, `AXRadioButton`
+    finds tab items, and `AXWebArea` and `AXUnknown` filter instead of matching every element. A role Windows does not
+    report is refused with `unknown_role`, `valid_roles` and `similar_roles` (it used to match everything); `fill_form`
+    reports it per field.
+  - Three macOS/Linux-only tests and one Rust test skip on Windows, so `npm test` and `cargo test` are green there;
+    `scripts/live-windows.mjs` uses the `full` profile its admin and scripting checks need.
 - **`process_kill {mode: "list"}` on Windows reads `tasklist`** instead of starting PowerShell for `Get-Process`. A cold
   PowerShell start took over 30 s on the Windows arm64 CI runner, which kept `main` red after #44. The result has the
   same shape (`Id`, `ProcessName`, `MemMB`, largest first, `limit` honoured) and is now always a JSON array.

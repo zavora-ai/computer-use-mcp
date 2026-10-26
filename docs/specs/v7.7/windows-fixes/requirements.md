@@ -1,4 +1,4 @@
-# v7.7.1 Windows fixes: requirements
+# v7.7.0 Windows fixes: requirements
 
 Status: **approved by James 2026-10-25**, with the proposed answers to Q1–Q6. Last updated 2026-10-25.
 
@@ -85,4 +85,5 @@ As an agent building a drag from separate press, move and release calls, the pre
    green on Windows? *Proposed: yes, as a separate small story R7.*
 5. **Locked screen and non-UI tools.** While the screen is locked, 7.7.0 also refuses `filesystem`, `registry`,
    `process_kill` and `run_script`, which do not use the screen. Change that here? *Proposed: no, separate change.*
-6. **Version.** Ship as 7.7.1? *Proposed: yes; the folder name assumes it.*
+6. **Version.** Ship as 7.7.1? *Proposed: yes.* **Changed 2026-10-26 (James):** 7.7.0 was never published, so these
+   fixes ship in 7.7.0; the spec moved from `docs/specs/v7.7.1-windows-fixes` to `docs/specs/v7.7/windows-fixes`.

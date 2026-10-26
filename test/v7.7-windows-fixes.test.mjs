@@ -1,4 +1,4 @@
-// 7.7.1: the Windows fixes from the 2026-10-25 live check (docs/specs/v7.7.1-windows-fixes). Fake native, fake spawn;
+// 7.7.0: the Windows fixes from the 2026-10-25 live check (docs/specs/v7.7/windows-fixes). Fake native, fake spawn;
 // every check runs on any platform. macOS and Linux results are pinned as unchanged.
 import assert from 'node:assert/strict'
 import test from 'node:test'

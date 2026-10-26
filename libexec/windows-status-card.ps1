@@ -68,7 +68,7 @@ $window.Add_SourceInitialized({
   $handle = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
   [ComputerUseCardNative]::SetWindowDisplayAffinity($handle, 0x11) | Out-Null
 })
-# 7.7.1: tell the server the card is on screen (until now it counted a PowerShell that exited at once as launched).
+# 7.7.0: tell the server the card is on screen (until now it counted a PowerShell that exited at once as launched).
 $window.Add_ContentRendered({
   try {
     $handle = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle

@@ -1152,7 +1152,7 @@ mod win {
             crate::activity::ensure_not_emergency_stopped()?;
         }
         let (ax, ay) = to_absolute(x, y);
-        // 7.7.1: SendInput ignores dx/dy without MOUSEEVENTF_MOVE, so a bare button event landed wherever the cursor
+        // 7.7.0: SendInput ignores dx/dy without MOUSEEVENTF_MOVE, so a bare button event landed wherever the cursor
         // already was. Move to the coordinate first and settle, as `mouse_click` does.
         send_mouse(ax, ay, MOUSEEVENTF_MOVE | ABSOLUTE, 0)?;
         std::thread::sleep(Duration::from_millis(10));

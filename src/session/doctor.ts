@@ -350,7 +350,7 @@ export async function runDoctor(options: {
         status: !card?.enabled ? 'skip' : card.error || linuxProblem ? 'warn' : 'pass',
         summary: !card?.enabled
           ? isWindows
-            // 7.7.1: on by default on Windows, so off means someone set it off.
+            // 7.7.0: on by default on Windows, so off means someone set it off.
             ? 'Desktop status card off (COMPUTER_USE_STATUS_CARD=false; unset it to show the person what the agent does, with Pause and Stop).'
             : 'Desktop status card off (set COMPUTER_USE_STATUS_CARD=true to show the person what the agent does, with Pause and Stop).'
           : card.error

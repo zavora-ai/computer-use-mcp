@@ -50,7 +50,7 @@ function powershellEncodedArgs(script: string): string[] {
 }
 
 /**
- * 7.7.1: a Windows tool's script, wrapped so a failure reaches stderr as one plain line. Unwrapped, `-EncodedCommand`
+ * 7.7.0: a Windows tool's script, wrapped so a failure reaches stderr as one plain line. Unwrapped, `-EncodedCommand`
  * with redirected streams serializes errors as `#< CLIXML` with ANSI colour codes, which was what the caller saw.
  */
 function windowsPowerShellArgs(script: string): string[] {
@@ -328,7 +328,7 @@ export async function handleAdminTool(
       if (!name) return { content: [{ type: 'text', text: 'name required for set' }], isError: true }
       const value = typeof args.value === 'string' ? args.value : ''
       const type = typeof args.type === 'string' ? args.type : 'String'
-      // 7.7.1: create the key (and missing parents) first; New-ItemProperty alone fails on a key that does not exist.
+      // 7.7.0: create the key (and missing parents) first; New-ItemProperty alone fails on a key that does not exist.
       script = `$key = ${powershellLiteral(registryPath)}
 if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
 New-ItemProperty -LiteralPath $key -Name ${powershellLiteral(name)} -Value ${powershellLiteral(value)} -PropertyType ${type} -Force | Out-Null`
@@ -367,7 +367,7 @@ $xml.LoadXml(${powershellLiteral(xml)})
 $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(${powershellLiteral(appId)}).Show($toast)
 `
-    // 7.7.1: always Windows PowerShell 5.1. The WinRT type syntax above exists only on .NET Framework; PowerShell 7,
+    // 7.7.0: always Windows PowerShell 5.1. The WinRT type syntax above exists only on .NET Framework; PowerShell 7,
     // which getPowerShellExe() prefers when it is installed, cannot load the toast types.
     const result = await context.spawnBounded('powershell.exe', windowsPowerShellArgs(script), 10_000)
     if (result.code !== 0) {

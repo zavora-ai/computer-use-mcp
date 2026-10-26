@@ -522,7 +522,7 @@ const WINDOWS_CARD_START_MS = 20_000
 
 /**
  * The Windows card: PowerShell and WPF (the lineage is PR #40), with the server's pid watched and capture excluded.
- * 7.7.1: up when its window exists (the script writes `windows-card.json`); a PowerShell that exits first, as on a
+ * 7.7.0: up when its window exists (the script writes `windows-card.json`); a PowerShell that exits first, as on a
  * service or session-0 desktop, is reported instead of counted as launched.
  */
 export class WindowsCardPresenter implements CardPresenter {
@@ -642,8 +642,8 @@ export function defaultCardPresenter(platform: NodeJS.Platform = process.platfor
 }
 
 /**
- * Whether the desktop status card shows. 7.7.0 (K5): on by default on macOS, where it has run since 7.6.1;
- * `COMPUTER_USE_STATUS_CARD=false` turns it off. 7.7.1: on by default on Windows too, except inside `node --test`
+ * Whether the desktop status card shows. 7.7.0 (K5): on by default on macOS, where it has run since 7.6.1, and on
+ * Windows; `COMPUTER_USE_STATUS_CARD=false` turns it off. On Windows it stays off inside `node --test`
  * (`NODE_TEST_CONTEXT`), so a Windows test run does not open a PowerShell card for every real session it builds.
  * Linux is opt-in: its card takes a strip of the desktop from the person's windows and shows in captures (masked),
  * and it has run on GNOME and one X11 window manager so far.

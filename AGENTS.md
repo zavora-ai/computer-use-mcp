@@ -64,7 +64,7 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - **v7.6 fixes worth knowing:** the user-active guard no longer refuses the first input call of a fresh server (its clock is seeded from the system's HID idle counter). `process_kill` refuses `pid` below 2 and matches `name` exactly; an ambiguous name returns `ambiguous_name` unless `all: true`. `hold_key` is capped at 10 s. Empty or non-numeric `COMPUTER_USE_MAX_TASKS`, `COMPUTER_USE_TASK_TTL_MS` and `COMPUTER_USE_TASK_POLL_INTERVAL_MS` fall back to their defaults with a stderr note instead of ending start-up.
 - **v7.6 launcher:** `dist/launch.js` is the package `bin`. It imports only Node built-ins, checks that `node_modules`, `dist/server.js` and the native addon exist, and when one is missing prints the fix (`npm ci`, `npm run build:ts`, `npm run build:native`) to stderr and exits 2, instead of the host seeing "connection closed" with no reason. `npm run build:ts` builds into `dist.next` and swaps it in, so a server starting mid-build still finds `dist/`.
 
-## The status card: a person can see, pause and stop the agent (7.6.1; on by default on macOS in 7.7, Windows in 7.7.1)
+## The status card: a person can see, pause and stop the agent (7.6.1; on by default on macOS and Windows in 7.7)
 
 On macOS and Windows (and on Linux with `COMPUTER_USE_STATUS_CARD=true`) a small card appears on the first desktop
 action; `COMPUTER_USE_STATUS_CARD=false` turns it off. It shows "Agent is using
@@ -183,7 +183,7 @@ constant time.
 | `COMPUTER_USE_PREPARE_KEEP_VISIBLE` | Comma-separated bundle IDs that `focus_strategy: "prepare_display"` must not hide. Defaults to the target plus the terminal. |
 | `COMPUTER_USE_SPACES_BACKEND` | `auto \| yabai \| mission_control \| cgs` — virtual-desktop backend selection on macOS. |
 | `COMPUTER_USE_PROVIDER`, `COMPUTER_USE_WIDTH`, `COMPUTER_USE_QUALITY`, `COMPUTER_USE_VISION` | Screenshot defaults: provider preset, width, JPEG quality (`0` = PNG), and whether vision is enabled. |
-| `COMPUTER_USE_STATUS_CARD` | The desktop status card (macOS, Windows, Linux): what the agent is doing, Pause/Resume, Stop. 7.7: on by default on macOS, and on Windows since 7.7.1 (`false` turns it off); opt-in (`true`) on Linux. The card never appears in screenshots (on Linux it is painted out) and closes when the server exits. |
+| `COMPUTER_USE_STATUS_CARD` | The desktop status card (macOS, Windows, Linux): what the agent is doing, Pause/Resume, Stop. 7.7: on by default on macOS and Windows (`false` turns it off); opt-in (`true`) on Linux. The card never appears in screenshots (on Linux it is painted out) and closes when the server exits. |
 | `COMPUTER_USE_EMERGENCY_CHORD` | 7.7: the chord that stops the agent (default `ctrl+alt+escape` on macOS and Windows); `off` disarms it. |
 | `COMPUTER_USE_TAKEOVER` | 7.7: `false` stops deliberate physical input from pausing the agent (`taken_over`). On by default. |
 | `COMPUTER_USE_KEEP_AWAKE` | 7.7: `false` stops the server keeping the display awake while an agent works. |

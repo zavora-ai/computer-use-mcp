@@ -1,4 +1,4 @@
-# v7.7.1 Windows fixes: design
+# v7.7.0 Windows fixes: design
 
 Status: **draft, awaiting approval**. Requirements: [requirements.md](requirements.md) (approved 2026-10-25).
 Last updated 2026-10-25.
@@ -35,7 +35,7 @@ be reported (R1 edge):
 
 **Docs:** README (the "Stay in control" row), AGENTS.md (the card paragraph and the environment table), and
 `docs/TESTING-IN-UTM.md` (the Windows VM no longer needs `$env:COMPUTER_USE_STATUS_CARD='true'`) say "on by default on
-macOS and Windows, opt-in on Linux". CHANGELOG gains a `7.7.1 (unreleased)` section covering D1–D7.
+macOS and Windows, opt-in on Linux". CHANGELOG records D1–D7 in the v7.7.0 section.
 
 ## D2 `left_mouse_down` / `left_mouse_up` at their coordinate (R2)
 
@@ -121,7 +121,7 @@ Each change is a skip that applies only on Windows. No assertion changes for mac
 
 ## Testing approach
 
-**Unit tests (`node --test`, fake native; new file `test/v7.7.1-windows-fixes.test.mjs`):**
+**Unit tests (`node --test`, fake native; new file `test/v7.7-windows-fixes.test.mjs`):**
 - D1:
   - `statusCardEnabled({}, 'win32')` is `true`.
   - `{ NODE_TEST_CONTEXT: 'child-v8' }` on `win32` gives `false` unless `COMPUTER_USE_STATUS_CARD=true` is set.
