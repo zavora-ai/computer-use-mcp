@@ -157,7 +157,7 @@ mod platform {
     /// What `control_type_to_role` reports for a control type it has no name for.
     const UNKNOWN_ROLE: &str = "AXUnknown";
 
-    /// 7.7.1: every role `get_ui_tree` reports, with all the control types it stands for, so a search by a reported
+    /// 7.7.0: every role `get_ui_tree` reports, with all the control types it stands for, so a search by a reported
     /// role finds the element: `AXGroup` is a group or a pane, `AXRadioButton` a radio button or a tab item, and
     /// `AXWebArea` a document. `AXTextArea` stays accepted as another name for an edit control.
     const ROLES: &[(&str, &[UIA_CONTROLTYPE_ID])] = &[
@@ -229,7 +229,7 @@ mod platform {
     }
 
     /// The condition for a role: its control types; for `AXUnknown`, none of the mapped ones. A role the table does
-    /// not name matches nothing (before 7.7.1 it was dropped and the search matched every role).
+    /// not name matches nothing (before 7.7.0 it was dropped and the search matched every role).
     fn role_condition(automation: &IUIAutomation, role: &str) -> napi::Result<IUIAutomationCondition> {
         if role == UNKNOWN_ROLE {
             let mapped = any_control_type(automation, &mapped_control_types())?;

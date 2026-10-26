@@ -161,7 +161,7 @@ async function similarLabels(
 }
 
 /**
- * 7.7.1 (Windows): refuse a role UI Automation has no control type for, with the roles it has. Before 7.7.1 the native
+ * 7.7.0 (Windows): refuse a role UI Automation has no control type for, with the roles it has. Before 7.7.0 the native
  * search dropped such a role and matched every element; it now matches none, and this says why. macOS roles are
  * open-ended AX strings and are not checked.
  */

@@ -50,7 +50,7 @@ Live share, from [the 2026-10-25 live screen-share review](docs/reviews/2026-10-
 
 The 7.6.2 and 7.7 work orders from [the 2026-10-23 competitor study](docs/reviews/2026-10-23-competitor-study.md),
 tracked in [`docs/specs/v7.7/tasks.md`](docs/specs/v7.7/tasks.md), and the fixes from a live check of every Windows tool
-on 2026-10-25, tracked in [`docs/specs/v7.7.1-windows-fixes`](docs/specs/v7.7.1-windows-fixes/tasks.md). Those were
+on 2026-10-25, tracked in [`docs/specs/v7.7/windows-fixes`](docs/specs/v7.7/windows-fixes/tasks.md). Those were
 first numbered 7.7.1; 7.7.0 had not been published yet, so they ship in it. 7.6.2 was never released either; its fixes
 ship here too.
 
