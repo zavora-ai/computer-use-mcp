@@ -112,7 +112,7 @@ export const GetActiveSpaceOutput = z.object({
   active_space_id: z.number().nullable(),
 })
 
-/** 7.7.1: a Windows virtual desktop's id is its GUID string (`{EC309B65-…}`), the `uuid` list_spaces reports. */
+/** 7.7.0: a Windows virtual desktop's id is its GUID string (`{EC309B65-…}`), the `uuid` list_spaces reports. */
 export const GetActiveSpaceOutputWindows = z.object({
   active_space_id: z.string().nullable(),
 })
