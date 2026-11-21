@@ -112,7 +112,8 @@ wire size of `tools/list` over stdio, which adds framing and per-tool fields. Fo
 on macOS it prints 36 / 42 / 57 / 76 tools and 37,391 / 45,518 / 58,494 / 77,319
 characters, against 45,942 and 84,037 bytes measured on the wire for `desktop` and `full`. On 7.7.0 the wire sizes are
 44,324 bytes for `desktop` (37 tools: `run_steps` added, the click aliases listed only in `full`) and 82,698 for `full`
-(78 tools). These are payload measurements,
+(78 tools); 7.8.1's modifiers, held keys, mid-drag keys and pen pressure bring them to 44,736 and 83,861. These are
+payload measurements,
 not claimed token savings. Compare actual input/cached/output token usage,
 completion time, successful outcomes, retries, and user interventions on the same
 tasks before claiming improvements. Smaller truncated observations can lose

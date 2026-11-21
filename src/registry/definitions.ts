@@ -22,6 +22,9 @@ export const approvalTokenParam = z.string().optional().describe('Policy approva
 const numArray = (len: number) => z.array(z.number()).length(len)
 const intArray = (len: number) => z.array(z.number().int()).length(len)
 const coord = { coordinate: numArray(2).describe('[x, y] logical pixels') }
+// 7.8.1: modifiers held through a click, drag or scroll, pressed as keys (apps such as Blender track them that way).
+const modifiersParam = z.array(z.enum(['shift', 'ctrl', 'alt', 'cmd'])).optional()
+const holdKeysParam = z.array(z.string()).max(4).optional().describe('Other keys held down for the gesture, e.g. ["c"].')
 const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
   ...schema,
   target_app: targetAppParam,
@@ -133,6 +136,8 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     ...coord,
     button: z.enum(['left', 'right', 'middle']).optional().describe('Mouse button (default left).'),
     count: z.number().int().min(1).max(3).optional().describe('Clicks: 1, 2 or 3 (default 1).'),
+    modifiers: modifiersParam.describe('Held through the click, e.g. ["alt"].'),
+    hold_keys: holdKeysParam,
   }), CG_MUT)
   // v7.6 R7: the v7 click variants stay callable as thin aliases of click (the registry parses with passthrough, so
   // target_app, target_window_id, delivery and force still work on them); they cost a line each in the list.
@@ -168,6 +173,13 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
         .describe('Modifier keys held for the whole gesture'),
       steps: z.number().int().min(1).max(64).optional().default(8)
         .describe('Interpolated motion events between consecutive waypoints'),
+      hold_keys: holdKeysParam,
+      key_presses: z.array(z.object({
+        at: z.number().int().min(0).max(63).describe('Waypoint index reached before the key is pressed.'),
+        key: z.string().describe('Key, e.g. "r".'),
+      })).max(16).optional().describe('Keys pressed mid-drag with the button still down.'),
+      pressure: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1)).min(1).max(64)]).optional()
+        .describe('macOS: drag as a pen, 0-1; a list is spread evenly along the stroke ([0.2, 1, 0.2] tapers).'),
     }), CG_MUT)
   tool('cursor_position', 'Get current cursor position', {}, NONE_READ)
   tool('left_mouse_down', 'Press left mouse button', withTargeting(coord), CG_MUT)
@@ -176,6 +188,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     ...coord,
     direction: z.enum(['up', 'down', 'left', 'right']),
     amount: z.number().int().positive().default(3),
+    modifiers: modifiersParam.describe('Held while scrolling.'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,

@@ -9,14 +9,15 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `skills/computer-use-recovery` — FocusFailure recovery
 - `skills/computer-use-windows-admin` — filesystem / registry / process
 - `skills/blender-agent` — Blender through its own MCP, this server only for what has no API
+- `skills/blender-direct` — Blender 5.3 with this server's mouse, keyboard and OCR alone, no Blender MCP
 - `skills/analytics-agent` — answer a business question from the organisation's own dashboards, citing what was read
 
 **MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
 **Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools and `agent_pointer`; `full` lists everything)
 
 **Current surface (7.7.0):**
-- **Default list.** On macOS the default `desktop` profile lists 37 tools and 44,324 bytes on the wire (about 11k tokens);
-  `COMPUTER_USE_PROFILE=full` lists 78 tools and 82,698 bytes (112,727 before 7.6). 7.7.0 added `run_steps` and lists
+- **Default list.** On macOS the default `desktop` profile lists 37 tools and 44,736 bytes on the wire (about 11k tokens);
+  `COMPUTER_USE_PROFILE=full` lists 78 tools and 83,861 bytes (112,727 before 7.6). 7.7.0 added `run_steps` and lists
   the click aliases (`left_click`, `double_click` and the rest) only in `full`; they stay callable in every profile.
   Tool counts by profile on macOS: core 33, desktop 37, scripting 40, windows-admin 47, ax 54, full 78
   (Windows 31/33/36/45/50/76, Linux 31/33/36/37/50/68). A test derives these from the catalog and checks this file, the
@@ -30,6 +31,15 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
   `left_click`, `right_click`, `middle_click`, `double_click` and `triple_click` remain callable in every profile as thin
   aliases of it (listed only in `full` since 7.7); they still accept `target_app`, `target_window_id`, `delivery` and
   `force`. Examples here use `click`.
+- **Modifiers, held keys and a pen (7.8.1).** `click` and `scroll` take `modifiers` (shift, ctrl, alt, cmd); `click` and
+  `mouse_drag` take `hold_keys` (any keys held down for the gesture, such as Blender's C for a blade); `mouse_drag`
+  takes `key_presses` (`[{at, key}]`, a key pressed once the drag reaches waypoint `at`, button still down) and, on
+  macOS, `pressure` (a pen: a number, or a list spread along the stroke; the stroke ends at full pressure). On macOS
+  every modifier now goes down as its own key before the key, click or drag it modifies and comes up after it, as on a
+  keyboard: apps that track modifiers from those events (Blender, SDL games) took `shift+a` for `a` and a shift+middle
+  drag for a plain one when only the flags were set. The numeric keypad has names on every platform (`numpad0` to
+  `numpad9`, `numpad_decimal`, `numpad_enter`, `numpad_add` and the other operators; `kp1` and `numpad.` work too).
+  `type` sends short text to Blender as key events, because Blender keeps only the first character of a pasted chunk.
 - **Every action says what happened (7.7).** Each action's result carries `effect` (`verified`, `changed`,
   `no_visible_change`, `unverified`), `route` and, for input, `delivery` (`hid` or `pid`). Every refusal and every
   unverified result adds a `hint` and a `next_call`: one read-only call this session can make as is. `verify: true` on
@@ -535,7 +545,8 @@ nodes — the window, its three title-bar buttons, a group and the title text �
 painted in OpenGL. Its native macOS menu bar carries only Apple, Blender and
 Window. `discover_applications` reports `scriptable: false, accessible: false`.
 
-For these, every action is a coordinate or a keystroke read from pixels. On macOS,
+For these, every action is a coordinate or a keystroke read from pixels (`skills/blender-direct` is a worked route
+through Blender 5.3, every gesture checked against it). On macOS,
 start with OCR (see *Apps that draw their own UI* below): `read_window_text` returns the
 text on screen with boxes, and `click_text` clicks a label by what it says, so many
 dialogs and menus need no coordinates at all. When text is not enough:
@@ -550,7 +561,9 @@ dialogs and menus need no coordinates at all. When text is not enough:
   applications integrate incremental movement and ignore a jump to the endpoint.
 - `mouse_move` before `key`. Blender routes hotkeys to whichever editor the
   pointer is over, so position the pointer first, then press.
-- `scroll` for wheel zoom.
+- `scroll` for wheel zoom, with `modifiers` for ctrl+wheel and shift+wheel.
+- `click {modifiers: ["alt"]}` and `mouse_drag {hold_keys, key_presses, pressure}` for the gestures a mouse and
+  keyboard make together: alt+click a loop, hold C while clicking, press R mid-drag, draw with a pen.
 
 ```typescript
 // Orbit a 3D viewport: middle-button drag across the centre of the window.
@@ -1125,6 +1138,8 @@ usable controls.
 | resize_window | ✅ AppleScript | ✅ | ❌ use `wmctrl`/`xdotool` via run_script |
 | multi_select, multi_edit | ✅ | ✅ | ✅ X11 only |
 | mouse_drag (button + modifiers) | ✅ | ✅ | ✅ X11; Wayland through libei (GNOME 46+, KDE Plasma 6.1+) |
+| mouse_drag `pressure` (pen) | ✅ | ❌ refused (`pressure_unsupported`) | ❌ refused (`pressure_unsupported`) |
+| numeric keypad keys (`numpad0`…) | ✅ | ✅ | ✅ |
 | doctor, discover_applications, get_tool_guide, get_tool_metadata | ✅ | ✅ | ✅ |
 
 Since 7.6 a tool that does not exist on the running platform is neither listed nor

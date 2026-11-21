@@ -213,6 +213,20 @@ export interface NativeModule {
   mousePress?(x: number, y: number, button: string, modifiers: string[]): void
   mouseDragTo?(x: number, y: number, button: string, modifiers: string[]): void
   mouseRelease?(x: number, y: number, button: string, modifiers: string[]): void
+  /**
+   * 7.8.1 (macOS): click with modifiers pressed as keys around it (and carried as flags), so apps that track modifiers
+   * from flagsChanged events (Blender) see them. Elsewhere the handler uses mousePress/mouseRelease, which already
+   * press the real keys.
+   */
+  mouseClickModified?(x: number, y: number, button: string, count: number, modifiers: string[]): void
+  /** 7.8.1 (macOS): scroll with modifiers pressed as keys around it. */
+  mouseScrollModified?(dy: number, dx: number, modifiers: string[]): void
+  /**
+   * 7.8.1 (macOS): one event of a pen stroke, `phase` 0 press, 1 drag, 2 release, with pressure 0-1 (the
+   * tablet-point subtype). End a stroke with a release at 1.0: an app keeps the last pressure until the pen leaves
+   * proximity, which a synthetic event cannot signal.
+   */
+  mousePenEvent?(x: number, y: number, button: string, modifiers: string[], phase: number, pressure: number): void
   cursorPosition(): { x: number; y: number }
   // Keyboard
   keyPress(combo: string, repeat?: number): void   // throws on unknown key

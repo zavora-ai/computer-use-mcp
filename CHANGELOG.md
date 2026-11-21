@@ -1,5 +1,42 @@
 # Changelog
 
+## v7.8.1 (unreleased)
+
+Driving Blender 5.3 with the mouse and keyboard alone, from [the 2026-11-22 Blender review](docs/reviews/2026-11-22-blender-direct-control.md).
+Every change was checked against Blender 5.3.0 on macOS 26.2, reading the result back from Blender.
+
+### Fixed
+
+- **Modifiers are pressed as keys on macOS.** `key "shift+a"`, a click with a modifier, and a drag with `modifiers`
+  set the modifier's flag on the event and never pressed the modifier key. Apps that track modifiers from the key
+  events a keyboard sends before the key (Blender, SDL games) saw `shift+a` as `a`, and a shift+middle drag orbited
+  instead of panning. Each modifier now goes down as its own key and comes up after the key, click or drag, released
+  on every exit path and by the emergency latch; the last event still carries no flags (7.7.0 C3).
+- **`type` reaches Blender.** Blender keeps the first character of each key event's text, so text posted in chunks of
+  20 arrived as one letter per chunk ("Relax Edge Loops" became "R"). Short text now goes to Blender as key events
+  unless a `mode` is given.
+- **Window captures of secondary windows map to the screen.** ScreenCaptureKit drew Blender's main window, shrunk,
+  into the frame of its file browser window, so `screenshot`, `read_window_text` and `click_text` on that window
+  pointed at the wrong places (a click meant for the directory field made folders). The helper now checks that the
+  window filled its capture and otherwise captures the window's screen area alone.
+
+### Added
+
+- `click` and `scroll` take `modifiers`; `click` and `mouse_drag` take `hold_keys`, keys held down through the gesture
+  (Blender's blade while C is held, an annotation while D is held).
+- `mouse_drag` takes `key_presses`, keys pressed mid-drag with the button down (the sequencer's R, S and V while a strip
+  is dragged).
+- `mouse_drag` takes `pressure` on macOS: the drag is a pen, and paint and sculpt tools follow the pressure. It ends at
+  full pressure, because an app keeps the last pressure until a pen leaves proximity, which a synthetic pen cannot do.
+  Elsewhere it is refused with `pressure_unsupported`.
+- The numeric keypad on every platform: `numpad0` to `numpad9`, `numpad_decimal`, `numpad_enter`, `numpad_add`,
+  `numpad_subtract`, `numpad_multiply`, `numpad_divide`, `numpad_equals`, with `kp1`, `kp_1`, `numpad.` and similar
+  spellings.
+- `skills/blender-direct`: Blender 5.3 by mouse, keyboard and OCR, with every feature of the 5.3 release mapped to a
+  route and marked as run end to end or not.
+
+The default macOS list grows to 44,736 bytes (`desktop`, budget 48,000) and 83,861 (`full`, budget 88,000).
+
 ## v7.8.0 (unreleased)
 
 Live share, from [the 2026-10-25 live screen-share review](docs/reviews/2026-10-25-live-screen-share.md), tracked in

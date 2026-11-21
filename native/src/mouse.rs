@@ -595,12 +595,22 @@ mod macos {
         Ok(flags)
     }
 
+    /// kCGMouseEventSubtype and kCGEventMouseSubtypeTabletPoint, and the tablet fields a pen's mouse events carry.
+    const FIELD_MOUSE_SUBTYPE: u32 = 7;
+    const SUBTYPE_TABLET_POINT: i64 = 1;
+    const FIELD_MOUSE_PRESSURE: u32 = 2;
+    const FIELD_TABLET_POINT_PRESSURE: u32 = 19;
+    const FIELD_TABLET_DEVICE_ID: u32 = 24;
+    /// A device id of our own for the synthetic pen, so its points are never attributed to a real tablet.
+    const PEN_DEVICE_ID: i64 = 0x7a11;
+
     fn post_button_event(
         x: f64,
         y: f64,
         button: &str,
         modifiers: &[String],
         which: u8,
+        pressure: Option<f64>,
     ) -> napi::Result<()> {
         // A release always goes out, even after Stop: refusing it is what used to leave a button held (7.7.0).
         if which != 2 {
@@ -623,7 +633,26 @@ mod macos {
         } else if which == 2 {
             event.set_flags(CGEventFlags::CGEventFlagNull);
         }
+        // 7.8.1: a pen. The tablet-point subtype makes AppKit report the event's pressure (NSEvent.pressure, 0 to 1),
+        // which paint and sculpt tools read. Blender keeps the last pressure it saw until a tablet leaves proximity,
+        // and a synthetic proximity event never reaches it, so the caller ends a stroke with a release at 1.0, which
+        // leaves the plain mouse at full pressure as before.
+        if let Some(pressure) = pressure {
+            let pressure = pressure.clamp(0.0, 1.0);
+            event.set_integer_value_field(FIELD_MOUSE_SUBTYPE, SUBTYPE_TABLET_POINT);
+            event.set_double_value_field(FIELD_MOUSE_PRESSURE, pressure);
+            event.set_double_value_field(FIELD_TABLET_POINT_PRESSURE, pressure);
+            event.set_integer_value_field(FIELD_TABLET_DEVICE_ID, PEN_DEVICE_ID);
+        }
+        // 7.8.1: the modifiers also go down as keys before the press and come up after the release. Apps that track
+        // modifiers from flagsChanged events (Blender) ignored a shift+middle drag carried by flags alone.
+        if which == 0 && !modifiers.is_empty() {
+            crate::keyboard::hold_modifier_keys(modifiers)?;
+        }
         post(event);
+        if which == 2 && !modifiers.is_empty() {
+            crate::keyboard::release_modifier_keys(modifiers);
+        }
         let bit = super::button_bit(button);
         match which {
             0 => { AGENT_BUTTONS_HELD.fetch_or(bit, Ordering::AcqRel); }
@@ -631,6 +660,22 @@ mod macos {
             _ => {}
         }
         Ok(())
+    }
+
+    /// 7.8.1: one event of a pen stroke: `phase` 0 press, 1 drag, 2 release, with the pen's pressure (0 to 1).
+    #[napi]
+    pub fn mouse_pen_event(
+        x: f64,
+        y: f64,
+        button: String,
+        modifiers: Vec<String>,
+        phase: u32,
+        pressure: f64,
+    ) -> napi::Result<()> {
+        if phase > 2 {
+            return Err(napi::Error::from_reason(format!("Invalid phase: {phase}, expected 0, 1 or 2")));
+        }
+        post_button_event(x, y, &button, &modifiers, phase as u8, Some(pressure))
     }
 
     /// Press a mouse button, with optional modifiers held for the event.
@@ -641,7 +686,7 @@ mod macos {
         button: String,
         modifiers: Vec<String>,
     ) -> napi::Result<()> {
-        post_button_event(x, y, &button, &modifiers, 0)
+        post_button_event(x, y, &button, &modifiers, 0, None)
     }
 
     /// Move while a button is held. Emit these between press and release.
@@ -652,7 +697,7 @@ mod macos {
         button: String,
         modifiers: Vec<String>,
     ) -> napi::Result<()> {
-        post_button_event(x, y, &button, &modifiers, 1)
+        post_button_event(x, y, &button, &modifiers, 1, None)
     }
 
     /// Release a mouse button.
@@ -663,22 +708,48 @@ mod macos {
         button: String,
         modifiers: Vec<String>,
     ) -> napi::Result<()> {
-        post_button_event(x, y, &button, &modifiers, 2)
+        post_button_event(x, y, &button, &modifiers, 2, None)
     }
 
     #[napi]
     pub fn mouse_click(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
-        mouse_click_impl(x, y, button, count, false)
+        mouse_click_impl(x, y, button, count, CGEventFlags::CGEventFlagNull)
     }
 
     #[napi]
     pub fn mouse_click_additive(x: f64, y: f64, button: String, count: i32) -> napi::Result<()> {
-        mouse_click_impl(x, y, button, count, true)
+        mouse_click_modified(x, y, button, count, vec!["cmd".to_string()])
     }
 
-    fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, additive: bool) -> napi::Result<()> {
+    /// 7.8.1: click with modifiers held, pressed as keys around the click (and carried as flags on it), so an app
+    /// that tracks modifiers from flagsChanged events sees them: alt+click selects an edge loop in Blender.
+    #[napi]
+    pub fn mouse_click_modified(x: f64, y: f64, button: String, count: i32, modifiers: Vec<String>) -> napi::Result<()> {
         crate::activity::ensure_not_emergency_stopped()?;
         crate::permissions::ensure_input_trusted()?;
+        modifier_flags(&modifiers)?;
+        crate::keyboard::with_modifier_keys(&modifiers, |flags| mouse_click_impl(x, y, button, count, flags))
+    }
+
+    /// 7.8.1: scroll with modifiers held as keys (ctrl+wheel changes a value under the pointer in Blender).
+    #[napi]
+    pub fn mouse_scroll_modified(dy: i32, dx: i32, modifiers: Vec<String>) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
+        modifier_flags(&modifiers)?;
+        crate::keyboard::with_modifier_keys(&modifiers, |flags| {
+            if let Ok(event) = CGEvent::new_scroll_event(source(), ScrollEventUnit::LINE, 2, dy, dx, 0) {
+                if flags != CGEventFlags::CGEventFlagNull { event.set_flags(flags); }
+                post(event);
+            }
+            Ok(())
+        })
+    }
+
+    fn mouse_click_impl(x: f64, y: f64, button: String, count: i32, flags: CGEventFlags) -> napi::Result<()> {
+        crate::activity::ensure_not_emergency_stopped()?;
+        crate::permissions::ensure_input_trusted()?;
+        let additive = flags != CGEventFlags::CGEventFlagNull;
         let point = CGPoint::new(x, y);
         let (btn, down_type, up_type) = match button.as_str() {
             "left" => (
@@ -716,12 +787,13 @@ mod macos {
         for i in 1..=count {
             crate::activity::ensure_not_emergency_stopped()?;
             let down = CGEvent::new_mouse_event(source(), down_type, point, btn).unwrap();
-            if additive { down.set_flags(CGEventFlags::CGEventFlagCommand); }
+            if additive { down.set_flags(flags); }
             down.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
             post(down);
             let up = CGEvent::new_mouse_event(source(), up_type, point, btn).unwrap();
-            // The last up carries no flags, so an additive click never leaves Command latched (7.7.0).
-            if additive && i < count { up.set_flags(CGEventFlags::CGEventFlagCommand); } else { up.set_flags(CGEventFlags::CGEventFlagNull); }
+            // The last up carries no flags, so a modified click never leaves a modifier latched (7.7.0); the modifier
+            // keys themselves come up after it (7.8.1).
+            if additive && i < count { up.set_flags(flags); } else { up.set_flags(CGEventFlags::CGEventFlagNull); }
             up.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i as i64);
             post(up);
             if i < count {

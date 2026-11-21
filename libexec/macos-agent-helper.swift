@@ -140,7 +140,45 @@ func captureWindow(id: UInt32, width: Int?, scale userScale: Double?, minPixelSc
     config.ignoreShadowsSingleWindow = true
     config.captureResolution = .best
     let image = try await withSckTimeout(10, "capture the window") { try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) }
+    // 7.8.1: for some secondary windows ScreenCaptureKit draws another surface into the buffer. Blender's file browser
+    // (a 1060x632 window) came back as its 1280x922 main window shrunk to fit, so every box and click mapped from it
+    // landed somewhere else. A window fills its buffer up to its rounded corners; a letterboxed one leaves an edge
+    // transparent. Then capture the screen area of that window alone, which maps exactly by construction.
+    if isLetterboxed(image), let display = content.displays.first(where: { $0.frame.contains(CGPoint(x: window.frame.midX, y: window.frame.midY)) }) {
+        let onDisplay = SCContentFilter(display: display, including: [window])
+        let source = SCStreamConfiguration()
+        source.sourceRect = CGRect(x: window.frame.minX - display.frame.minX, y: window.frame.minY - display.frame.minY,
+                                   width: window.frame.width, height: window.frame.height)
+        source.width = config.width
+        source.height = config.height
+        source.scalesToFit = true
+        source.showsCursor = false
+        source.captureResolution = .best
+        if let fixed = try? await withSckTimeout(10, "capture the window's screen area") { try await SCScreenshotManager.captureImage(contentFilter: onDisplay, configuration: source) } {
+            return WindowImage(image: fixed, scale: Double(fixed.width) / max(1, Double(window.frame.width)), frame: window.frame)
+        }
+    }
     return WindowImage(image: image, scale: Double(image.width) / max(1, Double(rect.width)), frame: window.frame)
+}
+
+/// 7.8.1: is an edge's midpoint fully transparent? A captured window is opaque there (only its corners are rounded off);
+/// ScreenCaptureKit's scale-to-fit leaves a transparent margin when the surface it drew is not the window's shape.
+func isLetterboxed(_ image: CGImage) -> Bool {
+    let width = image.width, height = image.height
+    guard width > 8, height > 8 else { return false }
+    for (x, y) in [(0, height / 2), (width - 1, height / 2), (width / 2, 0), (width / 2, height - 1)] {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let drawn: Bool = pixel.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            // CoreGraphics draws from the bottom-left: shift the image so pixel (x, y from the top) lands on (0, 0).
+            context.draw(image, in: CGRect(x: -x, y: -(height - 1 - y), width: width, height: height))
+            return true
+        }
+        if drawn && pixel[3] == 0 { return true }
+    }
+    return false
 }
 
 /// The status card is compiled into the helper cache as `macos-status-card-<sha8>`. It sets `sharingType = .none`, which

@@ -34,6 +34,27 @@ const NON_PHYSICAL_TOOLS = new Set(['cursor_position', 'read_clipboard', 'write_
  */
 export const MAX_HOLD_SECONDS = 10
 
+/**
+ * 7.8.1 (macOS): apps that take only the first character of a key event's text. Blender's event layer keeps one
+ * character per key event, so Unicode text posted in chunks lost all but the first character of each chunk.
+ */
+const ONE_CHARACTER_PER_KEY_APPS = new Set(['org.blenderfoundation.blender'])
+
+/** 7.8.1: the modifiers a click, drag or scroll may hold. */
+const POINTER_MODIFIERS = new Set(['shift', 'ctrl', 'alt', 'cmd'])
+
+/**
+ * 7.8.1: a pen's pressure along a stroke. `values` are spread evenly over the stroke, so one value is constant, two
+ * ramp, three taper, and as many as there are waypoints give one per waypoint (each segment has the same step count).
+ */
+export function pressureAt(values: readonly number[], t: number): number {
+  const position = Math.min(Math.max(t, 0), 1) * (values.length - 1)
+  const index = Math.floor(position)
+  if (index >= values.length - 1) return values[values.length - 1]
+  const ratio = position - index
+  return ratio === 0 ? values[index] : values[index] + (values[index + 1] - values[index]) * ratio
+}
+
 /** 7.7.0 (K1): tools that accept `verify: true` (capture the target before and after, and report the effect). */
 export const VERIFIABLE_TOOLS = new Set([
   'click', 'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'scroll', 'type', 'key',
@@ -304,8 +325,12 @@ export class InputHandler {
     args: Record<string, unknown>,
     route?: InputRoute,
   ): Promise<ToolResult> {
+    // 7.8.1: checked before anything moves, so a bad name changes nothing.
+    const modifiers = this.#modifiers(args)
+    const holdKeys = this.#heldKeys(args)
     const chosen = route ?? this.route(tool, args, this.#wouldDo(tool, { ...args, coordinate: [point.x, point.y] }))
     const resolved = this.#targets.resolve(args)
+    if (chosen.mode === 'pid' && (modifiers.length > 0 || holdKeys.length > 0)) this.#refuseHeldKeysForPid(tool)
     if (chosen.mode === 'pid') {
       let { x, y } = point
       if (chosen.windowRelative && !point.screen && chosen.bounds) { x += chosen.bounds.x; y += chosen.bounds.y }
@@ -322,9 +347,78 @@ export class InputHandler {
     await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
     this.#native.mouseMove(x, y)
     await this.#sleep(50)
-    this.#native.mouseClick(x, y, button, count)
+    await this.#withHeldKeys(holdKeys, async () => {
+      if (modifiers.length > 0) await this.#clickModified(x, y, button, count, modifiers)
+      else this.#native.mouseClick(x, y, button, count)
+    })
     this.#targets.trackClick(resolved)
-    return { ...ok(`Clicked (${x}, ${y})`), contract: { delivery: 'hid' } }
+    const held = [...modifiers, ...holdKeys]
+    return { ...ok(`Clicked (${x}, ${y})${held.length ? ` with ${held.join('+')}` : ''}`), contract: { delivery: 'hid' } }
+  }
+
+  /** 7.8.1: `modifiers`, checked against the schema's enum again (run_steps and the aliases reach here too). */
+  #modifiers(args: Record<string, unknown>): string[] {
+    const raw = args.modifiers
+    if (raw === undefined) return []
+    if (!Array.isArray(raw) || !raw.every(name => typeof name === 'string' && POINTER_MODIFIERS.has(name))) {
+      throw new Error('Invalid modifiers: expected a list of shift, ctrl, alt, cmd')
+    }
+    return [...new Set(raw as string[])]
+  }
+
+  /** 7.8.1: `hold_keys`, resolved to native names (unknown names are refused with the valid ones). */
+  #heldKeys(args: Record<string, unknown>): string[] {
+    const raw = args.hold_keys
+    if (raw === undefined) return []
+    if (!Array.isArray(raw) || !raw.every(key => typeof key === 'string')) throw new Error('Invalid hold_keys: expected string[]')
+    return normalizeHeldKeys(raw, this.#platform)
+  }
+
+  #refuseHeldKeysForPid(tool: string): never {
+    throw new StructuredToolError(`${tool} cannot hold keys with pid delivery`, {
+      error: 'pid_delivery_unsupported', tool,
+      remediation: ['modifiers and hold_keys go through the keyboard: use delivery "hid" with the target in front, after the person stops typing.'],
+    })
+  }
+
+  #missingNative(capability: string, remediation: string): never {
+    throw new StructuredToolError(`native capability missing: ${capability}`, {
+      error: 'native_capability_missing', capability,
+      remediation: [`${remediation} needs a native module built from this release; rebuild it (npm run build:native) or reinstall the package.`],
+    })
+  }
+
+  /**
+   * 7.8.1: run a pointer action with keys held down (Blender's blade while C is held, an annotation while D is held).
+   * The keys come up on every exit path; the native latch also releases them on Stop.
+   */
+  async #withHeldKeys<T>(keys: readonly string[], act: () => Promise<T>): Promise<T> {
+    if (keys.length === 0) return act()
+    if (!this.#native.keyDown || !this.#native.keyUp) this.#missingNative('keyDown/keyUp', 'hold_keys')
+    try { this.#native.keyDown([...keys]) } catch (error) { throw explainNativeKeyError(error) }
+    try {
+      await this.#sleep(30)
+      return await act()
+    } finally {
+      this.#native.keyUp([...keys])
+    }
+  }
+
+  /**
+   * 7.8.1: a click with modifiers. macOS presses them as keys around the click (Blender ignored flags alone); Windows
+   * and Linux press the real keys inside each press and release.
+   */
+  async #clickModified(x: number, y: number, button: string, count: number, modifiers: string[]): Promise<void> {
+    if (this.#native.mouseClickModified) {
+      this.#native.mouseClickModified(x, y, button, count, modifiers)
+      return
+    }
+    if (!this.#native.mousePress || !this.#native.mouseRelease) this.#missingNative('mousePress/mouseRelease', 'A click with modifiers')
+    for (let index = 0; index < count; index++) {
+      this.#native.mousePress(x, y, button, modifiers)
+      this.#native.mouseRelease(x, y, button, modifiers)
+      if (index < count - 1) await this.#sleep(30)
+    }
   }
 
   /**
@@ -481,6 +575,8 @@ export class InputHandler {
       const [x, y] = coordinate()
       const direction = string('direction')
       const amount = number('amount', 3)
+      const modifiers = this.#modifiers(args)
+      if (route.mode === 'pid' && modifiers.length > 0) this.#refuseHeldKeysForPid(tool)
       if (route.mode === 'pid') {
         if (!this.#native.mouseScrollToPid) throw new Error('This native module has no mouseScrollToPid; rebuild it')
         const sx = route.windowRelative && route.bounds ? route.bounds.x + x : x
@@ -497,9 +593,11 @@ export class InputHandler {
       await this.#sleep(15)
       const deltaX = typeof args.delta_x === 'number' ? args.delta_x : direction === 'left' ? -amount : direction === 'right' ? amount : 0
       const deltaY = typeof args.delta_y === 'number' ? args.delta_y : direction === 'up' ? -amount : direction === 'down' ? amount : 0
-      this.#native.mouseScroll(deltaY, deltaX)
+      if (modifiers.length === 0) this.#native.mouseScroll(deltaY, deltaX)
+      else if (this.#native.mouseScrollModified) this.#native.mouseScrollModified(deltaY, deltaX, modifiers)
+      else await this.#withHeldKeys(modifiers, async () => this.#native.mouseScroll(deltaY, deltaX))
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
-      return ok(`Scrolled ${direction} ${amount}`)
+      return ok(`Scrolled ${direction} ${amount}${modifiers.length ? ` with ${modifiers.join('+')}` : ''}`)
     }
 
     if (tool === 'type') {
@@ -519,8 +617,13 @@ export class InputHandler {
         await this.#sleep(30)
       }
       let summary = 'Typed'
-      if (args.mode === 'keys') summary = await this.#typeKeys(text, signal)
-      else if (text.length > 100 || text.includes('\n')) {
+      // 7.8.1: an app that reads one character per key event (Blender) kept only the first character of each text
+      // chunk ("Relax Edge Loops" arrived as "R"); short text goes to it as key events unless a mode was asked for.
+      const short = text.length <= 100 && !text.includes('\n')
+      if (args.mode === 'keys' || (args.mode === undefined && short && this.#readsOneCharacterPerKey(resolved))) {
+        summary = await this.#typeKeys(text, signal)
+        if (args.mode === undefined) summary += ' as key events (this app reads one character per key event)'
+      } else if (!short) {
         // 7.7.0 (K9): never paste over an image or files the person copied; type the text instead.
         let guarded = false
         try { guarded = this.#native.clipboardHasNonText?.() === true } catch { guarded = false }
@@ -626,8 +729,12 @@ export class InputHandler {
       const path = (Array.isArray(args.path) ? args.path : []) as [number, number][]
       if (path.length < 2) return this.#noCoordinates()
       const button = typeof args.button === 'string' ? args.button : 'left'
-      const modifiers = Array.isArray(args.modifiers) ? args.modifiers as string[] : []
+      const modifiers = this.#modifiers(args)
       const steps = typeof args.steps === 'number' ? args.steps : 8
+      // 7.8.1: held keys, keys pressed mid-drag and pen pressure, all checked before anything moves.
+      const holdKeys = this.#heldKeys(args)
+      const keyPresses = this.#dragKeyPresses(args.key_presses, path.length)
+      const pressure = this.#dragPressure(args.pressure)
       if (!this.#native.mousePress || !this.#native.mouseDragTo || !this.#native.mouseRelease) {
         return {
           content: [{ type: 'text', text: JSON.stringify({
@@ -642,36 +749,65 @@ export class InputHandler {
         }
       }
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      if (pressure && (this.#platform !== 'darwin' || !this.#native.mousePenEvent)) {
+        throw new StructuredToolError('pen pressure is unavailable here', {
+          error: 'pressure_unsupported', platform: this.#platform,
+          remediation: [this.#platform === 'darwin'
+            ? 'The native module predates pen pressure; rebuild it (npm run build:native) or reinstall the package.'
+            : 'Pen pressure is macOS only in this release; omit pressure for a mouse drag.'],
+        })
+      }
       await focus(resolved)
 
       const [startX, startY] = path[0]
+      const [endX, endY] = path[path.length - 1]
+      const total = (path.length - 1) * steps
+      const pen = pressure ? this.#native.mousePenEvent!.bind(this.#native) : undefined
+      const pressKeysAt = async (waypoint: number) => {
+        for (const press of keyPresses.filter(entry => entry.at === waypoint)) {
+          this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
+          try { this.#native.keyPress(press.combo) } catch (error) { throw explainNativeKeyError(error) }
+          await this.#sleep(40)
+        }
+      }
       this.#native.mouseMove(startX, startY)
       await this.#sleep(15)
-      this.#native.mousePress(startX, startY, button, modifiers)
-      try {
-        // Interpolate: applications that integrate incremental motion — 3D
-        // viewport orbit, canvas painting — ignore a single jump to the endpoint.
-        for (let segment = 1; segment < path.length; segment++) {
-          const [fromX, fromY] = path[segment - 1]
-          const [toX, toY] = path[segment]
-          for (let step = 1; step <= steps; step++) {
-            this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
-            const ratio = step / steps
-            this.#native.mouseDragTo(
-              Math.round(fromX + (toX - fromX) * ratio),
-              Math.round(fromY + (toY - fromY) * ratio),
-              button, modifiers,
-            )
-            await this.#sleep(8)
+      await this.#withHeldKeys(holdKeys, async () => {
+        if (pen) pen(startX, startY, button, modifiers, 0, pressureAt(pressure!, 0))
+        else this.#native.mousePress!(startX, startY, button, modifiers)
+        try {
+          await pressKeysAt(0)
+          // Interpolate: applications that integrate incremental motion — 3D
+          // viewport orbit, canvas painting — ignore a single jump to the endpoint.
+          for (let segment = 1; segment < path.length; segment++) {
+            const [fromX, fromY] = path[segment - 1]
+            const [toX, toY] = path[segment]
+            for (let step = 1; step <= steps; step++) {
+              this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
+              const ratio = step / steps
+              const x = Math.round(fromX + (toX - fromX) * ratio)
+              const y = Math.round(fromY + (toY - fromY) * ratio)
+              if (pen) pen(x, y, button, modifiers, 1, pressureAt(pressure!, ((segment - 1) * steps + step) / total))
+              else this.#native.mouseDragTo!(x, y, button, modifiers)
+              await this.#sleep(8)
+            }
+            await pressKeysAt(segment)
           }
+        } finally {
+          // Never leave a button or modifier stuck down, even on abort. A pen ends at full pressure: the app keeps the
+          // last pressure it saw, and the plain mouse should behave as it did before the stroke.
+          if (pen) pen(endX, endY, button, modifiers, 2, 1)
+          else this.#native.mouseRelease!(endX, endY, button, modifiers)
         }
-      } finally {
-        // Never leave a button or modifier stuck down, even on abort.
-        const [endX, endY] = path[path.length - 1]
-        this.#native.mouseRelease(endX, endY, button, modifiers)
-      }
+      })
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
-      return ok(`Dragged ${button}${modifiers.length ? ' with ' + modifiers.join('+') : ''} through ${path.length} waypoints`)
+      const notes = [
+        ...(modifiers.length ? [`with ${modifiers.join('+')}`] : []),
+        ...(holdKeys.length ? [`holding ${holdKeys.join('+')}`] : []),
+        ...(pressure ? [`as a pen at pressure ${pressure.join('→')}`] : []),
+        ...(keyPresses.length ? [`pressing ${keyPresses.map(entry => `${entry.key} at waypoint ${entry.at}`).join(', ')}`] : []),
+      ]
+      return ok(`Dragged ${button}${notes.length ? ' ' + notes.join(', ') : ''} through ${path.length} waypoints`)
     }
 
     if (tool === 'multi_select') {
@@ -776,6 +912,17 @@ export class InputHandler {
    * older native module, each character goes through `keyPress` with its US-ANSI
    * combo, and characters no key produces are sent as text.
    */
+  /** 7.8.1 (macOS): does the target read only the first character of a key event's text? */
+  #readsOneCharacterPerKey(resolved: ResolvedTarget): boolean {
+    if (this.#platform !== 'darwin') return false
+    let bundleId = resolved.bundleId
+    try {
+      if (!bundleId && resolved.windowId !== undefined) bundleId = this.#native.getWindow(resolved.windowId)?.bundleId ?? undefined
+      if (!bundleId) bundleId = this.#native.getFrontmostApp()?.bundleId
+    } catch { return false }
+    return bundleId !== undefined && ONE_CHARACTER_PER_KEY_APPS.has(bundleId)
+  }
+
   async #typeKeys(text: string, signal?: AbortSignal): Promise<string> {
     if (this.#native.typeKeys) {
       const counts = this.#native.typeKeys(text)
@@ -794,6 +941,32 @@ export class InputHandler {
       await this.#sleep(4)
     }
     return `Typed ${keys} key${keys === 1 ? '' : 's'}${unicode ? ` and ${unicode} character(s) as text` : ''} (layout: us_ansi)`
+  }
+
+  /** 7.8.1: `key_presses` of mouse_drag: each key resolved and its waypoint in range, before the drag starts. */
+  #dragKeyPresses(raw: unknown, waypoints: number): { at: number; key: string; combo: string }[] {
+    if (raw === undefined) return []
+    if (!Array.isArray(raw)) throw new Error('Invalid key_presses: expected [{at, key}]')
+    return raw.map((entry, index) => {
+      const at = (entry as { at?: unknown })?.at
+      const key = (entry as { key?: unknown })?.key
+      if (typeof at !== 'number' || !Number.isInteger(at) || at < 0 || at >= waypoints) {
+        throw new Error(`Invalid key_presses[${index}].at: expected a waypoint index from 0 to ${waypoints - 1}`)
+      }
+      if (typeof key !== 'string' || key.length === 0) throw new Error(`Invalid key_presses[${index}].key: expected a key name`)
+      return { at, key, combo: normalizeKeyCombo(key, this.#platform) }
+    })
+  }
+
+  /** 7.8.1: `pressure` of mouse_drag as a list of 0-1 values, or undefined for a mouse drag. */
+  #dragPressure(raw: unknown): number[] | undefined {
+    if (raw === undefined) return undefined
+    const values = typeof raw === 'number' ? [raw] : raw
+    if (!Array.isArray(values) || values.length === 0 || values.length > 64
+      || !values.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)) {
+      throw new Error('Invalid pressure: expected a number from 0 to 1, or a list of 1 to 64 of them')
+    }
+    return values as number[]
   }
 
   #validateCoordinates(x: number, y: number): void {

@@ -103,6 +103,15 @@ mod linux {
             m.insert(".", 60);
             m.insert("/", 61);
             m.insert("`", 49);
+            // 7.8.1: the numeric keypad (X keycodes, evdev KEY_KP* + 8).
+            for (name, code) in [
+                ("numpad0", 90), ("numpad1", 87), ("numpad2", 88), ("numpad3", 89), ("numpad4", 83),
+                ("numpad5", 84), ("numpad6", 85), ("numpad7", 79), ("numpad8", 80), ("numpad9", 81),
+                ("numpad_decimal", 91), ("numpad_multiply", 63), ("numpad_add", 86), ("numpad_divide", 106),
+                ("numpad_subtract", 82), ("numpad_enter", 104), ("numpad_equals", 125),
+            ] {
+                m.insert(name, code);
+            }
             m
         })
     }
@@ -494,8 +503,118 @@ mod macos {
             m.insert("`", 50);
             m.insert("grave", 50);
             m.insert("backtick", 50);
+            // 7.8.1: the numeric keypad (kVK_ANSI_Keypad*). Blender binds its views to it (numpad 1/3/7, 0 for the
+            // camera, the decimal key to frame the selection), and the main-row digits do something else there.
+            for (name, code) in [
+                ("numpad0", 82), ("numpad1", 83), ("numpad2", 84), ("numpad3", 85), ("numpad4", 86),
+                ("numpad5", 87), ("numpad6", 88), ("numpad7", 89), ("numpad8", 91), ("numpad9", 92),
+                ("numpad_decimal", 65), ("numpad_multiply", 67), ("numpad_add", 69), ("numpad_divide", 75),
+                ("numpad_enter", 76), ("numpad_subtract", 78), ("numpad_equals", 81),
+            ] {
+                m.insert(name, code);
+            }
             m
         })
+    }
+
+    /// The flags a real keypad key carries (NSEventModifierFlagNumericPad).
+    fn keypad_flag(code: CGKeyCode) -> CGEventFlags {
+        if is_keypad(code) { CGEventFlags::CGEventFlagNumericPad } else { CGEventFlags::CGEventFlagNull }
+    }
+
+    /// 7.8.1: modifier keys pressed as keys. A keyboard sends a flagsChanged event for each modifier before the key it
+    /// modifies; macOS posts one when a modifier's key code goes down. Apps that track modifiers from those events
+    /// rather than from the flags on a key or mouse event (Blender, SDL games) saw `shift+a` as a plain `a` and a
+    /// shift+middle drag as a plain one when only the flags were set. Dropping the guard releases every modifier it
+    /// pressed, in reverse order, on every exit path (a release is never refused by the latch).
+    struct ModifierKeys {
+        pressed: Vec<(CGKeyCode, CGEventFlags)>,
+        pid: Option<i32>,
+    }
+
+    impl ModifierKeys {
+        fn press(modifiers: &[(CGKeyCode, CGEventFlags)], pid: Option<i32>) -> napi::Result<Self> {
+            let mut guard = ModifierKeys { pressed: Vec::with_capacity(modifiers.len()), pid };
+            for &(code, flag) in modifiers {
+                crate::activity::ensure_not_emergency_stopped()?;
+                guard.pressed.push((code, flag));
+                let down = CGEvent::new_keyboard_event(source(), code, true)
+                    .map_err(|_| napi::Error::from_reason("Could not create key event"))?;
+                down.set_flags(guard.flags());
+                deliver(down, pid);
+            }
+            Ok(guard)
+        }
+
+        fn flags(&self) -> CGEventFlags {
+            self.pressed.iter().fold(CGEventFlags::CGEventFlagNull, |flags, (_, flag)| flags | *flag)
+        }
+    }
+
+    impl Drop for ModifierKeys {
+        fn drop(&mut self) {
+            while let Some((code, _)) = self.pressed.pop() {
+                if let Ok(up) = CGEvent::new_keyboard_event(source(), code, false) {
+                    // The flags of what is still held: none once the last modifier is up (7.7.0, C3).
+                    up.set_flags(self.flags());
+                    deliver(up, self.pid);
+                }
+            }
+        }
+    }
+
+    /// Modifier names (in order, without repeats) as key codes and flags; `meta` is the command key.
+    fn resolve_modifiers(names: &[String]) -> napi::Result<Vec<(CGKeyCode, CGEventFlags)>> {
+        let map = key_code_map();
+        let mut out: Vec<(CGKeyCode, CGEventFlags)> = Vec::new();
+        for name in names {
+            let lower = name.to_lowercase();
+            let lower = if lower == "meta" { "cmd".to_string() } else { lower };
+            match (modifier_flag(&lower), map.get(lower.as_str())) {
+                (Some(flag), Some(&code)) => {
+                    if !out.iter().any(|(held, _)| *held == code) { out.push((code, flag)); }
+                }
+                _ => return Err(napi::Error::from_reason(format!(
+                    "Invalid modifier: {name}, expected shift, ctrl, alt or cmd"
+                ))),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Press modifier keys for a pointer gesture that spans several calls (a drag's press and release). They are
+    /// recorded as held, so the emergency latch releases them too.
+    pub(crate) fn hold_modifier_keys(names: &[String]) -> napi::Result<()> {
+        let codes = resolve_modifiers(names)?;
+        crate::activity::ensure_not_emergency_stopped()?;
+        let mut held = held();
+        for (code, flag) in codes {
+            if held.iter().any(|(held_code, _)| *held_code == code) { continue; }
+            held.push((code, flag));
+            let down = CGEvent::new_keyboard_event(source(), code, true)
+                .map_err(|_| napi::Error::from_reason("Could not create key event"))?;
+            down.set_flags(held_flags(&held));
+            deliver(down, None);
+        }
+        Ok(())
+    }
+
+    /// Release modifier keys pressed by `hold_modifier_keys`, in reverse order. Never refused by the latch.
+    pub(crate) fn release_modifier_keys(names: &[String]) {
+        let Ok(codes) = resolve_modifiers(names) else { return };
+        let mut held = held();
+        for (code, _) in codes.into_iter().rev() {
+            if held.iter().any(|(held_code, _)| *held_code == code) { release(code, &mut held); }
+        }
+    }
+
+    /// Run `act` with the modifier keys down, released afterwards whatever `act` returns.
+    pub(crate) fn with_modifier_keys<T>(names: &[String], act: impl FnOnce(CGEventFlags) -> napi::Result<T>) -> napi::Result<T> {
+        let codes = resolve_modifiers(names)?;
+        let guard = ModifierKeys::press(&codes, None)?;
+        let result = act(guard.flags());
+        drop(guard);
+        result
     }
 
     fn modifier_flag(name: &str) -> Option<CGEventFlags> {
@@ -517,12 +636,14 @@ mod macos {
         let combo_lower = combo.to_lowercase();
         let parts: Vec<&str> = combo_lower.split('+').map(|s| s.trim()).collect();
 
-        let mut flags = CGEventFlags::empty();
+        let mut modifiers: Vec<(CGKeyCode, CGEventFlags)> = Vec::new();
         let mut main_key: Option<CGKeyCode> = None;
 
         for part in &parts {
             if let Some(flag) = modifier_flag(part) {
-                flags |= flag;
+                if let Some(&code) = map.get(part) {
+                    if !modifiers.iter().any(|(held, _)| *held == code) { modifiers.push((code, flag)); }
+                }
             } else if let Some(&code) = map.get(part) {
                 main_key = Some(code);
             }
@@ -531,20 +652,24 @@ mod macos {
         let code = main_key
             .ok_or_else(|| napi::Error::from_reason(format!("Unknown key in combo: {combo}")))?;
 
+        // 7.8.1: each modifier goes down as its own key before the main key and comes up after it, as on a keyboard
+        // (flags alone left Blender seeing `shift+a` as `a`). 7.7.0 (C3) still holds: the chord's last event, the final
+        // modifier's key-up, carries no flags, so nothing stays latched in the window server.
+        let guard = ModifierKeys::press(&modifiers, pid)?;
+        let flags = guard.flags() | keypad_flag(code);
         for i in 0..repeat {
             crate::activity::ensure_not_emergency_stopped()?;
             let down = CGEvent::new_keyboard_event(source(), code, true).unwrap();
             down.set_flags(flags);
             deliver(down, pid);
             let up = CGEvent::new_keyboard_event(source(), code, false).unwrap();
-            // 7.7.0 (C3): the last event of the chord carries no modifier flags. A flagged final key-up left Shift or
-            // Command latched in the window server's modifier state (the class Peekaboo #797 measured).
-            up.set_flags(if i == repeat - 1 { CGEventFlags::CGEventFlagNull } else { flags });
+            up.set_flags(if modifiers.is_empty() && i == repeat - 1 { keypad_flag(code) } else { flags });
             deliver(up, pid);
             if i < repeat - 1 {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
+        drop(guard);
         Ok(())
     }
 
@@ -1029,6 +1154,20 @@ mod win {
             m.insert(".", VK_OEM_PERIOD);
             m.insert("/", VK_OEM_2);
             m.insert("`", VK_OEM_3);
+            // 7.8.1: the numeric keypad (VK_NUMPAD0-9 and the operator keys). The keypad Enter is VK_RETURN, as Windows
+            // reports it without the extended flag; VK_OEM_NEC_EQUAL is the keypad equals where a keyboard has one.
+            for (i, name) in ["numpad0", "numpad1", "numpad2", "numpad3", "numpad4", "numpad5", "numpad6", "numpad7",
+                "numpad8", "numpad9"].into_iter().enumerate()
+            {
+                m.insert(name, VIRTUAL_KEY(VK_NUMPAD0.0 + i as u16));
+            }
+            m.insert("numpad_decimal", VK_DECIMAL);
+            m.insert("numpad_multiply", VK_MULTIPLY);
+            m.insert("numpad_add", VK_ADD);
+            m.insert("numpad_divide", VK_DIVIDE);
+            m.insert("numpad_subtract", VK_SUBTRACT);
+            m.insert("numpad_enter", VK_RETURN);
+            m.insert("numpad_equals", VIRTUAL_KEY(0x92));
             m
         })
     }
@@ -1263,6 +1402,10 @@ pub(crate) fn release_agent_held_keys() {
 
 #[cfg(target_os = "windows")]
 pub(crate) use win::send_inputs;
+
+/// 7.8.1 (macOS): modifier keys pressed as keys around a pointer gesture (see `ModifierKeys`).
+#[cfg(target_os = "macos")]
+pub(crate) use macos::{hold_modifier_keys, release_modifier_keys, with_modifier_keys};
 
 #[cfg(test)]
 mod tests {
