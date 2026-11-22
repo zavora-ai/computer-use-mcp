@@ -92,6 +92,24 @@ export function registerPrompts(server: McpServer, session?: Session): void {
   )
 
   server.registerPrompt(
+    'guide-me',
+    {
+      title: 'Guide me through a task',
+      description: 'Point at each control and explain, while the person does the task themselves; nothing is clicked or typed for them.',
+      argsSchema: {
+        task: z.string().describe('What the person wants to learn to do'),
+        app: appArgument.optional().describe('Optional target app id'),
+      },
+    },
+    async (args) => ({
+      messages: [{
+        role: 'user' as const,
+        content: { type: 'text' as const, text: guidePromptText(args.task, args.app) },
+      }],
+    }),
+  )
+
+  server.registerPrompt(
     'safe-desktop-task',
     {
       title: 'Safe desktop task',
@@ -118,6 +136,22 @@ export function registerPrompts(server: McpServer, session?: Session): void {
       }],
     }),
   )
+}
+
+/** 8.0 (P2-15): guide mode as a prompt, for hosts whose profile still lists the input tools. */
+export function guidePromptText(task: string, app?: string): string {
+  return [
+    `Show me how to do this myself, step by step: ${task}`,
+    app ? `The app: ${app}.` : '',
+    'Do not click, type or change anything for me; only observe and point.',
+    'For each step:',
+    '1. Find the control: read_window_text (macOS) or screenshot/zoom.',
+    '2. Point at it: agent_pointer {action: "move", text or coordinate, label: what to do there}.',
+    '3. Tell me in one sentence what to do and why.',
+    '4. Wait for me to do it (wait_for_text, wait_for_stable or wait_for_window), then look before the next step.',
+    'Read the app\'s own labels off the screen rather than from memory, and say so if the screen does not match what you expected.',
+    'When we are done, agent_pointer {action: "hide"}.',
+  ].filter(Boolean).join('\n')
 }
 
 async function completeApps(session: Session | undefined, value: string): Promise<string[]> {

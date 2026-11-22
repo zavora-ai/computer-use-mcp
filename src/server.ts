@@ -262,6 +262,11 @@ export function createComputerUseServer(opts: ServerOptions = {}): McpServer {
     getClientRoots: () => mcp.clientRoots(),
     // 7.7.0 (K2): run_steps validates each step exactly as a direct call; the registry is built just below.
     validateArguments: (tool, args) => registry.validateArguments(tool, args),
+    ...(opts.authHandoff !== undefined ? { authHandoff: opts.authHandoff } : {}),
+    ...(opts.pointerMotion !== undefined ? { pointerMotion: opts.pointerMotion } : {}),
+    ...(opts.handOffPollMs !== undefined ? { handOffPollMs: opts.handOffPollMs } : {}),
+    // A host that shows its own pause and stop (or a test) drives the session's control state.
+    ...(opts.operatorControl ? { operatorControl: opts.operatorControl } : {}),
   })
 
   const registry: ToolRegistry = new ToolRegistry({

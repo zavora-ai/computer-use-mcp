@@ -27,10 +27,14 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { NativeModule } from '../native.js'
 import { compileSwiftHelper, defaultHelperCacheDir } from './macos-helper.js'
+import { StructuredToolError } from './errors.js'
 
 export type ControlState = 'running' | 'paused' | 'stopped'
 /** `takeover` (7.7.0, K5): the person used the mouse or keyboard while the agent was acting; it resumes when they stop. */
-export type ControlReason = 'person' | 'host' | 'emergency_stop' | 'session_closed' | 'takeover'
+/** `handoff` (8.0): the agent handed the desktop to the person (a sign-in, a 2FA code); it resumes when they say so. */
+export type ControlReason = 'person' | 'host' | 'emergency_stop' | 'session_closed' | 'takeover' | 'handoff'
+/** 8.0: what the person was asked to do, and whether the server saw it (a sign-in screen) or the agent asked. */
+export interface ControlHandoff { kind: string; message: string; since: number; detected: boolean }
 export type ControlWaiting = 'user_active' | 'approval' | null
 
 export interface ControlAction {
@@ -57,6 +61,8 @@ export interface CardFrame {
   platform: NodeJS.Platform
   /** 7.8: the live watcher is looking at this target (cards that do not know the field ignore it). */
   watching?: { target: string; since: number } | null
+  /** 8.0: the person's turn: what they were asked to do (cards that do not know the field show "paused"). */
+  handoff?: { kind: string; message: string } | null
 }
 
 export interface ControlStatus extends Record<string, unknown> {
@@ -161,6 +167,8 @@ export class OperatorControl {
   #takeoverBaseline: { movement: number; keys: number; buttons: number } | undefined
   #resumeTimer: ReturnType<typeof setInterval> | undefined
   #watcher: { close(): void } | undefined
+  #dodgeSeq = 0
+  #handoff: ControlHandoff | null = null
 
   constructor(options: {
     native?: Partial<Pick<NativeModule, 'triggerNativeEmergencyStop' | 'isNativeEmergencyStopActive'>>
@@ -208,6 +216,7 @@ export class OperatorControl {
       lastRefused: this.#lastRefused,
       waiting: this.#waiting,
       watching: this.#watching ? { target: this.#watching.target, since: new Date(this.#watching.since).toISOString() } : null,
+      handoff: this.#handoff ? { kind: this.#handoff.kind, message: this.#handoff.message, detected: this.#handoff.detected, since: new Date(this.#handoff.since).toISOString() } : null,
       takeover: this.#takeover ? {
         enabled: true,
         movement: this.#takeover.movement ?? TAKEOVER_MOVEMENT,
@@ -235,6 +244,57 @@ export class OperatorControl {
     return { x: frame.x! - pad, y: frame.y! - pad, width: frame.width! + 2 * pad, height: frame.height! + 2 * pad }
   }
 
+  /**
+   * 7.8.1: where the card is when captures cannot see it (macOS). The agent never sees this card, so a click aimed at
+   * the app it can see would land on the card instead when the two overlap: the card sits at the top right of the
+   * screen, over a full-screen app's header, its navigation gizmo and the first outliner rows in Blender.
+   */
+  hiddenCardFrame(): CardRect | undefined {
+    if (this.#closed || !this.#presenter || this.#presenter.visibleInCaptures || !this.#directory) return undefined
+    if (!this.#launched && !this.#launching) return undefined
+    let card: { frame?: Partial<CardRect>; pid?: unknown }
+    try { card = JSON.parse(readFileSync(join(this.#directory, 'card.json'), 'utf8')) as typeof card } catch { return undefined }
+    if (typeof card.pid === 'number' && !processAlive(card.pid)) return undefined
+    const frame = card.frame
+    if (!frame || ![frame.x, frame.y, frame.width, frame.height].every(value => typeof value === 'number' && Number.isFinite(value))) return undefined
+    return { x: frame.x!, y: frame.y!, width: frame.width!, height: frame.height! }
+  }
+
+  /**
+   * 7.8.1: before pointer input lands on any of these points, move a capture-invisible card off them. The card reads
+   * `dodge.json` and moves to the first screen corner that holds none of the points; this waits until `card.json`
+   * says it has moved. A card that does not move refuses the action: pressing it could pause or stop the agent.
+   */
+  async clearOfCard(points: ReadonlyArray<readonly [number, number]>, timeoutMs = 1500): Promise<void> {
+    if (points.length === 0) return
+    const pad = 6
+    const covered = (frame: CardRect) => points.some(([x, y]) =>
+      x >= frame.x - pad && y >= frame.y - pad && x < frame.x + frame.width + pad && y < frame.y + frame.height + pad)
+    let frame = this.hiddenCardFrame()
+    if (!frame || !covered(frame) || !this.#directory) return
+    const seq = ++this.#dodgeSeq
+    const target = join(this.#directory, 'dodge.json')
+    const temporary = `${target}.${process.pid}.tmp`
+    try {
+      writeFileSync(temporary, JSON.stringify({ seq, avoid: points.map(([x, y]) => [x, y]) }), { mode: 0o600 })
+      renameSync(temporary, target)
+    } catch { return }
+    const deadline = this.#now() + timeoutMs
+    while (this.#now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      frame = this.hiddenCardFrame()
+      if (!frame || !covered(frame)) return
+    }
+    const [x, y] = points.find(([px, py]) => frame && px >= frame.x - pad && py >= frame.y - pad
+      && px < frame.x + frame.width + pad && py < frame.y + frame.height + pad) ?? points[0]
+    throw new StructuredToolError(`(${x}, ${y}) is under the desktop status card, which did not move out of the way`, {
+      error: 'status_card_protected',
+      coordinate: [x, y],
+      card: frame,
+      message: 'That point is under the status card the person uses to pause or stop the agent. The card is not in captures and did not move aside, so the action was not sent.',
+    })
+  }
+
   /** The signal a mutating dispatch should run under: aborted by Pause and Stop. */
   signal(parent?: AbortSignal): AbortSignal {
     this.#refresh()
@@ -248,6 +308,18 @@ export class OperatorControl {
     const at = new Date(this.#now()).toISOString()
     this.#lastRefused = { tool, at }
     this.#publish()
+    if (this.#state === 'paused' && this.#reason === 'handoff' && this.#handoff) {
+      return {
+        error: 'handed_off',
+        status: this.#state,
+        tool,
+        since: new Date(this.#since).toISOString(),
+        reason: this.#reason,
+        kind: this.#handoff.kind,
+        asked: this.#handoff.message,
+        hint: 'The person has the desktop to do something only they should do. Wait until control_status says running (they press Resume, or tell you and you call hand_off done), then look before acting.',
+      }
+    }
     if (this.#state === 'paused' && this.#reason === 'takeover') {
       return {
         error: 'taken_over',
@@ -360,6 +432,27 @@ export class OperatorControl {
     this.#publish()
   }
 
+  /**
+   * 8.0: hand the desktop to the person. Mutations are refused (`handed_off`) and the card says what they were asked to
+   * do, until they press Resume (or the host or agent calls `endHandOff` once they said it is done). A person's own
+   * pause stays a pause; the request is shown on it.
+   */
+  handOff(request: { kind: string; message: string; detected?: boolean }): boolean {
+    if (this.#closed || this.#state === 'stopped') return false
+    this.#handoff = { kind: request.kind, message: request.message.slice(0, 200), since: this.#now(), detected: request.detected === true }
+    this.#ensurePresenter()
+    if (this.#state === 'running') this.#transition('paused', 'handoff')
+    else this.#publish()
+    return true
+  }
+
+  /** 8.0: the person said the handed-off task is done. Resumes only a hand-off, never a person's own pause. */
+  endHandOff(): boolean {
+    if (this.#closed || this.#state !== 'paused' || this.#reason !== 'handoff') return false
+    this.#transition('running', 'host')
+    return true
+  }
+
   pause(reason: ControlReason = 'host'): void {
     if (this.#closed || this.#state !== 'running') return
     this.#transition('paused', reason)
@@ -396,6 +489,7 @@ export class OperatorControl {
     this.#state = state
     this.#reason = reason
     this.#since = this.#now()
+    if (state !== 'paused') this.#handoff = null
     if (state === 'running') this.#controller = new AbortController()
     else if (!this.#controller.signal.aborted) this.#controller.abort(new Error(`Desktop control ${state} by ${reason}`))
     this.#lastControl = state
@@ -465,6 +559,7 @@ export class OperatorControl {
       chord: this.#chord,
       platform: this.#platform,
       watching: this.#watching,
+      handoff: this.#handoff ? { kind: this.#handoff.kind, message: this.#handoff.message } : null,
     }
     const payload = JSON.stringify(frame)
     if (payload === this.#lastFrame) return
@@ -490,7 +585,7 @@ export function describeAction(tool: string, args: Record<string, unknown>, reso
     case 'scroll': detail = `${String(args.direction ?? '')} ${point ?? ''}`.trim(); break
     case 'type': detail = typeof args.text === 'string' ? `${args.text.length} chars` : undefined; break
     case 'key': detail = text(args.text, 24); break
-    case 'hold_key': detail = Array.isArray(args.keys) ? args.keys.join('+') : undefined; break
+    case 'hold_key': detail = [typeof args.action === 'string' && args.action !== 'hold' ? args.action : undefined, Array.isArray(args.keys) ? args.keys.join('+') : undefined].filter(Boolean).join(' ') || undefined; break
     case 'click_text': case 'wait_for_text': detail = text(args.text) ? `"${text(args.text)}"` : undefined; break
     case 'click_element': case 'press_button': case 'set_value': detail = text(args.label); break
     case 'select_menu_item': detail = [args.menu, args.submenu, args.item].filter(Boolean).join(' › '); break
@@ -502,6 +597,12 @@ export function describeAction(tool: string, args: Record<string, unknown>, reso
     case 'activate_window': detail = args.window_id !== undefined ? `window ${String(args.window_id)}` : undefined; break
     case 'mouse_drag': case 'left_click_drag': detail = 'drag'; break
     case 'screenshot': detail = args.full_screen === true ? 'full screen' : undefined; break
+    // 8.0: guide mode, where the label tells the person what to do at the pointer.
+    case 'agent_pointer':
+      if (typeof args.label === 'string' && args.label) {
+        return { tool, label: `Look here: ${text(args.label, 60)}`, ...(resolved.app ? { app: resolved.app } : {}), ...(resolved.window ? { window: resolved.window } : {}) }
+      }
+      detail = text(args.text) ? `"${text(args.text)}"` : point; break
     default: detail = undefined
   }
   return { tool, label: detail ? `${tool} ${detail}` : tool, ...(resolved.app ? { app: resolved.app } : {}), ...(resolved.window ? { window: resolved.window } : {}) }

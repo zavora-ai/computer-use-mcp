@@ -239,7 +239,7 @@ export const REFUSALS: Readonly<Record<string, RefusalAdvice>> = {
     next: () => ({ tool: 'doctor', arguments: { include_remediation: true } }),
   },
   accessibility_permission_denied: {
-    hint: 'The host app lacks the Accessibility permission (Device Control and Data Access on macOS 27), so macOS discards its input. The person grants it in System Settings, then restarts the host.',
+    hint: 'The host lacks the input permission (Accessibility; on macOS 27.3, System & App Protection Override, per app), so macOS discards its input. The person grants it, then restarts the host; doctor says where.',
     next: () => ({ tool: 'doctor', arguments: { include_remediation: true } }),
   },
   helper_busy: {
@@ -266,6 +266,24 @@ export const REFUSALS: Readonly<Record<string, RefusalAdvice>> = {
   step_failed: {
     hint: 'A run_steps step failed; the steps before it ran. Look at the current state, then continue from the failed step.',
     next: (args) => ({ tool: 'screenshot', arguments: targetArgs(args) }),
+  },
+  // 8.0: the person's turn.
+  sign_in_required: {
+    hint: 'A sign-in or verification screen is the person\'s to complete; they were asked on the status card. Tell them, then wait until control_status says running and look before going on.',
+    next: () => controlStatus,
+  },
+  handed_off: {
+    hint: 'The person has the desktop to finish something only they should do. Wait until control_status says running, then look before acting.',
+    next: () => controlStatus,
+  },
+  // 8.0 (P2-11): replaying recorded steps.
+  expect_failed: {
+    hint: 'A run_steps step ran but its expect did not hold; the steps before it ran. Look at the current state, fix that one step, then continue from the next.',
+    next: (args) => ({ tool: 'screenshot', arguments: targetArgs(args) }),
+  },
+  frame_changed: {
+    hint: 'No step ran: the window is not the size the steps were recorded at. Resize it back, or record the steps again at this size.',
+    next: () => ({ tool: 'get_target', arguments: {} }),
   },
   aborted: {
     hint: 'The call was cancelled before it finished (the person paused or stopped, or the host cancelled). Look before retrying.',

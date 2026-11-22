@@ -21,6 +21,10 @@ test('AGENTS.md states the tool counts by profile for every platform', () => {
   assert.ok(agents.includes(`\`COMPUTER_USE_PROFILE=full\` lists ${full} tools`))
   assert.ok(agents.includes(`on macOS ${desktop} tools against ${full} for \`full\``))
   assert.equal(count('win32', 'desktop'), count('linux', 'desktop'), 'the docs say Windows and Linux list the same desktop count')
+  // 8.0: the read-only guide profile sits outside the nesting
+  assert.equal(count('win32', 'guide'), count('linux', 'guide'))
+  assert.ok(agents.includes(`the read-only \`guide\` profile lists ${count('darwin', 'guide')} on macOS and ${count('win32', 'guide')} on Windows and Linux`))
+  assert.ok(agents.includes(`(${count('darwin', 'guide')} tools on macOS)`), 'the guide section states its count')
 })
 
 test('the README and the computer-use skill state the same counts', () => {

@@ -140,15 +140,17 @@ prompts are normal setup requirements. Downloads is not guaranteed to bypass tho
 | Discover applications | Find installed and running apps, identify their targets, and choose an automation approach. |
 | Read the interface | Capture a window, zoom into a region, inspect accessibility controls and find a button or field; read a window's text by on-device OCR when an app draws its own UI (macOS); wait for a window, for text, or for the screen to settle instead of polling screenshots. |
 | Operate applications | Click controls (`click` with button and count), fill forms, select menus, type text, drag paths and use keyboard shortcuts; set a session target once instead of naming the window on every call; run a known sequence in one call (`run_steps`). Every action says whether it was verified, and every refusal names a safe next call. |
+| Record and replay | `export_steps` turns the actions that worked into `run_steps` batches with a check on each step, so a repeat runs without a model and stops where the screen differs. Measured on macOS: a Calculator task the model did in 25.1 s with 10 model calls replayed in 3.0 s with none ([`docs/EFFICIENCY.md`](docs/EFFICIENCY.md)). |
 | Use app scripting | AppleScript/JXA on macOS, PowerShell on Windows, and bash or PowerShell on Linux. |
 | Manage desktop work | Target individual windows, switch focus, read/write the clipboard and inspect displays. |
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
 | Stay in control | A desktop status card (on by default on macOS and Windows; `COMPUTER_USE_STATUS_CARD=true` on Linux) shows what the agent is doing with Pause and Stop, and `ctrl+alt+escape` stops it. Moving the mouse or typing pauses the agent until you stop. A locked screen is refused by name, and on macOS and Windows the display stays awake while the agent works. Neither the card nor the agent's pointer appears in its screenshots (on Linux the card is painted out of them, and it reserves a strip of the desktop instead of floating on top). |
 
-The default profile, **`desktop`**, exposes 37 tools on macOS: observation,
+The default profile, **`desktop`**, exposes 39 tools on macOS: observation,
 coordinates, OCR for apps that draw their own UI, waits and the session target.
-Set `COMPUTER_USE_PROFILE=full` for every tool (78 on macOS), or `core`, `ax`,
-`scripting` and `windows-admin` for other bounds. Tools that don't exist on your
+Set `COMPUTER_USE_PROFILE=full` for every tool (80 on macOS), or `core`, `ax`,
+`scripting` and `windows-admin` for other bounds, or `guide` for a read-only profile that points and
+explains while the person does the task. Tools that don't exist on your
 platform are not listed. Optional host services add their own tools. The server's
 instructions to the agent are generated for your platform and profile, so they only
 name tools that are there.

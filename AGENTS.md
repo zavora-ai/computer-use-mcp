@@ -9,17 +9,19 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 - `skills/computer-use-recovery` — FocusFailure recovery
 - `skills/computer-use-windows-admin` — filesystem / registry / process
 - `skills/blender-agent` — Blender through its own MCP, this server only for what has no API
+- `skills/blender-direct` — Blender 5.3 with this server's mouse, keyboard and OCR alone, no Blender MCP
 - `skills/analytics-agent` — answer a business question from the organisation's own dashboards, citing what was read
 
-**MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`  
-**Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools and `agent_pointer`; `full` lists everything)
+**MCP prompts:** `diagnose-desktop`, `fill-form`, `script-first`, `safe-desktop-task`, `guide-me`  
+**Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full|guide` (default `desktop` since 7.6: core plus the OCR and wait tools and `agent_pointer`; `full` lists everything; `guide` (8.0) observes and points, and acts on nothing)
 
 **Current surface (7.7.0):**
-- **Default list.** On macOS the default `desktop` profile lists 37 tools and 44,324 bytes on the wire (about 11k tokens);
-  `COMPUTER_USE_PROFILE=full` lists 78 tools and 82,698 bytes (112,727 before 7.6). 7.7.0 added `run_steps` and lists
+- **Default list.** On macOS the default `desktop` profile lists 39 tools and 47,912 bytes on the wire (about 12k tokens);
+  `COMPUTER_USE_PROFILE=full` lists 80 tools and 87,037 bytes (112,727 before 7.6). 7.7.0 added `run_steps` and lists
   the click aliases (`left_click`, `double_click` and the rest) only in `full`; they stay callable in every profile.
-  Tool counts by profile on macOS: core 33, desktop 37, scripting 40, windows-admin 47, ax 54, full 78
-  (Windows 31/33/36/45/50/76, Linux 31/33/36/37/50/68). A test derives these from the catalog and checks this file, the
+  Tool counts by profile on macOS: core 34, desktop 39, scripting 42, windows-admin 49, ax 56, full 80
+  (Windows 32/35/38/47/52/78, Linux 32/35/38/39/52/70); the read-only `guide` profile lists 26 on macOS and 23 on Windows
+  and Linux. A test derives these from the catalog and checks this file, the
   README and the computer-use skill. Byte budgets are under test (`desktop` 48,000, `full` 88,000).
 - **Only tools that exist here are listed.** The catalog gives each tool `platforms` and a `job` (`observe`, `act`,
   `semantic`, `script`, `admin`, `browser`, `spaces`, `meta`). `registry` and `notification` are Windows-only;
@@ -30,6 +32,20 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
   `left_click`, `right_click`, `middle_click`, `double_click` and `triple_click` remain callable in every profile as thin
   aliases of it (listed only in `full` since 7.7); they still accept `target_app`, `target_window_id`, `delivery` and
   `force`. Examples here use `click`.
+- **Modifiers, held keys and a pen (7.8.1).** `click` and `scroll` take `modifiers` (shift, ctrl, alt, cmd); `click` and
+  `mouse_drag` take `hold_keys` (any keys held down for the gesture, such as Blender's C for a blade); `mouse_drag`
+  takes `key_presses` (`[{at, key}]`, a key pressed once the drag reaches waypoint `at`, button still down) and, on
+  macOS, `pressure` (a pen: a number, or a list spread along the stroke; the stroke ends at full pressure). On macOS
+  every modifier now goes down as its own key before the key, click or drag it modifies and comes up after it, as on a
+  keyboard: apps that track modifiers from those events (Blender, SDL games) took `shift+a` for `a` and a shift+middle
+  drag for a plain one when only the flags were set. The numeric keypad has names on every platform (`numpad0` to
+  `numpad9`, `numpad_decimal`, `numpad_enter`, `numpad_add` and the other operators; `kp1` and `numpad.` work too).
+  `type` sends short text to Blender as key events, because Blender keeps only the first character of a pasted chunk.
+  `hold_key {action: "down"}` keeps keys held across calls until `{action: "up"}` or `{action: "release"}` (they come up
+  by themselves after 60 s, on Pause, Stop or take-over, and when the session ends); a modifier held that way marks the
+  pointer events on macOS. Every `screenshot` and `zoom` reports where the pointer is (screen and image), and
+  `include_pointer: true` draws it (macOS: the real cursor). The status card moves to a clear corner before the agent
+  clicks under it (macOS and Windows), since captures cannot see it.
 - **Every action says what happened (7.7).** Each action's result carries `effect` (`verified`, `changed`,
   `no_visible_change`, `unverified`), `route` and, for input, `delivery` (`hid` or `pid`). Every refusal and every
   unverified result adds a `hint` and a `next_call`: one read-only call this session can make as is. `verify: true` on
@@ -39,6 +55,23 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
   focused once, stopped at the first failing step (the rest reported not run), one optional capture at the end. Steps
   are input, accessibility actions, activation, `write_clipboard` and the waits; scripts and admin tools keep their own
   call.
+- **Record and replay (8.0).** `export_steps` returns the actions that worked as `run_steps` batches with an `expect` on
+  each step; a replay stops at the first step whose `expect` does not hold. `export_steps {action: "start"}` checks each
+  action while recording (captured before and after, the text under a click read first). See *Record once, replay with
+  a check on every step* below.
+- **Sign-in and 2FA are the person's (8.0).** Typing into a sign-in or verification screen returns `sign_in_required`
+  and hands the desktop to the person until they press Resume; `hand_off` asks them for anything else only they should
+  do. `COMPUTER_USE_AUTH_HANDOFF=off` lifts the check. See *Hand-off: the person's turn* below.
+- **Guide mode (8.0).** `COMPUTER_USE_PROFILE=guide` and the `guide-me` prompt: the agent points with `agent_pointer`
+  (`text` finds a label by OCR, `label` tells the person what to do on the status card) and explains, and the person
+  does the task. See *Guide mode: show the person, do not act* below.
+- **A pointer that travels (8.0).** `mouse_move {path, duration_ms?, modifiers?, hold_keys?}` moves through waypoints
+  with no button held (a hover with Shift down); `coordinate` with `duration_ms` travels there instead of jumping.
+  `COMPUTER_USE_POINTER_MOTION=glide` makes clicks, drags and scrolls travel from where the pointer is, so a person or a
+  screen recording can follow it. `run_steps` steps report `at_ms` and `ms`, and `export_steps` `offsets_ms`.
+- **Screen content is untrusted (8.0).** OCR results carry an `untrusted` field, accessibility reads add a second text
+  block saying so, and every capture says its image is data, never instructions. `doctor` checks that the native addon
+  matches this release (`native_addon`) and, on macOS 27.3, names System & App Protection Override.
 - **Session target.** `set_target {app | window_id | title | clear}` and `get_target` make the target explicit, so input and
   capture tools can omit targeting; `screenshot full_screen: true` captures the whole screen even when a target is set.
 - **Waits.** `wait_for_window`, `wait_for_text` (OCR: text appears, or `gone: true`) and `wait_for_stable` (the window
@@ -93,6 +126,32 @@ chars in Safari · Login"; typed text is never shown), the last few actions with
   `status_card_protected`, and its buttons are kept off the accessibility bus. Checked on GNOME 46 Wayland, xfwm4 and
   Openbox. It stays opt-in because it takes a strip of the desktop from the person's windows.
 - `doctor` reports `status_card`. Hosts embedding the server can drive the same state through `SessionOptions.operatorControl`.
+
+### Hand-off: the person's turn (8.0)
+
+A password or a one-time code is the person's to type. Before `type`, `set_value`, `fill_form`, `multi_edit`, a paste
+(`cmd+v`, `ctrl+v`) or a single-character `key`, the server looks for a sign-in or verification screen:
+
+1. The focused field: one the accessibility tree marks protected (a password field) is a wall, as is one labelled as a
+   code or password field. A plain text field it knows (an address bar) is not, and the check stops there.
+2. The window's title: "Sign in", "Log in", "Verification", "Two-factor" and the like.
+3. In a browser (Safari, Chrome, Firefox, Edge, Arc, Brave and others), whose page fields are often not in the tree,
+   the window's text by OCR (macOS): a code prompt, or a password field beside a sign-in heading. Kept 3 s per window.
+
+On a wall the call returns `sign_in_required` with `kind` (`sign_in` or `verification`) and `seen` (what gave it away),
+and the desktop is handed to the person: the card turns orange and says "Your turn" with what to do, and every mutating
+call returns `handed_off` until they press **Resume**, or until the window closes or moves on to a title (and, in a
+browser, page text) that is no wall. Observation keeps working, so the agent can tell them and wait.
+
+`hand_off {message, wait_ms?}` does the same at the agent's request, for a CAPTCHA, a payment, a consent or anything
+else only the person should do; `wait_ms` waits for Resume and says whether it came. `done_when: "window_gone"` (with
+`target_app`) ends it when that window closes, and `done_when: "text_gone"` with `text` when that text leaves it (OCR,
+macOS); the condition must hold on two polls in a row, and a person's own pause is never ended by it. With no card
+(Linux by default, or `COMPUTER_USE_STATUS_CARD=false`) the person says so in the conversation and the agent calls
+`hand_off {action: "done"}`; typing into the same wall is refused again, so this cannot skip the check.
+
+`COMPUTER_USE_AUTH_HANDOFF=off` (`authHandoff: false` for an embedding host) lifts the check, for an operator whose agent
+must sign in, such as a test account in a recorded tutorial. No tool argument lifts it.
 
 7.7 adds the rest of a person's control, on by default:
 
@@ -174,7 +233,7 @@ constant time.
 
 | Variable | Effect |
 |---|---|
-| `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6; on macOS 37 tools against 78 for `full`). Bounds the maximum exposed tool surface. Profiles nest: core, then desktop, then ax, scripting or windows-admin, then full. |
+| `COMPUTER_USE_PROFILE` | `core \| desktop \| ax \| scripting \| windows-admin \| full` (default `desktop` since 7.6; on macOS 39 tools against 80 for `full`). Bounds the maximum exposed tool surface. Profiles nest: core, then desktop, then ax, scripting or windows-admin, then full. |
 | `COMPUTER_USE_ACTIVE_PROFILE` | Starting profile within that bound; may be narrowed at runtime but never widened past `COMPUTER_USE_PROFILE`. |
 | `COMPUTER_USE_NATIVE_PATH` | Override native `.node` resolution (else: the platform package npm installed, `@zavora-ai/computer-use-mcp-<platform>-<arch>`, then a checkout's build in the package root; since 7.7.0 the npm package carries no binary of its own). |
 | `COMPUTER_USE_ADVERTISE_APPROVAL_TOKEN=true` | v7.6: advertise `approval_token` on every mutating tool's schema again, as before 7.6 (off by default; the token is accepted in `_meta` either way). |
@@ -186,6 +245,8 @@ constant time.
 | `COMPUTER_USE_PROVIDER`, `COMPUTER_USE_WIDTH`, `COMPUTER_USE_QUALITY`, `COMPUTER_USE_VISION` | Screenshot defaults: provider preset, width, JPEG quality (`0` = PNG), and whether vision is enabled. |
 | `COMPUTER_USE_STATUS_CARD` | The desktop status card (macOS, Windows, Linux): what the agent is doing, Pause/Resume, Stop. 7.7: on by default on macOS and Windows (`false` turns it off); opt-in (`true`) on Linux. The card never appears in screenshots (on Linux it is painted out) and closes when the server exits. |
 | `COMPUTER_USE_EMERGENCY_CHORD` | 7.7: the chord that stops the agent (default `ctrl+alt+escape` on macOS and Windows); `off` disarms it. |
+| `COMPUTER_USE_AUTH_HANDOFF` | 8.0: `off` lets the agent type into sign-in and verification screens (a test account in a recorded tutorial). By default such typing returns `sign_in_required` and hands the desktop to the person until they press Resume or the sign-in window moves on. |
+| `COMPUTER_USE_POINTER_MOTION` | 8.0: `glide` makes clicks, `click_text`, drags, scrolls and button presses travel from where the pointer is (eased, 1.5 px per ms, 120 to 600 ms) instead of jumping, for a person watching or a screen recording; `pointerMotion` for an embedding host. Default `jump`. |
 | `COMPUTER_USE_TAKEOVER` | 7.7: `false` stops deliberate physical input from pausing the agent (`taken_over`). On by default. |
 | `COMPUTER_USE_KEEP_AWAKE` | 7.7: `false` stops the server keeping the display awake while an agent works. |
 | `COMPUTER_USE_HELPER_SERVE` | 7.7 (macOS): `false` starts the capture helper once per call instead of keeping one running. |
@@ -338,7 +399,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createComputerUseServer } from '@zavora-ai/computer-use-mcp'
 import { connectInProcess } from '@zavora-ai/computer-use-mcp/client'
 
-// Start the MCP server in-process. The default profile is `desktop` (37 tools on macOS, about 11k tokens of
+// Start the MCP server in-process. The default profile is `desktop` (39 tools on macOS, about 12k tokens of
 // schemas); pass createComputerUseServer({ profile: 'full' }) for every tool.
 const server = createComputerUseServer()
 const mcpClient = await connectInProcess(server)
@@ -535,7 +596,8 @@ nodes — the window, its three title-bar buttons, a group and the title text �
 painted in OpenGL. Its native macOS menu bar carries only Apple, Blender and
 Window. `discover_applications` reports `scriptable: false, accessible: false`.
 
-For these, every action is a coordinate or a keystroke read from pixels. On macOS,
+For these, every action is a coordinate or a keystroke read from pixels (`skills/blender-direct` is a worked route
+through Blender 5.3, every gesture checked against it). On macOS,
 start with OCR (see *Apps that draw their own UI* below): `read_window_text` returns the
 text on screen with boxes, and `click_text` clicks a label by what it says, so many
 dialogs and menus need no coordinates at all. When text is not enough:
@@ -550,7 +612,9 @@ dialogs and menus need no coordinates at all. When text is not enough:
   applications integrate incremental movement and ignore a jump to the endpoint.
 - `mouse_move` before `key`. Blender routes hotkeys to whichever editor the
   pointer is over, so position the pointer first, then press.
-- `scroll` for wheel zoom.
+- `scroll` for wheel zoom, with `modifiers` for ctrl+wheel and shift+wheel.
+- `click {modifiers: ["alt"]}` and `mouse_drag {hold_keys, key_presses, pressure}` for the gestures a mouse and
+  keyboard make together: alt+click a loop, hold C while clicking, press R mid-drag, draw with a pen.
 
 ```typescript
 // Orbit a 3D viewport: middle-button drag across the centre of the window.
@@ -712,6 +776,64 @@ await client.callTool('wait_for_stable', { target_app: 'org.blenderfoundation.bl
 `wait_for_stable` hashes the whole window, or only `region` (the helper crops it; `regionApplied: true` since 7.7), and
 `quiet_ms: 0` returns after one capture with its hash. On a timeout the error says what was last
 seen (the last lines read, or how many changes happened).
+
+### Record once, replay with a check on every step (8.0)
+
+Exploring an app costs many turns; repeating what worked should cost one call per thirty steps. The session keeps every
+step-tool action that succeeded (the last 300, with the window each was aimed at). `export_steps` turns them into
+`run_steps` arguments:
+
+```typescript
+await client.callTool('export_steps', { action: 'start' })   // check each action from here
+// ... do the task once: clicks, keys, drags, waits ...
+const { batches, unchecked, redacted } = JSON.parse(text(await client.callTool('export_steps', { action: 'stop' })))
+// Later, or in another session with the window at the same size:
+for (const batch of batches) await client.callTool('run_steps', batch)
+```
+
+- **`expect` on a step** is checked after it runs: `changed: true` (the window, or `region` `[x, y, w, h]` in window
+  points, differs from just before the step), `text` (OCR, macOS) or `window: {kind, title}` appears, or goes with
+  `gone: true`, within `timeout_ms` (2 s for changed, 3 s otherwise). An unmet expect stops the batch with
+  `failed_step.error: "expect_failed"`, what was seen, and a `next_call`; the rest are reported not run. Write them by
+  hand too: `{tool: 'key', args: {text: 'cmd+s'}, expect: {window: {kind: 'dialog'}}}`. `match` (`exact`, `contains`,
+  `regex`) says how `text` is matched. A query with a digit tolerates OCR's misreads in numbers here, in `click_text`
+  and in `wait_for_text`: a comma between digits reads as a point and an O beside a digit as a zero, so "1.000" finds
+  Blender's "1,000" and "0°" its "O°". Each step reports `at_ms` and `ms`, for chapters and captions. `soft: true`
+  reports an unmet check in `soft_unmet` and goes on instead of stopping.
+- **What the export does.** The batch target is the app most steps were aimed at, and `frame` is its window's frame at
+  the first step. Window ids are dropped (they do not survive a restart); a step aimed at another window of the app (a
+  dialog) names it with `target_title`. A step whose recording saw the window change gets `expect: {changed: true,
+  soft: true}` (a change can be about time, not the step, and a replay runs at machine speed); one
+  that opened a window gets `expect: {window}`; the rest are listed in `unchecked`. With `start`, a click on a word is
+  exported as `click_text` (the word, its `nth`, and the band around the click it was read in), so the replay finds it
+  even when the layout moved. A `run_steps` step's own `expect` that held is exported as written, so a replay checks
+  what the lesson checked. `force`, `verify` and approval tokens are never exported. `offsets_ms` says when each
+  exported action finished.
+- **`frame` on run_steps** moves every coordinate with the window when it moved, and refuses the whole batch with
+  `frame_changed` when the window is another size (a resized Blender lays out its editors differently).
+- **Secrets.** Text typed while the focused field is marked sensitive, a `set_value` on a password-like label, and any
+  argument named like a secret are exported as a placeholder and listed in `redacted`; `run_steps` refuses a step that
+  still holds it.
+- `since: next_since` (from an earlier call) or `last: N` pick other ranges; with no recording started, `export_steps`
+  returns the last 30 actions.
+
+### Guide mode: show the person, do not act (8.0)
+
+Some people want to learn the task, not have it done. `COMPUTER_USE_PROFILE=guide` lists the observation, OCR and wait
+tools and `agent_pointer`, and nothing that clicks, types or changes the machine (26 tools on macOS); its server
+instructions describe the loop. The `guide-me` prompt asks for the same with any profile.
+
+```typescript
+await client.callTool('agent_pointer', { action: 'move', text: 'X-Ray', target_app: 'org.blenderfoundation.blender',
+  label: 'Click X-Ray to see through the mesh' })
+// tell the person what to do and why, then wait for them:
+await client.callTool('wait_for_stable', { target_app: 'org.blenderfoundation.blender', quiet_ms: 800, timeout_ms: 60000 })
+```
+
+`agent_pointer {text}` finds the text by OCR in the target window (macOS) and moves the overlay pointer to it; the
+overlay is never in a capture, and nothing is clicked or focused. `nth` picks a label shown more than once, `region`
+`[x, y, w, h]` reads one editor, and `target_window_id` or `target_title` points inside a secondary window (Blender's
+File View). `label` shows on the status card as "Look here: ...".
 
 ### Screenshot before acting
 Take a screenshot first to understand the current state before clicking or typing:
@@ -925,7 +1047,7 @@ await client.callTool('scrape', { url: 'https://example.com' })
 Enable it with `runConsole: true` (or run `computer-use-mcp-console`). It adds eight
 tools (`run_start`, `run_plan`, `run_progress`, `run_say`, `run_spend`, `run_cancel`,
 `run_attachment`, `run_console`) and an MCP App at `ui://computer-use/run-console/v1`,
-on top of whatever profile is active (macOS `desktop` 37 to 45, `full` 78 to 86). A plan the agent declares and the frames it captures render live in a
+on top of whatever profile is active (macOS `desktop` 39 to 47, `full` 80 to 88). A plan the agent declares and the frames it captures render live in a
 browser, so a person follows the work instead of a tool log.
 
 ```typescript
@@ -1125,12 +1247,14 @@ usable controls.
 | resize_window | ✅ AppleScript | ✅ | ❌ use `wmctrl`/`xdotool` via run_script |
 | multi_select, multi_edit | ✅ | ✅ | ✅ X11 only |
 | mouse_drag (button + modifiers) | ✅ | ✅ | ✅ X11; Wayland through libei (GNOME 46+, KDE Plasma 6.1+) |
+| mouse_drag `pressure` (pen) | ✅ | ❌ refused (`pressure_unsupported`) | ❌ refused (`pressure_unsupported`) |
+| numeric keypad keys (`numpad0`…) | ✅ | ✅ | ✅ |
 | doctor, discover_applications, get_tool_guide, get_tool_metadata | ✅ | ✅ | ✅ |
 
 Since 7.6 a tool that does not exist on the running platform is neither listed nor
 callable (`registry` and `notification` only on Windows; the OCR and `wait_for_*` text
 and stability tools only on macOS; Spaces on macOS and Windows), so the tool count
-differs by platform: the default `desktop` profile lists 37 tools on macOS and 33 on
-Windows and Linux, and `full` lists 78, 76 and 68. Before 7.6 such a tool was listed
+differs by platform: the default `desktop` profile lists 39 tools on macOS and 35 on
+Windows and Linux, and `full` lists 80, 78 and 70. Before 7.6 such a tool was listed
 and answered `platform_unsupported`; `get_app_dictionary` and `list_menu_bar` (macOS-only in practice) are still listed on
 Windows and Linux and still answer it.

@@ -8,6 +8,7 @@ import type { InputHandler } from './input-handlers.js'
 import type { SpawnResult } from './spawn.js'
 import type { ScriptingDictionary } from './scripting-dictionary.js'
 import type { TargetStateController } from './target-state.js'
+import { withUntrustedNote } from './untrusted.js'
 
 type DictionaryResult = { dict: ScriptingDictionary } | { error: string }
 
@@ -199,13 +200,15 @@ export async function handleAccessibilityTool(
   const native = context.native
   const isWindows = (context.platform ?? process.platform) === 'win32'
 
+  // 8.0: names and values in a tree are whatever the app shows, so they are labelled untrusted (a second text block;
+  // the first stays the JSON clients parse).
   if (tool === 'get_ui_tree') {
-    return ok(JSON.stringify(sanitizeAccessibilityResult(await offThread(
+    return withUntrustedNote(ok(JSON.stringify(sanitizeAccessibilityResult(await offThread(
       native, 'getUiTree', windowId(args), typeof args.max_depth === 'number' ? args.max_depth : undefined,
-    ))))
+    )))))
   }
   if (tool === 'get_focused_element') {
-    return ok(JSON.stringify(sanitizeAccessibilityResult(native.getFocusedElement())))
+    return withUntrustedNote(ok(JSON.stringify(sanitizeAccessibilityResult(native.getFocusedElement()))))
   }
   if (tool === 'find_element') {
     const role = typeof args.role === 'string' ? args.role : undefined
@@ -214,10 +217,10 @@ export async function handleAccessibilityTool(
     if (!role && !label && !value) throw new Error('find_element requires at least one of: role, label, value')
     const refused = unknownWindowsRole(native, isWindows, role)
     if (refused) return refused
-    return ok(JSON.stringify(sanitizeAccessibilityResult(await offThread(
+    return withUntrustedNote(ok(JSON.stringify(sanitizeAccessibilityResult(await offThread(
       native, 'findElement', windowId(args), role, label, value,
       typeof args.max_results === 'number' ? args.max_results : undefined,
-    ))))
+    )))))
   }
 
   if (['click_element', 'set_value', 'press_button', 'fill_form'].includes(tool)) {

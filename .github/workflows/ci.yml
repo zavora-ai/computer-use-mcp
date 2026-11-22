@@ -25,12 +25,12 @@ jobs:
       matrix:
         target:
           - name: macOS arm64
-            runner: macos-14
+            runner: macos-15
             rust-target: aarch64-apple-darwin
             artifact: computer-use-napi.darwin-arm64.node
             copy-from: target/aarch64-apple-darwin/release/libcomputer_use_napi.dylib
           - name: macOS x64
-            runner: macos-14
+            runner: macos-15
             rust-target: x86_64-apple-darwin
             artifact: computer-use-napi.darwin-x64.node
             copy-from: target/x86_64-apple-darwin/release/libcomputer_use_napi.dylib
@@ -144,7 +144,7 @@ jobs:
           # its unit tests actually execute. Cross-compiled targets in
           # build-native are compile-checked only and cannot run tests.
           - name: macOS arm64
-            runner: macos-14
+            runner: macos-15
           - name: Windows x64
             runner: windows-latest
           - name: Linux x64
@@ -187,7 +187,7 @@ jobs:
       matrix:
         os:
           - name: macOS arm64
-            runner: macos-14
+            runner: macos-15
             binary: computer-use-napi.darwin-arm64.node
           - name: Windows x64
             runner: windows-latest

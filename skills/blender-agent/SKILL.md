@@ -6,7 +6,8 @@ description: Drive Blender with the official Blender MCP for everything inside t
 # Driving Blender with two MCP servers
 
 Blender needs both servers, but they are not interchangeable. Route by capability,
-not by habit.
+not by habit. Without the Blender MCP, `skills/blender-direct` drives the whole
+interface with this server's mouse, keyboard and OCR.
 
 ## Setup gotchas that cost the most time
 
@@ -99,7 +100,7 @@ screenshots and without activating Blender; `get_app_capabilities` reports
 | Launch Blender, confirm it is up and past the splash | `open_application`, `wait_for_window` (`kind: "main"`), `list_windows`, `screenshot` | computer-use |
 | Blender is hung, or a modal dialog is blocking the socket | `list_windows` (kind `dialog`), `read_window_text`, `click_text`, `key`; `click` by coordinate last | computer-use |
 | Wait for a render, a save or a dialog to finish | `wait_for_text` (macOS, OCR), `wait_for_stable` (window stops changing), `wait_for_window` | computer-use |
-| Sculpt or paint strokes | `mouse_drag` (in the `ax` and `full` profiles, not the default `desktop` one) | computer-use |
+| Sculpt or paint strokes | `mouse_drag`, with `pressure` for a pen on macOS (in the `ax` and `full` profiles, not the default `desktop` one) | computer-use |
 | Prove to a human what the screen showed | `screenshot` | computer-use |
 
 ## Write Python, don't click
@@ -146,7 +147,8 @@ seconds of the person's own input (`user_active`). `delivery: "pid"` posts keys 
 the process without activating it, but apps differ in what they accept and
 `get_app_capabilities` reports what has worked for Blender. Blender routes hotkeys
 to the editor under the pointer, so prefer Python through the blender server over
-hotkeys. Do not pass `force: true` unless the user asked for that action.
+hotkeys. When you do press them, modifiers reach Blender since 7.8.1 (before, `shift+a` arrived as `a` on macOS).
+Do not pass `force: true` unless the user asked for that action.
 
 ## Order of work
 

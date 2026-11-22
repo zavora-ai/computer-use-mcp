@@ -18,6 +18,8 @@ using System;
 using System.Runtime.InteropServices;
 public static class ComputerUseCardNative {
   [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 }
 '@
 
@@ -75,7 +77,61 @@ $window.Add_ContentRendered({
     $ready = '{"hwnd":' + [int64]$handle + ',"rect":[' + [int]$window.Left + ',' + [int]$window.Top + ',' + [int]$window.Width + ',' + [int]$window.Height + ']}'
     [System.IO.File]::WriteAllText((Join-Path $Directory 'windows-card.json'), $ready)
   } catch {}
+  Publish-Geometry
 })
+
+# 7.8.1: the card is excluded from capture, so the agent aims at whatever it sees beneath it. The card says where it
+# is (card.json, screen pixels) and moves to a clear corner when the server asks (dodge.json), before input lands there.
+function Write-Atomic([string]$path, [string]$text) {
+  $tmp = "$path.$PID.tmp"
+  try {
+    [System.IO.File]::WriteAllText($tmp, $text)
+    if (Test-Path $path) { [System.IO.File]::Replace($tmp, $path, [NullString]::Value) } else { [System.IO.File]::Move($tmp, $path) }
+  } catch { try { [System.IO.File]::WriteAllText($path, $text) } catch {} }
+}
+function Publish-Geometry {
+  try {
+    $handle = (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle
+    $r = New-Object 'ComputerUseCardNative+RECT'
+    if ([ComputerUseCardNative]::GetWindowRect($handle, [ref]$r)) {
+      $json = '{"frame":{"x":' + $r.Left + ',"y":' + $r.Top + ',"width":' + ($r.Right - $r.Left) + ',"height":' + ($r.Bottom - $r.Top) + '},"pid":' + $PID + '}'
+      Write-Atomic (Join-Path $Directory 'card.json') $json
+    }
+  } catch {}
+}
+$script:dodgeSeq = -1
+function Test-Clear($left, $top, $points) {
+  foreach ($p in $points) {
+    if ($p.X -ge ($left - 8) -and $p.X -lt ($left + $window.Width + 8) -and $p.Y -ge ($top - 8) -and $p.Y -lt ($top + $window.Height + 8)) { return $false }
+  }
+  return $true
+}
+function Invoke-Dodge {
+  $file = Join-Path $Directory 'dodge.json'
+  if (-not (Test-Path $file)) { return }
+  try { $request = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json } catch { return }
+  if ($null -eq $request -or $null -eq $request.seq -or [int]$request.seq -eq $script:dodgeSeq) { return }
+  $script:dodgeSeq = [int]$request.seq
+  # The server's points are screen pixels; the window is placed in device-independent units.
+  $scaleX = 1.0; $scaleY = 1.0
+  $source = [System.Windows.PresentationSource]::FromVisual($window)
+  if ($source -and $source.CompositionTarget) { $scaleX = $source.CompositionTarget.TransformToDevice.M11; $scaleY = $source.CompositionTarget.TransformToDevice.M22 }
+  $points = @($request.avoid | ForEach-Object { New-Object System.Windows.Point(([double]$_[0] / $scaleX), ([double]$_[1] / $scaleY)) })
+  if (-not (Test-Clear $window.Left $window.Top $points)) {
+    $area = [System.Windows.SystemParameters]::WorkArea
+    $corners = @(
+      @(($area.Right - $window.Width - 12), ($area.Top + 12)),
+      @(($area.Right - $window.Width - 12), ($area.Bottom - $window.Height - 12)),
+      @(($area.Left + 12), ($area.Bottom - $window.Height - 12)),
+      @(($area.Left + 12), ($area.Top + 12))
+    )
+    foreach ($corner in $corners) {
+      if (Test-Clear $corner[0] $corner[1] $points) { $window.Left = $corner[0]; $window.Top = $corner[1]; break }
+    }
+  }
+  Publish-Geometry
+}
+$window.Add_LocationChanged({ Publish-Geometry })
 
 function Write-Control([string]$value) {
   try {
@@ -130,7 +186,9 @@ $timer.Add_Tick({
     'stopped' { $dot.Fill = '#D64545'; $title.Text = "Agent stopped · $elapsed"; $action.Text = 'No further desktop input this session. Restart the server to resume.'; $pause.IsEnabled = $false; $stop.Content = 'Close'; $stop.IsEnabled = $true }
     'paused'  {
       $dot.Fill = '#E8A33D'; $pause.Content = 'Resume'; $pause.IsEnabled = $true; $stop.IsEnabled = $true
-      if ($null -ne $script:frame -and [string]$script:frame.reason -eq 'takeover') {
+      if ($null -ne $script:frame -and $script:frame.handoff) {
+        $title.Text = "Your turn · $elapsed"; $action.Text = [string]$script:frame.handoff.message + ' Press Resume when you are done.'
+      } elseif ($null -ne $script:frame -and [string]$script:frame.reason -eq 'takeover') {
         $title.Text = "You took over · $elapsed"; $action.Text = 'The agent waits while you use the mouse or keyboard, and resumes when you stop.'
       } elseif ($null -ne $script:frame -and $script:frame.watching) {
         $title.Text = "Agent paused · $elapsed"; $action.Text = 'The watch sees nothing and nothing is changed until you resume.'
@@ -167,4 +225,9 @@ $timer.Add_Tick({
   }
 })
 $timer.Start()
-try { $null = $window.ShowDialog() } finally { $timer.Stop() }
+# 7.8.1: a quick look for a move request, so a click under the card waits tens of milliseconds, not a whole tick.
+$dodgeTimer = New-Object Windows.Threading.DispatcherTimer
+$dodgeTimer.Interval = [TimeSpan]::FromMilliseconds(40)
+$dodgeTimer.Add_Tick({ Invoke-Dodge })
+$dodgeTimer.Start()
+try { $null = $window.ShowDialog() } finally { $timer.Stop(); $dodgeTimer.Stop() }

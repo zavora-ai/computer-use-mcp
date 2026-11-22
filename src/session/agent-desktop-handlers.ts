@@ -17,6 +17,7 @@ import type { InputHandler } from './input-handlers.js'
 import { HelperFailure, type HelperOcr, type MacosHelper } from './macos-helper.js'
 import type { TargetStateController } from './target-state.js'
 import { listClassifiedWindows, resolveAppWindow, titleMatches, type WindowKind } from './window-select.js'
+import { SCREEN_TEXT_UNTRUSTED } from './untrusted.js'
 
 export const AGENT_DESKTOP_TOOLS = new Set(['read_window_text', 'click_text', 'wait_for_window', 'wait_for_text', 'wait_for_stable'])
 export const WAIT_FOR_WINDOW_POLL_MS = 250
@@ -85,6 +86,28 @@ export interface TextMatch {
 export interface ScreenOrigin { x: number; y: number }
 
 /**
+ * 8.0 (T6): what OCR gets wrong in numbers, folded away: a comma between digits reads as a decimal point, and an O next
+ * to a digit, a decimal point or a degree sign reads as zero (Blender's "1.000" came back "1,000", "0°" as "O°"). Each
+ * replacement keeps the length, so character offsets into the original text stay valid.
+ */
+export function digitTolerant(text: string): string {
+  return text.replace(/(?<=\d),(?=\d)/g, '.').replace(/[Oo](?=[\d.,°%])|(?<=[\d.,])[Oo]/g, '0')
+}
+
+/** A line's words without the symbols at either end (an icon read as "•", "*" or "&"), and where they start. */
+export function textCore(text: string): { text: string; start: number } {
+  const lead = /^[^\p{L}\p{N}]*/u.exec(text)?.[0].length ?? 0
+  const core = text.slice(lead).replace(/[^\p{L}\p{N}]+$/u, '')
+  return { text: core, start: lead }
+}
+
+/** For a text_not_found reply: the lines that contain the text, which is usually where a near miss is. */
+export function similarLines(lines: readonly TextLine[], query: string): string[] {
+  const needle = (textCore(query).text || query).toLowerCase()
+  return lines.filter(line => line.text.toLowerCase().includes(needle)).slice(0, 10).map(line => line.text)
+}
+
+/**
  * Find `query` in OCR lines, in reading order (top to bottom, then left to right).
  * For a match inside a longer line, the click point is estimated from the
  * character offsets: Vision gives one box per line, and text is close to
@@ -96,14 +119,21 @@ export function findText(
 ): TextMatch[] {
   const matches: TextMatch[] = []
   const pattern = mode === 'regex' ? new RegExp(query, 'i') : undefined
-  const needle = query.trim().toLowerCase()
+  // 8.0 (T6): a query with a digit tolerates OCR's misreads in numbers, on both sides, so "1.000" finds "1,000".
+  const fold = mode !== 'regex' && /\d/.test(query) ? digitTolerant : (text: string) => text
+  const needle = fold(query.trim().toLowerCase())
+  // 8.0: an icon beside a label is read as a glyph ("• Object Mode" in Blender's mode pie), so exact compares the
+  // words, without symbols at either end, on both sides.
+  const needleCore = textCore(needle).text || needle
   for (const line of lines) {
     let start = -1
     let length = 0
     if (mode === 'exact') {
-      if (line.text.trim().toLowerCase() === needle) { start = line.text.indexOf(line.text.trim()); length = line.text.trim().length }
+      // Fold first (it reads the "°" after an O), then drop the end symbols; both keep offsets into the line.
+      const core = textCore(fold(line.text.toLowerCase()))
+      if (core.text && core.text === needleCore) { start = core.start; length = core.text.length }
     } else if (mode === 'contains') {
-      start = line.text.toLowerCase().indexOf(needle)
+      start = fold(line.text.toLowerCase()).indexOf(needle)
       length = needle.length
     } else {
       const found = pattern!.exec(line.text)
@@ -293,6 +323,7 @@ async function waitForText(args: Record<string, unknown>, context: AgentDesktopC
         matches: matches.length,
         window: windowSummary(result.window),
         screen_origin: screenOrigin(result.window),
+        untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }
     if (gone && matches.length === 0) return okJson({ gone: true, waitedMs, polls, reads, window: windowSummary(result.window) })
@@ -302,6 +333,7 @@ async function waitForText(args: Record<string, unknown>, context: AgentDesktopC
         window: windowSummary(result.window),
         // What the last poll read, so the caller can see how the text was read instead.
         seen: seen.slice(0, 20), ...(seen.length > 20 ? { seenTruncated: seen.length - 20 } : {}),
+        untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }
     if (await pace(context, pollMs, pollStarted, waitedMs, timeoutMs)) return errJson({ error: 'cancelled', waitedMs: now() - started, polls })
@@ -379,6 +411,7 @@ export async function handleAgentDesktopTool(
       count: result.lines.length,
       lines: result.lines,
       ...(result.ocrMs !== undefined ? { ocrMs: result.ocrMs } : {}),
+      untrusted: SCREEN_TEXT_UNTRUSTED,
     })
   }
 
@@ -399,8 +432,11 @@ export async function handleAgentDesktopTool(
       return errJson({
         error: 'text_not_found', text: args.text, match: mode, nth, matches: matches.length,
         window: windowSummary(result.window),
+        // 8.0: the near misses first; the first 40 lines alone hid "• Object Mode" from a search for "Object Mode".
+        similar: similarLines(result.lines, args.text),
         seen: result.lines.slice(0, 40).map(line => line.text),
-        remediation: ['Check `seen` for how the text was read; try match "contains" or "regex", or read_window_text with a region.'],
+        remediation: ['Check `similar` and `seen` for how the text was read; try match "contains" or "regex", or read_window_text with a region.'],
+        untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }
     const chosen = matches[nth - 1]
@@ -418,6 +454,7 @@ export async function handleAgentDesktopTool(
       matches: matches.length,
       window: windowSummary(result.window),
       result: message && message.type === 'text' ? message.text : 'Clicked',
+      untrusted: SCREEN_TEXT_UNTRUSTED,
     })
   }
 

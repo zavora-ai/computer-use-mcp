@@ -4,7 +4,11 @@
  */
 
 export type FocusRequired = 'scripting' | 'ax' | 'cgevent' | 'none'
-export type ProfileName = 'core' | 'desktop' | 'ax' | 'scripting' | 'windows-admin' | 'full'
+/**
+ * 8.0 (P2-15): `guide` is the read-only side of `desktop`: it observes, reads text and points with the overlay pointer,
+ * and acts on nothing. It sits outside the nesting below (a profile for a person who wants to be shown, not served).
+ */
+export type ProfileName = 'core' | 'desktop' | 'ax' | 'scripting' | 'windows-admin' | 'full' | 'guide'
 /** What a tool is for (v7.6 R7): the axis the instructions and get_tool_guide are organised by. */
 export type ToolJob = 'observe' | 'act' | 'semantic' | 'script' | 'admin' | 'browser' | 'spaces' | 'meta'
 
@@ -76,11 +80,15 @@ export function profilesForTier(tier: ProfileName): ProfileName[] {
       return ['windows-admin', 'full']
     case 'full':
       return ['full']
+    case 'guide':
+      return ['guide']
   }
 }
 
 export function toolInProfile(meta: ToolMeta, profile: ProfileName): boolean {
   if (profile === 'full') return true
+  // 8.0: guide keeps what desktop observes and the overlay pointer; nothing that types, clicks or changes the machine.
+  if (profile === 'guide') return toolInProfile(meta, 'desktop') && (!meta.mutates || (meta.usesVirtualPointer && !meta.physicalInput))
   return profilesForTier(meta.tier).includes(profile)
 }
 
@@ -95,7 +103,7 @@ export const DEFAULT_PROFILE: ProfileName = 'desktop'
 
 export function parseProfile(raw: string | undefined | null): ProfileName {
   const v = (raw ?? DEFAULT_PROFILE).toLowerCase()
-  if (v === 'core' || v === 'desktop' || v === 'ax' || v === 'scripting' || v === 'windows-admin' || v === 'full') {
+  if (v === 'core' || v === 'desktop' || v === 'ax' || v === 'scripting' || v === 'windows-admin' || v === 'full' || v === 'guide') {
     return v
   }
   return DEFAULT_PROFILE
@@ -161,6 +169,10 @@ export const TOOL_CATALOG: Record<string, ToolMeta> = {
   triple_click: { ...CG_MUT('core'), listedFrom: 'full' },
   // 7.7.0 (K2): several actions in one call, validated first, stopped at the first failure.
   run_steps: CG_MUT('desktop'),
+  // 8.0: the person's turn (sign-in, 2FA, CAPTCHA, payment); also what the server does by itself on a sign-in screen.
+  hand_off: NONE_READ('core', { idempotentHint: false }),
+  // 8.0 (P2-11): the actions that worked, as run_steps batches to replay.
+  export_steps: NONE_READ('desktop', { idempotentHint: false }),
   mouse_move: CG_MUT('core'),
   left_click_drag: CG_MUT('ax'),
   mouse_drag: CG_MUT('ax'),
@@ -236,7 +248,7 @@ export const TOOL_CATALOG: Record<string, ToolMeta> = {
 
 /** v7.6 R7: the job of every tool (the instructions and get_tool_guide are organised by it). */
 const TOOL_JOBS: Record<ToolJob, readonly string[]> = {
-  meta: ['doctor', 'policy_status', 'get_tool_guide', 'get_tool_metadata', 'get_app_capabilities', 'discover_applications', 'set_target', 'get_target', 'control_status'],
+  meta: ['doctor', 'policy_status', 'get_tool_guide', 'get_tool_metadata', 'get_app_capabilities', 'discover_applications', 'set_target', 'get_target', 'control_status', 'export_steps', 'hand_off'],
   observe: ['screenshot', 'zoom', 'snapshot', 'read_window_text', 'list_windows', 'get_window', 'get_cursor_window', 'get_frontmost_app',
     'list_running_apps', 'get_display_size', 'list_displays', 'cursor_position', 'read_clipboard', 'wait', 'wait_for_window', 'wait_for_text', 'wait_for_stable'],
   act: ['click', 'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click', 'run_steps', 'click_text', 'mouse_move', 'left_click_drag', 'mouse_drag',

@@ -57,9 +57,36 @@ Status: `todo` → `in progress` → `done` (change + test green) → `blocked` 
 | R2 | Encoding on each OS: SCRecordingOutput or AVAssetWriter; Windows.Graphics.Capture and Media Foundation; ScreenCast portal, PipeWire and GStreamer | 8.2 | todo | `libexec/macos-agent-helper.swift` | |
 | R3 | Recording privacy: card state, Pause and Stop, blanked credential managers, blurred secure fields, retention, opt-in | 8.2 | todo | | |
 
+## Ideas after 8.2 (not scheduled)
+
+From the roadmap's section [Ideas after 8.2](roadmap.md#ideas-after-82-watching-listening-and-working-beside-the-person),
+written up on 2026-11-22. None has a release yet; the "Could start" column is the roadmap's guess.
+
+| # | Spike or idea | Could start | Status | Pass, or accepted when | Tested by |
+|---|---|---|---|---|---|
+| W-S1 | A kept-open stream with the target app's sound on macOS 26 (YouTube in Safari, 30 min, a second server capturing); on-device transcription delay and accuracy; which DRM videos capture black | With R-S1 | todo | Transcript under 2 s behind, the second server's captures unaffected, DRM behaviour recorded | |
+| W-S2 | Watch programs written from five sentences, run on prepared clips | After W0 | todo | Each fires within 500 ms with no model call, none in 10 min of unrelated footage | |
+| W-S3 | Capturing iPhone Mirroring and Desk View windows; input to the mirrored phone; a webcam source | After W0 | todo | Each source works or the reason is recorded | |
+| W0 | See and hear one app: stream with app sound (macOS, Windows process loopback, Linux PipeWire), on-device speech, sound events, scene cuts, OCR deltas, a 10-minute memory dropped at stop, `speech`/`sound`/`scene`/`text`/`trigger` events, 3×3 storyboards, Listening on the card | With R (8.2) | todo | The W-S1 talk passes; nothing held after stop | |
+| W1 | A skill that searches a recorded video by driving the player (YouTube, Vimeo, QuickTime, VLC shortcuts) | Now | todo | Moment found to within 10 s in four of five talks, at most 20 calls each | |
+| W2 | Reflexes: watch program format, helper detectors (pixel probe, region OCR, transcript words, sound classes, scene cuts), an allowed action list through the usual input gates, one line on the card | After W0 | todo | W-S2 passes; Pause stops reflexes | |
+| W3 | Watch together: push to talk, spoken replies that lower or pause the video, point and ask from a pointer trail, overlay shapes that follow a region, translated subtitles | After W0 | todo | Drawings never captured, subtitles under 3 s behind, eight of ten "what's that?" answered about the right region | |
+| W4 | Share meaning: redaction levels per subscriber, subscribers on the card, watch hand-over with H2, the agent display as a stream in the console | After 8.1 | todo | No redacted field reaches a subscriber in 30 min; Stop ends every subscription | |
+| W5 | Any camera is a source: AVFoundation, Media Foundation, V4L2 or PipeWire, opt-in per watch | After W0 | todo | W-S3 sources work with the same detectors and card states | |
+| W6 | Learn by watching the person: an opt-in recording on the card, the person's clicks and keys from the event tap, an accessibility hit test (shared with C2), sensitive text replaced | After 8.0 | todo | A 15-step demonstration replays with no model call in four of five runs; no secret in the export | |
+| W7 | Several targets per watch, a budget per target, the card listing them | After W2 | todo | Eight video windows, every reflex within 1 s, inside the CPU budget the first test sets | |
+| M1 | Two cursors: accessibility writes (B2), a named overlay cursor, stepping aside when the person's pointer comes near | After 8.1 | todo | 50 edits while the person types, their caret never moves; a focus-taking app refused with `would_take_over` | |
+| M2 | Accept the next click with one key: a matcher over the person's past routines (W6), outline and ghost text in the overlay, an accept key swallowed only while a suggestion shows | After 8.2 | todo | Shown suggestions right at least 80% of the time; nothing runs without the key | |
+| M3 | Result before it happens: a copy of the document rehearsed on the agent display (B3), the result shown over the real window, a refusal for what cannot be copied | After 8.1 | todo | Real document untouched until Confirm; result matches the rehearsal | |
+| M4 | Undo for the whole computer: an undo journal beside the step journal, `undo {last \| since}` with an `expect` per inverse, kept file copies, undoable and one-way labels on the card | With C | todo | A 20-action session fully undone where possible; one-way actions listed | |
+| M5 | A new face for any app: a panel mapped to A2 refs, per-overlay capture inclusion, redaction that follows moving text | After A2 | todo | The panel fills the real form with values read back; no covered value seen by the receiving side of a share | |
+| M6 | Drop anything onto anything: pick-up and drop chords, one mapping call, the mapping confirmed through C | After 8.1 | todo | Eight of ten pairs land with the right fields; Cancel saves nothing | |
+| M7 | Where the agent looks: fading outlines for each read, a when-to-show setting, never captured | After 8.0 | todo | Outline within 100 ms of each read; none in a capture | |
+| M8 | Apps as MCP servers: trees with variables turned into tools, app version checks, review and signing, P3 repair | After 8.2 | todo | Tools pass on a fresh machine at the same app version and refuse on another; no secret held | |
+
 ## Docs with each release
 
 | # | Task | Status |
 |---|---|---|
 | G1 | AGENTS.md, README, CHANGELOG and the computer-use skill updated for each new tool and setting; tool counts by profile from the catalog test | todo |
-| G2 | The four open questions in the roadmap answered and recorded here | todo |
+| G2 | The open questions in the roadmap answered and recorded here | todo |

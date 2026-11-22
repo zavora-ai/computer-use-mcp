@@ -33,6 +33,49 @@ const NON_PHYSICAL_TOOLS = new Set(['cursor_position', 'read_clipboard', 'write_
  * forgotten hold cannot keep keys down for long.
  */
 export const MAX_HOLD_SECONDS = 10
+/** 7.8.1: keys held across calls (hold_key down) come up by themselves after this long. */
+export const HELD_KEYS_MAX_MS = 60_000
+
+/**
+ * 8.0: how the pointer reaches a point. `jump` (the default) moves it there in one event, as before. `glide` makes
+ * clicks, drags and scrolls travel from where the pointer is, eased, so a person watching (or a recording) can follow
+ * it and apps that act on hover see a movement. `COMPUTER_USE_POINTER_MOTION=glide` turns it on.
+ */
+export type PointerMotion = 'jump' | 'glide'
+export function pointerMotionFromEnv(env: NodeJS.ProcessEnv = process.env): PointerMotion {
+  return env.COMPUTER_USE_POINTER_MOTION?.trim().toLowerCase() === 'glide' ? 'glide' : 'jump'
+}
+/** One motion event about every 8 ms (about 120 a second). */
+export const MOTION_STEP_MS = 8
+/** Glide speed and bounds: 1.5 px per ms, never under 120 ms or over 600 ms. */
+export const GLIDE_PX_PER_MS = 1.5
+export const GLIDE_MIN_MS = 120
+export const GLIDE_MAX_MS = 600
+/** A mouse_move path with no duration_ms: about 1 px per ms, between 100 ms and 5 s. */
+export const PATH_PX_PER_MS = 1
+export const PATH_MIN_MS = 100
+export const PATH_MAX_MS = 5_000
+
+/**
+ * 7.8.1 (macOS): apps that take only the first character of a key event's text. Blender's event layer keeps one
+ * character per key event, so Unicode text posted in chunks lost all but the first character of each chunk.
+ */
+const ONE_CHARACTER_PER_KEY_APPS = new Set(['org.blenderfoundation.blender'])
+
+/** 7.8.1: the modifiers a click, drag or scroll may hold. */
+const POINTER_MODIFIERS = new Set(['shift', 'ctrl', 'alt', 'cmd'])
+
+/**
+ * 7.8.1: a pen's pressure along a stroke. `values` are spread evenly over the stroke, so one value is constant, two
+ * ramp, three taper, and as many as there are waypoints give one per waypoint (each segment has the same step count).
+ */
+export function pressureAt(values: readonly number[], t: number): number {
+  const position = Math.min(Math.max(t, 0), 1) * (values.length - 1)
+  const index = Math.floor(position)
+  if (index >= values.length - 1) return values[values.length - 1]
+  const ratio = position - index
+  return ratio === 0 ? values[index] : values[index] + (values[index + 1] - values[index]) * ratio
+}
 
 /** 7.7.0 (K1): tools that accept `verify: true` (capture the target before and after, and report the effect). */
 export const VERIFIABLE_TOOLS = new Set([
@@ -112,6 +155,14 @@ export class InputHandler {
   readonly #pidStore: PidDeliveryStore | undefined
   readonly #helper: MacosHelper | undefined
   readonly #protectedRegion: (() => CardRect | undefined) | undefined
+  readonly #clearOfCard: ((points: Array<[number, number]>) => Promise<void>) | undefined
+  readonly #haltSignal: (() => AbortSignal) | undefined
+  readonly #heldKeysMaxMs: number
+  /** 8.0: clicks, drags and scrolls travel to their point instead of jumping. */
+  readonly #glide: boolean
+  /** 7.8.1: keys down across calls (hold_key down), each with its auto-release timer. */
+  readonly #held = new Map<string, ReturnType<typeof setTimeout>>()
+  #exitHook: (() => void) | undefined
 
   constructor(options: {
     native: NativeModule
@@ -128,6 +179,14 @@ export class InputHandler {
     helper?: MacosHelper
     /** Screen rectangle no pointer action may land in: the Linux status card, which shows on screen to the agent. */
     protectedRegion?: () => CardRect | undefined
+    /** 7.8.1: move the status card off these points when captures cannot see it (macOS), before input lands there. */
+    clearOfCard?: (points: Array<[number, number]>) => Promise<void>
+    /** 7.8.1: aborted when the person pauses or stops the agent, or the session ends; held keys come up then. */
+    haltSignal?: () => AbortSignal
+    /** 7.8.1: how long hold_key down may hold before the keys come up by themselves (default 60 s). */
+    heldKeysMaxMs?: number
+    /** 8.0: `glide` makes pointer actions travel to their point (default `jump`). */
+    pointerMotion?: PointerMotion
   }) {
     this.#native = options.native
     this.#targets = options.targets
@@ -139,6 +198,77 @@ export class InputHandler {
     this.#pidStore = options.pidStore
     this.#helper = options.helper
     this.#protectedRegion = options.protectedRegion
+    this.#clearOfCard = options.clearOfCard
+    this.#haltSignal = options.haltSignal
+    this.#heldKeysMaxMs = options.heldKeysMaxMs ?? HELD_KEYS_MAX_MS
+    this.#glide = options.pointerMotion === 'glide'
+  }
+
+  /** 8.0: whether pointer actions glide to their point. */
+  pointerMotion(): PointerMotion { return this.#glide ? 'glide' : 'jump' }
+
+  /**
+   * 8.0: move the cursor from where it is to (x, y) through eased intermediate positions instead of one jump. Without a
+   * duration it takes the glide time for the distance. A cursor position that cannot be read leaves the jump to the
+   * caller.
+   */
+  async #travel(x: number, y: number, durationMs?: number, signal?: AbortSignal): Promise<void> {
+    let from: { x: number; y: number } | undefined
+    try { from = this.#native.cursorPosition() } catch { from = undefined }
+    if (!from || !Number.isFinite(from.x) || !Number.isFinite(from.y)) return
+    const distance = Math.hypot(x - from.x, y - from.y)
+    if (distance < 2) return
+    const duration = durationMs ?? Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, distance / GLIDE_PX_PER_MS))
+    const steps = Math.max(2, Math.min(1250, Math.round(duration / MOTION_STEP_MS)))
+    for (let step = 1; step <= steps; step++) {
+      this.#checkAbort(signal, 'pointer travel aborted')
+      const t = step / steps
+      const eased = t * t * (3 - 2 * t)
+      this.#native.mouseMove(Math.round(from.x + (x - from.x) * eased), Math.round(from.y + (y - from.y) * eased))
+      await this.#sleep(duration / steps)
+    }
+  }
+
+  /** 8.0: glide to a point before a pointer action when the session asks for it. */
+  async #approach(x: number, y: number, signal?: AbortSignal): Promise<void> {
+    if (this.#glide) await this.#travel(x, y, undefined, signal)
+  }
+
+  /** 8.0: move through waypoints at a constant speed, `durationMs` in all, with no button held. */
+  async #movePath(path: ReadonlyArray<readonly [number, number]>, durationMs: number, signal?: AbortSignal): Promise<void> {
+    const lengths = path.slice(1).map((point, index) => Math.hypot(point[0] - path[index][0], point[1] - path[index][1]))
+    const total = lengths.reduce((sum, length) => sum + length, 0)
+    const allSteps = Math.max(path.length - 1, Math.min(1250, Math.round(durationMs / MOTION_STEP_MS)))
+    for (let segment = 1; segment < path.length; segment++) {
+      const share = total > 0 ? lengths[segment - 1] / total : 1 / (path.length - 1)
+      const steps = Math.max(1, Math.round(allSteps * share))
+      const pause = (durationMs * share) / steps
+      const [fromX, fromY] = path[segment - 1]
+      const [toX, toY] = path[segment]
+      for (let step = 1; step <= steps; step++) {
+        this.#checkAbort(signal, 'mouse_move aborted mid-path')
+        const ratio = step / steps
+        this.#native.mouseMove(Math.round(fromX + (toX - fromX) * ratio), Math.round(fromY + (toY - fromY) * ratio))
+        await this.#sleep(pause)
+      }
+    }
+  }
+
+  /** Keys held across calls (hold_key down), in the order they went down. */
+  heldKeys(): string[] { return [...this.#held.keys()] }
+
+  /**
+   * 7.8.1: release keys held across calls: these, or all. Called by hold_key up/release, the auto-release timer, the
+   * halt signal (Pause, Stop, take-over, session end) and process exit. A release is never refused.
+   */
+  releaseHeldKeys(keys?: string[]): string[] {
+    const targets = keys ? keys.filter(key => this.#held.has(key)) : [...this.#held.keys()]
+    for (const key of targets) { clearTimeout(this.#held.get(key)); this.#held.delete(key) }
+    if (targets.length) {
+      try { this.#native.keyUp?.(targets.slice().reverse()) } catch { /* the native layer releases what it holds */ }
+    }
+    if (this.#held.size === 0 && this.#exitHook) { process.removeListener('exit', this.#exitHook); this.#exitHook = undefined }
+    return targets
   }
 
   /** Can this platform/native module post input to a process? */
@@ -304,8 +434,12 @@ export class InputHandler {
     args: Record<string, unknown>,
     route?: InputRoute,
   ): Promise<ToolResult> {
+    // 7.8.1: checked before anything moves, so a bad name changes nothing.
+    const modifiers = this.#modifiers(args)
+    const holdKeys = this.#heldKeys(args)
     const chosen = route ?? this.route(tool, args, this.#wouldDo(tool, { ...args, coordinate: [point.x, point.y] }))
     const resolved = this.#targets.resolve(args)
+    if (chosen.mode === 'pid' && (modifiers.length > 0 || holdKeys.length > 0)) this.#refuseHeldKeysForPid(tool)
     if (chosen.mode === 'pid') {
       let { x, y } = point
       if (chosen.windowRelative && !point.screen && chosen.bounds) { x += chosen.bounds.x; y += chosen.bounds.y }
@@ -319,12 +453,83 @@ export class InputHandler {
     const { x, y } = point
     // Before activating anything: a point off the screens, or on the status card, is refused with nothing changed.
     this.#validateCoordinates(x, y)
+    await this.#clearCard([[x, y]])
     await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
+    await this.#approach(x, y)
     this.#native.mouseMove(x, y)
     await this.#sleep(50)
-    this.#native.mouseClick(x, y, button, count)
+    await this.#withHeldKeys(holdKeys, async () => {
+      if (modifiers.length > 0) await this.#clickModified(x, y, button, count, modifiers)
+      else this.#native.mouseClick(x, y, button, count)
+    })
     this.#targets.trackClick(resolved)
-    return { ...ok(`Clicked (${x}, ${y})`), contract: { delivery: 'hid' } }
+    const held = [...modifiers, ...holdKeys]
+    return { ...ok(`Clicked (${x}, ${y})${held.length ? ` with ${held.join('+')}` : ''}`), contract: { delivery: 'hid' } }
+  }
+
+  /** 7.8.1: `modifiers`, checked against the schema's enum again (run_steps and the aliases reach here too). */
+  #modifiers(args: Record<string, unknown>): string[] {
+    const raw = args.modifiers
+    if (raw === undefined) return []
+    if (!Array.isArray(raw) || !raw.every(name => typeof name === 'string' && POINTER_MODIFIERS.has(name))) {
+      throw new Error('Invalid modifiers: expected a list of shift, ctrl, alt, cmd')
+    }
+    return [...new Set(raw as string[])]
+  }
+
+  /** 7.8.1: `hold_keys`, resolved to native names (unknown names are refused with the valid ones). */
+  #heldKeys(args: Record<string, unknown>): string[] {
+    const raw = args.hold_keys
+    if (raw === undefined) return []
+    if (!Array.isArray(raw) || !raw.every(key => typeof key === 'string')) throw new Error('Invalid hold_keys: expected string[]')
+    return normalizeHeldKeys(raw, this.#platform)
+  }
+
+  #refuseHeldKeysForPid(tool: string): never {
+    throw new StructuredToolError(`${tool} cannot hold keys with pid delivery`, {
+      error: 'pid_delivery_unsupported', tool,
+      remediation: ['modifiers and hold_keys go through the keyboard: use delivery "hid" with the target in front, after the person stops typing.'],
+    })
+  }
+
+  #missingNative(capability: string, remediation: string): never {
+    throw new StructuredToolError(`native capability missing: ${capability}`, {
+      error: 'native_capability_missing', capability,
+      remediation: [`${remediation} needs a native module built from this release; rebuild it (npm run build:native) or reinstall the package.`],
+    })
+  }
+
+  /**
+   * 7.8.1: run a pointer action with keys held down (Blender's blade while C is held, an annotation while D is held).
+   * The keys come up on every exit path; the native latch also releases them on Stop.
+   */
+  async #withHeldKeys<T>(keys: readonly string[], act: () => Promise<T>): Promise<T> {
+    if (keys.length === 0) return act()
+    if (!this.#native.keyDown || !this.#native.keyUp) this.#missingNative('keyDown/keyUp', 'hold_keys')
+    try { this.#native.keyDown([...keys]) } catch (error) { throw explainNativeKeyError(error) }
+    try {
+      await this.#sleep(30)
+      return await act()
+    } finally {
+      this.#native.keyUp([...keys])
+    }
+  }
+
+  /**
+   * 7.8.1: a click with modifiers. macOS presses them as keys around the click (Blender ignored flags alone); Windows
+   * and Linux press the real keys inside each press and release.
+   */
+  async #clickModified(x: number, y: number, button: string, count: number, modifiers: string[]): Promise<void> {
+    if (this.#native.mouseClickModified) {
+      this.#native.mouseClickModified(x, y, button, count, modifiers)
+      return
+    }
+    if (!this.#native.mousePress || !this.#native.mouseRelease) this.#missingNative('mousePress/mouseRelease', 'A click with modifiers')
+    for (let index = 0; index < count; index++) {
+      this.#native.mousePress(x, y, button, modifiers)
+      this.#native.mouseRelease(x, y, button, modifiers)
+      if (index < count - 1) await this.#sleep(30)
+    }
   }
 
   /**
@@ -431,12 +636,45 @@ export class InputHandler {
 
     if (tool === 'mouse_move') {
       const resolved = target()
-      const [x, y] = coordinate()
-      this.#validateCoordinates(x, y)
+      // 8.0: a path with no button held (a hover with Shift down), or a timed move to a point.
+      let path: Array<[number, number]> | undefined
+      if (args.path !== undefined) {
+        if (!Array.isArray(args.path) || args.path.length < 2 || args.path.length > 64
+          || !args.path.every(point => Array.isArray(point) && point.length >= 2 && typeof point[0] === 'number' && typeof point[1] === 'number')) {
+          throw new Error('Invalid path: expected 2 to 64 [x, y] points')
+        }
+        path = (args.path as number[][]).map(point => [point[0], point[1]])
+      }
+      if (!path && args.coordinate === undefined) throw new Error('mouse_move needs coordinate or path')
+      const points = path ?? [coordinate()]
+      const modifiers = this.#modifiers(args)
+      const held = [...new Set([...normalizeHeldKeys(modifiers, this.#platform), ...this.#heldKeys(args)])]
+      const duration = typeof args.duration_ms === 'number' ? Math.max(0, Math.min(10_000, args.duration_ms)) : undefined
+      for (const [x, y] of points) this.#validateCoordinates(x, y)
+      await this.#clearCard(points)
       await focus(resolved)
-      this.#native.mouseMove(x, y)
+      const holding = held.length ? ` holding ${held.join('+')}` : ''
+      if (!path) {
+        const [x, y] = points[0]
+        await this.#withHeldKeys(held, async () => {
+          if (duration !== undefined && duration > 0) await this.#travel(x, y, duration, signal)
+          else await this.#approach(x, y, signal)
+          this.#native.mouseMove(x, y)
+        })
+        if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
+        return ok(`Moved to (${x}, ${y})${holding}`)
+      }
+      // Reach the path's start (gliding when the session glides), then travel through it with the keys held.
+      const waypoints = path
+      const [startX, startY] = waypoints[0]
+      await this.#approach(startX, startY, signal)
+      this.#native.mouseMove(startX, startY)
+      const length = waypoints.slice(1).reduce((sum, point, index) => sum + Math.hypot(point[0] - waypoints[index][0], point[1] - waypoints[index][1]), 0)
+      const pathMs = duration ?? Math.min(PATH_MAX_MS, Math.max(PATH_MIN_MS, length / PATH_PX_PER_MS))
+      await this.#withHeldKeys(held, () => this.#movePath(waypoints, pathMs, signal))
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
-      return ok(`Moved to (${x}, ${y})`)
+      const [endX, endY] = waypoints[waypoints.length - 1]
+      return ok(`Moved through ${waypoints.length} waypoints to (${endX}, ${endY}) in ${Math.round(pathMs)} ms${holding}`)
     }
 
     if (tool === 'left_click_drag') {
@@ -445,7 +683,9 @@ export class InputHandler {
       const from = args.start_coordinate ? coordinate('start_coordinate') : to
       const path = Array.isArray(args.path) ? args.path as [number, number][] : [from, to]
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      await this.#clearCard(path)
       await focus(resolved)
+      await this.#approach(from[0], from[1], signal)
       this.#native.mouseMove(from[0], from[1])
       await this.#sleep(50)
       signal?.throwIfAborted()
@@ -465,7 +705,9 @@ export class InputHandler {
       const resolved = target()
       const [x, y] = coordinate()
       this.#validateCoordinates(x, y)
+      await this.#clearCard([[x, y]])
       await focus(resolved)
+      await this.#approach(x, y, signal)
       this.#native.mouseButton(tool === 'left_mouse_down' ? 'press' : 'release', x, y)
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
       return ok(tool === 'left_mouse_down' ? 'Mouse down' : 'Mouse up')
@@ -481,6 +723,8 @@ export class InputHandler {
       const [x, y] = coordinate()
       const direction = string('direction')
       const amount = number('amount', 3)
+      const modifiers = this.#modifiers(args)
+      if (route.mode === 'pid' && modifiers.length > 0) this.#refuseHeldKeysForPid(tool)
       if (route.mode === 'pid') {
         if (!this.#native.mouseScrollToPid) throw new Error('This native module has no mouseScrollToPid; rebuild it')
         const sx = route.windowRelative && route.bounds ? route.bounds.x + x : x
@@ -492,14 +736,18 @@ export class InputHandler {
         return { ...ok(`Scrolled ${direction} ${amount}${this.#pidNote(route, outcome)}`), contract: { delivery: 'pid', effect: pidEffect(outcome) } }
       }
       this.#validateCoordinates(x, y)
+      await this.#clearCard([[x, y]])
       await focus(resolved)
+      await this.#approach(x, y, signal)
       this.#native.mouseMove(x, y)
       await this.#sleep(15)
       const deltaX = typeof args.delta_x === 'number' ? args.delta_x : direction === 'left' ? -amount : direction === 'right' ? amount : 0
       const deltaY = typeof args.delta_y === 'number' ? args.delta_y : direction === 'up' ? -amount : direction === 'down' ? amount : 0
-      this.#native.mouseScroll(deltaY, deltaX)
+      if (modifiers.length === 0) this.#native.mouseScroll(deltaY, deltaX)
+      else if (this.#native.mouseScrollModified) this.#native.mouseScrollModified(deltaY, deltaX, modifiers)
+      else await this.#withHeldKeys(modifiers, async () => this.#native.mouseScroll(deltaY, deltaX))
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
-      return ok(`Scrolled ${direction} ${amount}`)
+      return ok(`Scrolled ${direction} ${amount}${modifiers.length ? ` with ${modifiers.join('+')}` : ''}`)
     }
 
     if (tool === 'type') {
@@ -519,8 +767,13 @@ export class InputHandler {
         await this.#sleep(30)
       }
       let summary = 'Typed'
-      if (args.mode === 'keys') summary = await this.#typeKeys(text, signal)
-      else if (text.length > 100 || text.includes('\n')) {
+      // 7.8.1: an app that reads one character per key event (Blender) kept only the first character of each text
+      // chunk ("Relax Edge Loops" arrived as "R"); short text goes to it as key events unless a mode was asked for.
+      const short = text.length <= 100 && !text.includes('\n')
+      if (args.mode === 'keys' || (args.mode === undefined && short && this.#readsOneCharacterPerKey(resolved))) {
+        summary = await this.#typeKeys(text, signal)
+        if (args.mode === undefined) summary += ' as key events (this app reads one character per key event)'
+      } else if (!short) {
         // 7.7.0 (K9): never paste over an image or files the person copied; type the text instead.
         let guarded = false
         try { guarded = this.#native.clipboardHasNonText?.() === true } catch { guarded = false }
@@ -573,10 +826,50 @@ export class InputHandler {
     }
 
     if (tool === 'hold_key') {
-      if (!Array.isArray(args.keys) || !args.keys.every(key => typeof key === 'string')) {
-        throw new Error('Invalid keys: expected string[]')
+      const action = typeof args.action === 'string' ? args.action : 'hold'
+      if (action === 'release') {
+        const released = this.releaseHeldKeys()
+        return ok(released.length ? `Released ${released.join('+')}` : 'Nothing was held')
+      }
+      if (!Array.isArray(args.keys) || args.keys.length === 0 || !args.keys.every(key => typeof key === 'string')) {
+        throw new Error('Invalid keys: expected a non-empty string[]')
       }
       const keys = normalizeHeldKeys(args.keys, this.#platform)
+      if (action === 'up') {
+        const released = this.releaseHeldKeys(keys)
+        const untracked = keys.filter(key => !released.includes(key))
+        if (untracked.length) { try { this.#native.keyUp?.(untracked) } catch (error) { throw explainNativeKeyError(error) } }
+        const still = this.heldKeys()
+        return ok(`Released ${keys.join('+')}${still.length ? `; still held: ${still.join('+')}` : ''}`)
+      }
+      if (action === 'down') {
+        if (!this.#native.keyDown || !this.#native.keyUp) {
+          throw new StructuredToolError('holding keys across calls needs a newer native module', {
+            error: 'hold_unsupported', remediation: ['Rebuild the native module (npm run build:native) or reinstall the package.'],
+          })
+        }
+        const resolved = target()
+        await focus(resolved)
+        try { this.#native.keyDown(keys) } catch (error) { throw explainNativeKeyError(error) }
+        for (const key of keys) {
+          if (this.#held.has(key)) continue
+          const timer = setTimeout(() => { this.releaseHeldKeys([key]) }, this.#heldKeysMaxMs)
+          timer.unref?.()
+          this.#held.set(key, timer)
+        }
+        const halt = this.#haltSignal?.()
+        if (halt?.aborted) this.releaseHeldKeys()
+        else halt?.addEventListener('abort', () => { this.releaseHeldKeys() }, { once: true })
+        if (!this.#exitHook && this.#held.size) {
+          this.#exitHook = () => { try { this.#native.keyUp?.([...this.#held.keys()].reverse()) } catch { /* exiting */ } }
+          process.once('exit', this.#exitHook)
+        }
+        if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
+        return ok(`Holding ${this.heldKeys().join('+')} until hold_key {action: "up"} or {action: "release"}; `
+          + `they come up by themselves after ${Math.round(this.#heldKeysMaxMs / 1000)} s, on Pause, Stop or take-over, and when the session ends.`)
+      }
+      if (action !== 'hold') throw new Error(`Invalid action: ${action} (hold, down, up or release)`)
+      if (typeof args.duration !== 'number') throw new Error('hold needs duration (seconds); use action "down" to hold across calls')
       const resolved = target()
       await focus(resolved)
       const requested = number('duration', 1)
@@ -626,8 +919,12 @@ export class InputHandler {
       const path = (Array.isArray(args.path) ? args.path : []) as [number, number][]
       if (path.length < 2) return this.#noCoordinates()
       const button = typeof args.button === 'string' ? args.button : 'left'
-      const modifiers = Array.isArray(args.modifiers) ? args.modifiers as string[] : []
+      const modifiers = this.#modifiers(args)
       const steps = typeof args.steps === 'number' ? args.steps : 8
+      // 7.8.1: held keys, keys pressed mid-drag and pen pressure, all checked before anything moves.
+      const holdKeys = this.#heldKeys(args)
+      const keyPresses = this.#dragKeyPresses(args.key_presses, path.length)
+      const pressure = this.#dragPressure(args.pressure)
       if (!this.#native.mousePress || !this.#native.mouseDragTo || !this.#native.mouseRelease) {
         return {
           content: [{ type: 'text', text: JSON.stringify({
@@ -642,36 +939,67 @@ export class InputHandler {
         }
       }
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      await this.#clearCard(path)
+      if (pressure && (this.#platform !== 'darwin' || !this.#native.mousePenEvent)) {
+        throw new StructuredToolError('pen pressure is unavailable here', {
+          error: 'pressure_unsupported', platform: this.#platform,
+          remediation: [this.#platform === 'darwin'
+            ? 'The native module predates pen pressure; rebuild it (npm run build:native) or reinstall the package.'
+            : 'Pen pressure is macOS only in this release; omit pressure for a mouse drag.'],
+        })
+      }
       await focus(resolved)
 
       const [startX, startY] = path[0]
+      const [endX, endY] = path[path.length - 1]
+      const total = (path.length - 1) * steps
+      const pen = pressure ? this.#native.mousePenEvent!.bind(this.#native) : undefined
+      const pressKeysAt = async (waypoint: number) => {
+        for (const press of keyPresses.filter(entry => entry.at === waypoint)) {
+          this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
+          try { this.#native.keyPress(press.combo) } catch (error) { throw explainNativeKeyError(error) }
+          await this.#sleep(40)
+        }
+      }
+      await this.#approach(startX, startY, signal)
       this.#native.mouseMove(startX, startY)
       await this.#sleep(15)
-      this.#native.mousePress(startX, startY, button, modifiers)
-      try {
-        // Interpolate: applications that integrate incremental motion — 3D
-        // viewport orbit, canvas painting — ignore a single jump to the endpoint.
-        for (let segment = 1; segment < path.length; segment++) {
-          const [fromX, fromY] = path[segment - 1]
-          const [toX, toY] = path[segment]
-          for (let step = 1; step <= steps; step++) {
-            this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
-            const ratio = step / steps
-            this.#native.mouseDragTo(
-              Math.round(fromX + (toX - fromX) * ratio),
-              Math.round(fromY + (toY - fromY) * ratio),
-              button, modifiers,
-            )
-            await this.#sleep(8)
+      await this.#withHeldKeys(holdKeys, async () => {
+        if (pen) pen(startX, startY, button, modifiers, 0, pressureAt(pressure!, 0))
+        else this.#native.mousePress!(startX, startY, button, modifiers)
+        try {
+          await pressKeysAt(0)
+          // Interpolate: applications that integrate incremental motion — 3D
+          // viewport orbit, canvas painting — ignore a single jump to the endpoint.
+          for (let segment = 1; segment < path.length; segment++) {
+            const [fromX, fromY] = path[segment - 1]
+            const [toX, toY] = path[segment]
+            for (let step = 1; step <= steps; step++) {
+              this.#checkAbort(signal, 'mouse_drag aborted mid-gesture')
+              const ratio = step / steps
+              const x = Math.round(fromX + (toX - fromX) * ratio)
+              const y = Math.round(fromY + (toY - fromY) * ratio)
+              if (pen) pen(x, y, button, modifiers, 1, pressureAt(pressure!, ((segment - 1) * steps + step) / total))
+              else this.#native.mouseDragTo!(x, y, button, modifiers)
+              await this.#sleep(8)
+            }
+            await pressKeysAt(segment)
           }
+        } finally {
+          // Never leave a button or modifier stuck down, even on abort. A pen ends at full pressure: the app keeps the
+          // last pressure it saw, and the plain mouse should behave as it did before the stroke.
+          if (pen) pen(endX, endY, button, modifiers, 2, 1)
+          else this.#native.mouseRelease!(endX, endY, button, modifiers)
         }
-      } finally {
-        // Never leave a button or modifier stuck down, even on abort.
-        const [endX, endY] = path[path.length - 1]
-        this.#native.mouseRelease(endX, endY, button, modifiers)
-      }
+      })
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
-      return ok(`Dragged ${button}${modifiers.length ? ' with ' + modifiers.join('+') : ''} through ${path.length} waypoints`)
+      const notes = [
+        ...(modifiers.length ? [`with ${modifiers.join('+')}`] : []),
+        ...(holdKeys.length ? [`holding ${holdKeys.join('+')}`] : []),
+        ...(pressure ? [`as a pen at pressure ${pressure.join('→')}`] : []),
+        ...(keyPresses.length ? [`pressing ${keyPresses.map(entry => `${entry.key} at waypoint ${entry.at}`).join(', ')}`] : []),
+      ]
+      return ok(`Dragged ${button}${notes.length ? ' ' + notes.join(', ') : ''} through ${path.length} waypoints`)
     }
 
     if (tool === 'multi_select') {
@@ -686,6 +1014,7 @@ export class InputHandler {
       }
       if (locations.length === 0) return this.#noCoordinates()
       for (const [x, y] of locations) this.#validateCoordinates(x, y)
+      await this.#clearCard(locations)
       // press_ctrl advertises default true, so additive is the documented behavior.
       // The modifier has to be held across the click, which only the native
       // additive entry point does — tapping it separately selects nothing.
@@ -727,6 +1056,7 @@ export class InputHandler {
     }
     if (edits.length === 0) return this.#noCoordinates()
     for (const [x, y] of edits) this.#validateCoordinates(x, y)
+    await this.#clearCard(edits.map(([x, y]) => [x, y] as [number, number]))
     for (const [x, y, text] of edits) {
       this.#checkAbort(signal, 'multi_edit aborted before the next edit')
       this.#native.mouseMove(x, y)
@@ -776,6 +1106,17 @@ export class InputHandler {
    * older native module, each character goes through `keyPress` with its US-ANSI
    * combo, and characters no key produces are sent as text.
    */
+  /** 7.8.1 (macOS): does the target read only the first character of a key event's text? */
+  #readsOneCharacterPerKey(resolved: ResolvedTarget): boolean {
+    if (this.#platform !== 'darwin') return false
+    let bundleId = resolved.bundleId
+    try {
+      if (!bundleId && resolved.windowId !== undefined) bundleId = this.#native.getWindow(resolved.windowId)?.bundleId ?? undefined
+      if (!bundleId) bundleId = this.#native.getFrontmostApp()?.bundleId
+    } catch { return false }
+    return bundleId !== undefined && ONE_CHARACTER_PER_KEY_APPS.has(bundleId)
+  }
+
   async #typeKeys(text: string, signal?: AbortSignal): Promise<string> {
     if (this.#native.typeKeys) {
       const counts = this.#native.typeKeys(text)
@@ -794,6 +1135,37 @@ export class InputHandler {
       await this.#sleep(4)
     }
     return `Typed ${keys} key${keys === 1 ? '' : 's'}${unicode ? ` and ${unicode} character(s) as text` : ''} (layout: us_ansi)`
+  }
+
+  /** 7.8.1: `key_presses` of mouse_drag: each key resolved and its waypoint in range, before the drag starts. */
+  #dragKeyPresses(raw: unknown, waypoints: number): { at: number; key: string; combo: string }[] {
+    if (raw === undefined) return []
+    if (!Array.isArray(raw)) throw new Error('Invalid key_presses: expected [{at, key}]')
+    return raw.map((entry, index) => {
+      const at = (entry as { at?: unknown })?.at
+      const key = (entry as { key?: unknown })?.key
+      if (typeof at !== 'number' || !Number.isInteger(at) || at < 0 || at >= waypoints) {
+        throw new Error(`Invalid key_presses[${index}].at: expected a waypoint index from 0 to ${waypoints - 1}`)
+      }
+      if (typeof key !== 'string' || key.length === 0) throw new Error(`Invalid key_presses[${index}].key: expected a key name`)
+      return { at, key, combo: normalizeKeyCombo(key, this.#platform) }
+    })
+  }
+
+  /** 7.8.1: `pressure` of mouse_drag as a list of 0-1 values, or undefined for a mouse drag. */
+  #dragPressure(raw: unknown): number[] | undefined {
+    if (raw === undefined) return undefined
+    const values = typeof raw === 'number' ? [raw] : raw
+    if (!Array.isArray(values) || values.length === 0 || values.length > 64
+      || !values.every(value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)) {
+      throw new Error('Invalid pressure: expected a number from 0 to 1, or a list of 1 to 64 of them')
+    }
+    return values as number[]
+  }
+
+  /** 7.8.1: the card is not in captures on macOS, so it moves aside rather than take input meant for the app under it. */
+  async #clearCard(points: ReadonlyArray<readonly [number, number]>): Promise<void> {
+    if (this.#clearOfCard && points.length > 0) await this.#clearOfCard(points.map(([x, y]) => [x, y] as [number, number]))
   }
 
   #validateCoordinates(x: number, y: number): void {

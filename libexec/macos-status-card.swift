@@ -31,6 +31,13 @@ struct CardFrame: Decodable {
     let reason: String?
     /// 7.8: the live watcher is looking at this target.
     let watching: CardWatching?
+    /// 8.0: the agent handed the desktop to the person (a sign-in, a 2FA code).
+    let handoff: CardHandoff?
+}
+
+struct CardHandoff: Decodable {
+    let kind: String
+    let message: String
 }
 
 struct CardWatching: Decodable {
@@ -208,6 +215,44 @@ final class Card {
         try? data.write(to: directory.appendingPathComponent("card.json"), options: .atomic)
     }
 
+    /// 7.8.1: the server asks the card to move off points where the agent is about to click, drag or point. The card
+    /// is not in screen captures, so the agent aims at the app it sees beneath; without this the card took that input.
+    var dodgeSeq = -1
+    func checkDodge() {
+        let url = directory.appendingPathComponent("dodge.json")
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let seq = object["seq"] as? Int, seq != dodgeSeq,
+              let avoid = object["avoid"] as? [[Double]] else { return }
+        dodgeSeq = seq
+        moveClear(of: avoid.compactMap { $0.count >= 2 ? CGPoint(x: $0[0], y: $0[1]) : nil })
+    }
+
+    /// Keep the current place when it holds none of the points (CoreGraphics, top-left origin); otherwise move to the
+    /// first screen corner that does: top right, bottom right, bottom left, top left.
+    func moveClear(of points: [CGPoint]) {
+        guard let primary = NSScreen.screens.first else { return }
+        let height = primary.frame.height
+        let size = panel.frame.size
+        func clear(_ origin: NSPoint) -> Bool {
+            let rect = NSRect(origin: origin, size: size).insetBy(dx: -8, dy: -8)
+            return !points.contains { rect.contains(NSPoint(x: $0.x, y: height - $0.y)) }
+        }
+        if clear(panel.frame.origin) { publishGeometry(); return }
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(panel.frame.origin) }) ?? NSScreen.main ?? primary
+        let visible = screen.visibleFrame
+        let margin: CGFloat = 16
+        let corners = [
+            NSPoint(x: visible.maxX - size.width - margin, y: visible.maxY - size.height - margin),
+            NSPoint(x: visible.maxX - size.width - margin, y: visible.minY + margin),
+            NSPoint(x: visible.minX + margin, y: visible.minY + margin),
+            NSPoint(x: visible.minX + margin, y: visible.maxY - size.height - margin),
+        ]
+        guard let target = corners.first(where: clear) else { return }
+        panel.setFrameOrigin(target)
+        publishGeometry()
+    }
+
     @objc func togglePause() {
         let current = readControl()
         if current == "stopped" { return }
@@ -252,7 +297,10 @@ final class Card {
             stopButton.isEnabled = true
         case "paused":
             dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-            if frame?.reason == "takeover" {
+            if let handoff = frame?.handoff {
+                title.stringValue = "Your turn · \(elapsed)"
+                action.stringValue = "\(handoff.message) Press Resume when you are done."
+            } else if frame?.reason == "takeover" {
                 title.stringValue = "You took over · \(elapsed)"
                 action.stringValue = "The agent waits while you use the mouse or keyboard, and resumes when you stop."
             } else if frame?.watching != nil {
@@ -327,5 +375,8 @@ app.setActivationPolicy(.accessory)
 let card = Card()
 let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in card.tick() }
 RunLoop.main.add(timer, forMode: .common)
+// 7.8.1: a quick look for a move request, so a click under the card waits tens of milliseconds, not a whole tick.
+let dodgeTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { _ in card.checkDodge() }
+RunLoop.main.add(dodgeTimer, forMode: .common)
 signal(SIGTERM) { _ in exit(0) }
 app.run()

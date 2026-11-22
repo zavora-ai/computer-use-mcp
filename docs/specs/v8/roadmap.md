@@ -4,7 +4,9 @@ Status: **proposed 2026-10-25.** James picked these nine features from the revie
 [`docs/reviews/2026-10-25-computer-use-gaps.md`](../../reviews/2026-10-25-computer-use-gaps.md). Nothing is built yet.
 The tasks are in [`tasks.md`](tasks.md). This roadmap replaces the 2026-10-09 app-bridges draft (Unreal and Blender
 bridges, dialogs, a supervision panel), which was approved in principle but never started. It was removed on
-2026-10-25 and is in git history at `2b3a7ce` (`docs/specs/v8-app-bridges/`).
+2026-10-25 and is in git history at `2b3a7ce` (`docs/specs/v8-app-bridges/`). The section
+[Ideas after 8.2](#ideas-after-82-watching-listening-and-working-beside-the-person) was added on 2026-11-22; it is
+not scheduled.
 
 ## Why these nine
 
@@ -436,6 +438,413 @@ updated with each release.
 The 7.8 follow-ups (L1 the stream, L2 voice, L3 host reach, L4 Windows change regions) stay in
 [`../v7.8/tasks.md`](../v7.8/tasks.md); R depends on L1.
 
+## Ideas after 8.2: watching, listening and working beside the person
+
+Status: **ideas, not scheduled (written up 2026-11-22).** They come from a design discussion with James after 7.8.0
+shipped. It started with whether live share could watch and hear a YouTube or Vimeo stream, and went on to what a
+desktop agent could do that none does yet. Nothing here is built or has a release. Each idea says what exists today,
+what it needs, the first test that would show whether it works, and when it counts as done. The rules above apply to
+every one, and so does the out-of-scope list below: nothing remembers the screen unless the person started a watch.
+
+There are two groups:
+
+- **W, watching and listening (W0 to W7).** Live share grows from sampled frames into a stream it can see and hear,
+  and local detectors do most of the watching.
+- **M, two at one desk (M1 to M8).** The agent works beside the person on the same machine instead of taking it over.
+
+### Write a watcher, then wake the model only when it fires
+
+Live share today samples a target every 500 ms at 640 px wide, gates the changes, and lets Haiku triage each event
+(`src/session/live-watcher.ts`, `src/session/change-gate.ts`, `src/live-driver.ts`). That suits a screen that changes
+now and then. In a video almost every frame changes, so the gate fires at its 3 s ceiling (`GATE_MAX_DELAY_MS`) and
+every event is a triage call; there is no sound at all. The W ideas turn this around. When the person asks "tell me
+when they announce the pricing", the model writes a small watch program once:
+
+```
+watch: window "Keynote - YouTube"
+when:  transcript contains "pricing" or screen text matches /\$\d+/
+also:  sound "applause", scene cut
+then:  wake triage with the last 20 s
+```
+
+The program runs locally on every frame and on the sound, and the model sees only the moments that match. Watching
+then costs per event, not per second.
+
+### W0. The base: see and hear one app, with a short memory
+
+**Today.**
+- The watcher samples a window, an app or a display, with no sound. The capture helper has no audio code
+  (`libexec/macos-agent-helper.swift`).
+- A kept-open ScreenCaptureKit stream is v7.8 L1, not run yet.
+- Live share holds frames in memory only.
+
+**Needs.**
+- A kept-open stream (v7.8 L1) that also carries the target app's own sound, and never the microphone:
+
+  | OS | Picture | Sound of one app |
+  |---|---|---|
+  | macOS | `SCStream` (L1) | ScreenCaptureKit audio for the filtered app (macOS 13+), excluding the server's own process |
+  | Windows | Windows.Graphics.Capture kept open (v7.8 L4) | Process loopback capture (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 11) |
+  | Linux | ScreenCast portal and PipeWire | The app's PipeWire output node |
+
+- Local senses, each optional:
+  - speech to text on the device: Apple's SpeechAnalyzer on macOS 26, `SFSpeechRecognizer` with on-device recognition
+    before it; on Windows and Linux a local Whisper model the person installs;
+  - sound events from Apple's SoundAnalysis built-in classifier (applause, laughter, music, speech, sirens);
+  - scene cuts from the frame difference the helper already computes;
+  - screen text by OCR on changed regions only.
+- A short memory: the last 10 minutes (configurable) of keyframes at scene cuts, the transcript, sound events and
+  screen text, with timestamps. It is kept in memory only and dropped when the watch stops.
+- New event kinds in `live_events`: `speech`, `sound`, `scene`, `text` and `trigger`.
+- Storyboards: up to nine keyframes tiled 3×3 with their timestamps into one image the size of a single frame. One
+  triage call then sees a sequence for the price of one frame (about $0.0002 on Haiku 5.5, measured for 7.8).
+
+**Privacy.** Sound is off until the person turns it on for that watch, and the card shows "Listening" apart from
+"Watching". Transcripts stay on the machine. Nothing is sampled while a credential manager is frontmost, as today.
+
+**First test (W-S1).** On macOS 26, one helper keeps a stream with sound open on a YouTube window in Safari for 30
+minutes while a second server takes screenshots. Measure the transcription's delay and its word accuracy against the
+video's own captions. Note which protected (DRM) videos capture as black.
+
+**Accepted when** a 30-minute talk yields a timestamped transcript less than 2 s behind the speech, keyframes at scene
+cuts and sound events; no frame or transcript is held after the watch stops; and the card shows Listening while sound
+is captured.
+
+### W1. The agent controls time in a recorded video
+
+**The idea.** A recorded video does not have to be watched in real time, because the agent can drive the player. On
+YouTube the keys 0 to 9 jump to 0-90% of the video, J and L skip 10 s back and forward, and comma and period step one
+frame while paused. "Find where the talk gets to pricing" becomes a search: read the ten jump points, then keep halving
+the gap where the topic changes. For a talk that follows its agenda, two hours narrow to five seconds in about 11
+jumps. The agent can also pause to look closer, go back to check, or play at 2× while W0's detectors keep up.
+
+**Today.** Everything it needs is in the default profile: `key`, `read_window_text` (macOS) and `wait_for_stable`.
+`browser_page_text` (opt-in) reads captions shown on the page and the player's time display in the person's own
+browser.
+
+**Needs.** A skill with the search loop and the shortcuts of each player (YouTube, Vimeo, QuickTime, VLC). No server
+change.
+
+**First test.** Five recorded talks: find a named slide or topic by jumping, and compare with a person finding it by
+hand. Count jumps, tool calls, input tokens and seconds. Confirm the shortcuts against YouTube's own list.
+
+**Accepted when** the skill finds the moment to within 10 s in at least four of the five talks, with at most 20 tool
+calls each.
+
+### W2. Reflexes, triage, thought
+
+**The idea.** Three speeds, like a body:
+- **Reflexes** run locally on every frame and cost no tokens. The model looks at one frame once and writes small
+  detectors: a region turns red, a word appears on screen or in the transcript, a sound, a scene cut. Each can trigger
+  an action from a short allowed list: pause or play the video, mute, mark the moment, keep a clip from W0's memory,
+  notify.
+- **Triage** is Haiku, given a storyboard and the transcript when a reflex fires.
+- **Thought** is Opus, which answers or acts.
+
+**Today.** The gate and the live driver are the triage and thought tiers. Between frames nothing runs but the diff.
+
+**Needs.**
+- A watch program format (JSON: detectors and actions), validated before it runs and shown on the card in one line
+  ("Pausing when 'pricing' is said").
+- Detectors in the helper: a pixel probe on a region (a colour or hash change), OCR text in a region, transcript
+  words, sound classes, scene cuts.
+- The allowed actions. Pause and play are a key posted to the watched app, which goes through the same gates as any
+  input (the user-active guard, Pause, Stop). Never a click, typing, send, submit or buy. Pause on the card stops
+  reflexes too.
+
+**First test (W-S2).** The model writes programs from five sentences ("pause when someone says my name", "mark each
+goal", "tell me when the build log turns red"), and each runs against prepared clips with scripted moments.
+
+**Accepted when** each program fires within 500 ms of its moment with no model call, does not fire in 10 minutes of
+unrelated footage, and stops when the person presses Pause.
+
+### W3. Watch together, like someone on the couch
+
+**The idea.**
+- **Talk instead of typing.** Push to talk on the card, with on-device speech (v7.8 L2).
+- **It answers out loud.** It lowers the video's sound or pauses the video, explains, and resumes.
+- **Point and ask.** The person circles something with the mouse and says "what's that?". The pointer's path says
+  what "that" is.
+- **It draws on the screen**, like a sports telestrator: circles, arrows and labels over the live video, in an overlay
+  kept out of captures.
+- **Subtitles for anything.** Speech in another language is transcribed and translated on the device (Apple's
+  Translation framework, macOS 15+) and shown over the video.
+
+**Today.** `agent_pointer` is one dot that never appears in a capture (`native/src/overlay.rs`: show, move, hide).
+Guide mode's `label` puts text on the card. The take-over monitor already reads where the person's pointer is
+(`native/src/activity.rs`).
+
+**Needs.** W0's speech, v7.8 L2's voice, overlay shapes (circle, arrow, box, text) that follow a region, a pointer
+trail of the last few seconds kept during a watch only, and a translation step.
+
+**First test.** On a sports clip, the agent circles a named player and keeps the circle on them for 5 s of play. A
+French talk gets English subtitles, with their delay measured.
+
+**Accepted when** no drawing appears in a capture or a W0 keyframe, subtitles trail the speech by less than 3 s, and
+"what's that?" over a circled region is answered about that region in at least eight of ten tries.
+
+### W4. Share meaning, not pixels
+
+**The idea.**
+- A helper (a person or their agent) subscribes to a watch's events, redacted to the level the person sets. They see
+  "Disk full dialog in Finder", not the inbox.
+- An agent passes its watch to another agent with the memory so far (with H2).
+- The reverse: when the agent works on its own display (B3), the person watches that display in the console like a
+  stream, with chapters from the step journal, at 4×, and can go back.
+
+**Today.** Live share events are already text (`live_events`). 2026-07-28 clients have `subscriptions/listen`. The
+bundled HTTP runner is loopback only; a remote host embeds `createComputerUseHttpHandler` and checks OAuth itself.
+
+**Needs.** A redaction level per subscriber (event kinds only; plus app names; plus titles and text), a list of
+subscribers on the card, and the console view of B3's display.
+
+**First test.** A second MCP client subscribes at "kinds and app names" for 30 minutes of ordinary work, and every
+event it receives is checked for a title or text.
+
+**Accepted when** no redacted field reaches the subscriber, the card lists who is subscribed, and Stop ends every
+subscription.
+
+### W5. Any camera is a screen
+
+**The idea.** The watch does not care where frames come from:
+- iPhone Mirroring (macOS 15) is a window, so the agent can watch the phone and, where input reaches it, drive it.
+- Continuity Camera's Desk View shows paper notes or a whiteboard.
+- A capture card turns a console or another computer into a window.
+- A webcam can watch a 3D printer, a lab instrument or a door.
+
+**Today.** Any window can be watched. A camera is not a source.
+
+**Needs.** A camera source in the helper (AVFoundation on macOS, Media Foundation on Windows, V4L2 or PipeWire on
+Linux), opt-in per watch, with the OS's camera indicator left as it is.
+
+**First test (W-S3).** Whether the iPhone Mirroring and Desk View windows can be captured, and whether input reaches
+the mirrored phone. Then a webcam watch with a W2 reflex on a 3D printer's progress.
+
+**Accepted when** each source works with the same detectors and card states, or the first test records why it cannot.
+
+### W6. Learn by watching the person
+
+**The idea.** The person does a task once while the server records it. For each of their clicks the server asks the
+accessibility tree, or OCR, what was under it, so the record says "the Export button in the Invoices window" rather
+than a coordinate. The result is `run_steps` batches with an `expect` on each step, the same format `export_steps`
+writes for the agent's own actions, and later a task tree (P).
+
+**Today.** `export_steps` records the agent's actions, and with `{action: "start"}` it reads the text under each click
+(`src/session/step-journal.ts`). The person's input is seen only as counts, timing and pointer movement, for take-over
+(`native/src/activity.rs`). The code has deliberately never recorded what the person types.
+
+**Needs.** An opt-in "learn from me" recording, started on the card and shown there for its whole length; the
+person's clicks and keys from the event tap, during that recording only; an accessibility hit test (none exists in
+`native/src` today, and C2 needs one too); typed text in sensitive fields replaced with the `export_steps`
+placeholder.
+
+**First test.** The person exports a report in a demo app; the exported batches replay it with every `expect` met.
+
+**Accepted when** a 15-step demonstration replays with no model call in four of five runs, no typed secret appears in
+the export, and nothing is recorded outside the recording.
+
+### W7. Watch many things at once
+
+**The idea.** Eight windows, eight sets of W2 detectors, and one model call when one of them fires. Cost grows with
+events, not with the number of streams. It fits esports analysts, a trading desk, a newsroom covering eight press
+conferences, or a team watching dashboards, logs and a deploy at once.
+
+**Today.** A watch has one target (`live_watch {action: "start"}`).
+
+**Needs.** Several targets per watch, a budget per target, and the card listing everything watched.
+
+**First test.** Eight windows playing video for 30 minutes, one reflex each, on an Apple-silicon Mac: CPU, memory and
+the time from a moment to its reflex.
+
+**Accepted when** every reflex fires within 1 s and the eight watches stay inside a CPU budget set from the first
+test.
+
+### Two at one desk
+
+Desktop agents take the machine over: one pointer, one focus, and the person waits. The M ideas let the person and the
+agent work at the same time, see what the other is doing, and undo it. A few have a cousin elsewhere, such as gray
+autocomplete text in code editors and Figma's multiplayer cursors; the new part is doing them in every app on the
+machine. No search has yet ruled out that someone has built them.
+
+### M1. Two cursors in one app
+
+**The idea.** The person keeps working in a spreadsheet while the agent fills another column. The agent's cursor is
+drawn on screen with its name, and the person's pointer never moves. When the person reaches toward where the agent is
+working, it steps aside.
+
+**Today.** `delivery: "pid"` posts clicks, keys and scrolls to a process without moving the pointer, for apps recorded
+as accepting it (`src/session/pid-delivery.ts`). Accessibility actions don't take focus. The overlay draws one dot.
+
+**Needs.** B2's background routes: an app has one keyboard focus, so the agent writes through accessibility values,
+not by typing. A named cursor in the overlay that moves with the agent's actions. Stepping aside: when the person's
+pointer comes near the agent's target, the agent waits (the take-over monitor already reads the pointer).
+
+**First test.** In Numbers and Excel, the agent fills column C through accessibility while the person types in column
+A. Does the person's caret or selection ever move?
+
+**Accepted when** 50 agent edits complete while the person types, the person's caret never moves, and an app that
+would take focus is refused by name (`would_take_over`).
+
+### M2. Accept the next click with one key
+
+**The idea.** While the person works, the agent predicts the next few steps and draws them faintly: an outline on the
+button they are about to press, ghost text in the next field. One key accepts, Esc dismisses, and pressing the key
+again runs the rest of a routine it has seen before.
+
+**Today.** Nothing predicts. W6 would supply the person's past routines and P the replay.
+
+**Needs.** W6's records of the person's routines. A local matcher (the current window and the last few steps) that
+proposes only routines it has seen, never invented ones. The overlay drawing an outline and ghost text. An accept key
+the event tap swallows only while a suggestion is shown: Tab is the natural key, but apps use it to move focus, so it
+needs a reliable way to keep it from the app, or a chord the person picks.
+
+**First test.** Replay a week of one person's recorded routines offline and count how often the top suggestion would
+have been right.
+
+**Accepted when** the suggestions shown are right at least 80% of the time (it stays quiet otherwise), an accepted one
+runs with every `expect` checked, and nothing runs without the accept key.
+
+### M3. See the result before it happens
+
+**The idea.** Before a risky change, the agent does it on a copy, on its own display, and shows the result as a
+see-through layer over the real window: "this is your deck after the reformat". If the person accepts, it does it for
+real.
+
+**Today.** Nothing rehearses. B3 (the agent display) is planned for 8.1. `run_steps` with `expect` can run the same
+steps twice and check both.
+
+**Needs.** B3; a copy of the document (an APFS clone on macOS, a plain copy elsewhere) opened on the agent display; the
+overlay showing the captured result over the real window; and a refusal for what cannot be copied, such as a web form
+that sends or an email.
+
+**First test.** Reformat a Keynote or PowerPoint deck on a copy on the agent display, and show before and after.
+
+**Accepted when** the real document is untouched until the person confirms, the real result matches the rehearsed one
+afterwards (frame hashes within a tolerance), and an action that cannot be rehearsed says so.
+
+### M4. Undo for the whole computer
+
+**The idea.** Every action the agent takes is recorded with how to reverse it: the old value of a field, a copy of a
+file before a move or delete, where a window was. "Undo the last 10 minutes" walks back across apps. Each action is
+labelled before it runs, undoable or one-way, and one-way actions (send, pay, permanent delete) go through C.
+
+**Today.** The audit log records each call and `set_value` reads its value back. Nothing keeps the state from before
+an action.
+
+**Needs.** An undo journal beside the step journal (`src/session/step-journal.ts`) holding each action's inverse or
+"one-way"; `undo {last | since}`, which runs inverses newest first with an `expect` on each; file copies kept with
+owner-only permissions and a retention; and the label on the card before a one-way action.
+
+**First test.** A 20-action session across TextEdit, Finder and a form app, then undo all of it.
+
+**Accepted when** every undoable action is reversed and checked, every one-way action is listed as not undone, and
+nothing the agent did not do is touched.
+
+### M5. A new face for any app
+
+**The idea.** The agent builds a small panel over a complicated app. An old ERP's 40 fields become the 4 the person
+uses, and filling them in drives the real app through accessibility. The same layer can:
+- translate an app's interface where it sits;
+- rewrite a form full of jargon in plain language;
+- give large text and high contrast to an app without them;
+- cover email addresses and account numbers while the screen is shared. Unlike the card, this overlay has to be
+  included in captures.
+
+**Today.** Accessibility trees on all three OSes, no element refs yet (A2), and overlays always excluded from capture.
+
+**Needs.** A2 refs; a panel window (built with each OS's card toolkit) that maps each field to a ref; a per-overlay
+choice to be excluded from or included in captures (`NSWindowSharingNone` on macOS, `WDA_EXCLUDEFROMCAPTURE` on
+Windows); and redaction that follows the covered text when windows move.
+
+**First test.** A 4-field panel over a demo app with 40 fields, and the redaction overlay during a Zoom or Meet share,
+checked from the receiving side.
+
+**Accepted when** the panel fills the real form with every value read back, and no covered value is visible to the
+receiving side during a 10-minute share with windows moving.
+
+### M6. Drop anything onto anything
+
+**The idea.** Pick up someone's name from a video call and drop it on the CRM, and a contact appears with its fields
+filled in. Pick up a table from a paused video and drop it into Excel, and it arrives as a table. It copies meaning and
+pastes structure between apps that know nothing about each other. A video frame cannot start a real OS drag, so the
+gesture is a pick-up chord over the source and a drop chord over the target, or a request to the agent.
+
+**Today.** `mouse_drag` moves pixels and OCR reads text. Nothing maps one app's content to another app's fields.
+
+**Needs.** OCR or accessibility to read the source; one model call to map the content to the target's fields (A2
+refs); C's confirmation showing the mapping before anything is saved; and D1's drag session where the source can
+really be dragged.
+
+**First test.** Ten pick-up and drop pairs: a name tag into Contacts, a table in a paused video into Numbers, an
+address in a PDF into a form. The mapping is shown each time.
+
+**Accepted when** at least eight of ten land with the right fields after Confirm, and Cancel saves nothing.
+
+### M7. See where the agent is looking
+
+**The idea.** While the agent reads the screen, faint outlines show what it is reading at that moment: this line of
+OCR text, that button, this region. The person can follow its attention, and notices when it reads something it
+should not, such as a private message in a corner.
+
+**Today.** The server knows every OCR region and accessibility element it reads, at the moment it reads it. The
+overlay draws one dot.
+
+**Needs.** Overlay outlines (a rectangle that fades within about a second) drawn for each read; a setting for when
+(always, only for reads outside the target window, only while the person hovers over the card); outlines never in a
+capture.
+
+**First test.** A 10-minute run with outlines on; the person says whether it helped them follow and whether it
+distracted them.
+
+**Accepted when** each outline appears within 100 ms of its read, none appears in a capture, and in a scripted test
+the "outside the target window" setting outlines every read of another app.
+
+### M8. Apps become MCP servers by being watched
+
+**The idea.** Once the agent has learned an app (W6 and P), it writes a small adapter with real tools, such as
+`invoices.export(month)` or `crm.add_contact(...)`, each one a checked task tree underneath. Adapters go into the MCP
+registry with an `mcp-server.toml` like any other server, signed and reviewed, so the next person's agent does not
+have to learn the app.
+
+**Today.** `export_steps` produces checked batches. The registry and its manifest format exist for this project's own
+servers (`mcp-server.toml`).
+
+**Needs.** P's stored trees with variables; a generator that turns a tree with variables into an MCP tool with a
+schema; version checks against the app (its version and a layout hash); review and signing before anything is
+published; and P3's repair when the app changes.
+
+**First test.** Generate an adapter from three recorded exports in a demo app and call it from a second MCP client.
+
+**Accepted when** the adapter's tools pass their `expect` checks on a fresh machine with the same app version, refuse
+by name on another version, and hold no recorded secret.
+
+### Where these could land
+
+Sizes use the release plan's scale (XS under a day, S a few days, M one to two weeks, L longer or needs hardware the
+project lacks) and are guesses until each first test has run.
+
+| Idea | Builds on | Could start | Rough size |
+|---|---|---|---|
+| W1 jumping through video | Today's tools | Now, as a skill | XS |
+| M7 where the agent looks | Overlay outlines | After 8.0 | S |
+| M4 undo | C, the step journal | With C | M |
+| W6 learn by watching the person | `export_steps`, an accessibility hit test (shared with C2) | After 8.0 | M |
+| W0 see and hear one app | v7.8 L1 and L2 | With R (8.2) | L |
+| W2 reflexes | W0 | After W0 | M |
+| W3 watch together | W0, v7.8 L2, overlay shapes | After W0 | M |
+| W5 any camera | W0 | After W0 | M |
+| W7 many streams | W2 | After W2 | M |
+| W4 share meaning | Live share, H2, B3 | After 8.1 | M |
+| M6 drop anything onto anything | A2, C, D1 | After 8.1 | M |
+| M1 two cursors | B2, A2 | After 8.1 | L |
+| M3 result before it happens | B3 | After 8.1 | L |
+| M5 a new face for any app | A2 | After A2 | L |
+| M2 accept the next click | W6, P | After 8.2 | L |
+| M8 apps as MCP servers | P, W6 | After 8.2 | L |
+
+The two cheapest that show the most are W1, which is a skill with no server change, and M7, which needs only outlines
+in the overlay. M4's undoable and one-way labels could ship with C.
+
 ## Out of scope
 
 These are carried over from the gaps review:
@@ -443,7 +852,8 @@ These are carried over from the gaps review:
 - **Hosting a cloud browser or VM.** That is another product; B3's agent display is local.
 - **Solving CAPTCHAs.** A CAPTCHA is a hand-off (H1).
 - **Scheduling.** That is the host's job.
-- **Always-on screen memory.** Its own users turn it off.
+- **Always-on screen memory.** Its own users turn it off. W0's short memory lasts only as long as a watch the person
+  started.
 - **The Unreal and Blender bridges.** Removed with the old draft; recoverable from `2b3a7ce` if game-engine work
   returns.
 
@@ -456,3 +866,9 @@ These are carried over from the gaps review:
 3. **Recording retention.** What default retention for recordings (R3)? The proposal is 7 days.
 4. **Label confirmations.** Should `COMPUTER_USE_CONFIRM_LABELS` (C2) ship with a default list switched on, or off
    until set?
+5. **An app's sound (W0).** Should sound be captured only when the person turns it on for a watch (the proposal), or
+   whenever a watch runs?
+6. **The person's own input (W6, M2).** Learning from the person means recording their clicks and keys while a "learn
+   from me" recording runs, with typed text in sensitive fields dropped. Is that acceptable, and opt-in per recording?
+7. **Publishing adapters (M8).** May an adapter learned on one machine be published to the registry, and who reviews
+   it before it is?

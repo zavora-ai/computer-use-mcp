@@ -19,6 +19,9 @@ export const BASE_KEY_NAMES = [
   ...Array.from({ length: 20 }, (_, i) => `f${i + 1}`),
   ...'abcdefghijklmnopqrstuvwxyz0123456789'.split(''),
   '-', '=', '[', ']', '\\', ';', "'", ',', '.', '/', '`',
+  // 7.8.1: the numeric keypad (Blender binds its views to it; the main-row digits do something else there).
+  ...Array.from({ length: 10 }, (_, i) => `numpad${i}`),
+  'numpad_decimal', 'numpad_enter', 'numpad_add', 'numpad_subtract', 'numpad_multiply', 'numpad_divide', 'numpad_equals',
 ] as const
 
 /** Name → native combo fragment. A fragment may carry shift ("shift+`"). */
@@ -44,6 +47,13 @@ export const KEY_ALIASES: Readonly<Record<string, string>> = {
   arrowleft: 'left', arrowright: 'right', arrowup: 'up', arrowdown: 'down',
   del: 'forwarddelete', forward_delete: 'forwarddelete', bksp: 'backspace', spacebar: 'space',
   caps_lock: 'capslock', ' ': 'space',
+  // 7.8.1: keypad spellings. "numpad+" cannot be written (the combo splits on "+"), so the operators have names.
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [[`kp${i}`, `numpad${i}`], [`kp_${i}`, `numpad${i}`], [`keypad${i}`, `numpad${i}`], [`num${i}`, `numpad${i}`]]).flat()),
+  'numpad.': 'numpad_decimal', numpad_period: 'numpad_decimal', numpad_dot: 'numpad_decimal', kp_decimal: 'numpad_decimal',
+  numpad_plus: 'numpad_add', kp_add: 'numpad_add', 'numpad-': 'numpad_subtract', numpad_minus: 'numpad_subtract',
+  kp_subtract: 'numpad_subtract', 'numpad*': 'numpad_multiply', numpad_star: 'numpad_multiply', kp_multiply: 'numpad_multiply',
+  'numpad/': 'numpad_divide', numpad_slash: 'numpad_divide', kp_divide: 'numpad_divide', numpad_return: 'numpad_enter',
+  kp_enter: 'numpad_enter', 'numpad=': 'numpad_equals', numpad_equal: 'numpad_equals',
 }
 
 const MODIFIERS = new Set<string>(MODIFIER_NAMES)
@@ -132,11 +142,21 @@ export function normalizeHeldKeys(keys: readonly string[], platform: NodeJS.Plat
   return out
 }
 
-/** Rewrap a native "Unknown key" failure with the list of valid names. */
+/**
+ * Rewrap a native "Unknown key" failure with the list of valid names. 8.0 (Blender review, open item 9): when this
+ * release knows the name, the list contradicts the error; the reason is either a platform map without that key or an
+ * addon older than the TypeScript layer, so say both and point at doctor's `native_addon` check, which tells them apart.
+ */
 export function explainNativeKeyError(error: unknown): unknown {
   const message = error instanceof Error ? error.message : String(error)
   if (/Unknown key/i.test(message)) {
-    return new Error(`${message}. This platform's key map lacks it. Valid keys: ${validKeyNames().join(' ')}`)
+    // The addon says "Unknown key in combo: cmd+numpad_decimal" or "Unknown key: numpad1".
+    const named = /Unknown key(?: in combo)?:\s*([^\s"]+)/i.exec(message)?.[1]?.toLowerCase()
+    const valid = validKeyNames()
+    const parts = named ? named.split(/[+,]/).filter(Boolean) : []
+    const known = parts.length > 0 && parts.every(part => valid.includes(part))
+    return new Error(`${message}. This platform's key map lacks it. Valid keys: ${valid.join(' ')}`
+      + (known ? `. This release knows "${named}", so the native addon that loaded may be older than this release: doctor's native_addon check says.` : ''))
   }
   return error
 }

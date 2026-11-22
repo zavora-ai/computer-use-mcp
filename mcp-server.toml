@@ -538,6 +538,20 @@ requires_approval = false
 credential_bindings = []
 
 [[tools]]
+name = "hand_off"
+description = "Pause input and ask the person, on the status card, to do what only they should do (sign in, a 2FA code, a CAPTCHA, a payment)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "export_steps"
+description = "Return the actions that worked as run_steps batches with an expect on each step, to replay later"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
 name = "set_target"
 description = "Set the session target window for input and capture tools"
 risk_class = "read_only"

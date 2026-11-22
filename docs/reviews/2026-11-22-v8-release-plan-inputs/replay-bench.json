@@ -1,0 +1,1036 @@
+{
+  "script": "scripts/bench-replay.mjs",
+  "model": "claude-opus-5-5",
+  "platform": "darwin (macOS 26.2)",
+  "runs": [
+    {
+      "date": "2026-11-22T09:17:56.312Z",
+      "results": [
+        {
+          "task": "calculator",
+          "model": {
+            "ms": 25125,
+            "toolCalls": 9,
+            "usage": {
+              "calls": 10,
+              "input": 22,
+              "cacheWrite": 16621,
+              "cacheRead": 135253,
+              "output": 792
+            },
+            "cost": 0.1261,
+            "models": [
+              "claude-opus-5-5"
+            ],
+            "ending": "DONE: Calculator now shows 1,234 \u00d7 5,678 = 7,006,652 on its display (my first typing attempt was cut off, so I cleared it and entered it again).",
+            "success": true
+          },
+          "replay": {
+            "ms": 2966,
+            "toolCalls": 1,
+            "steps": {
+              "completed": 8,
+              "total": 8
+            },
+            "success": true,
+            "modelCalls": 0,
+            "tokens": 0
+          },
+          "exported": {
+            "steps": 8,
+            "batches": 1,
+            "unchecked": [
+              1,
+              3
+            ],
+            "byText": []
+          },
+          "batches": [
+            {
+              "target_app": "com.apple.calculator",
+              "frame": [
+                304,
+                203,
+                230,
+                408
+              ],
+              "steps": [
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  }
+                },
+                {
+                  "tool": "type",
+                  "args": {
+                    "text": "1234*5678"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "return"
+                  }
+                },
+                {
+                  "tool": "wait",
+                  "args": {
+                    "duration": 2
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "type",
+                  "args": {
+                    "text": "1234*5678",
+                    "mode": "keys"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "return"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "date": "2026-11-22T09:19:52.370Z",
+      "results": [
+        {
+          "task": "textedit",
+          "model": {
+            "ms": 8270,
+            "toolCalls": 3,
+            "usage": {
+              "calls": 3,
+              "input": 8,
+              "cacheWrite": 922,
+              "cacheRead": 40339,
+              "output": 166
+            },
+            "cost": 0.016,
+            "models": [
+              "claude-opus-5-5"
+            ],
+            "ending": "DONE: I typed Milk, Eggs and Bread into note.txt in TextEdit, each on its own line, and left the file open without saving it.",
+            "success": true
+          },
+          "replay": {
+            "ms": 304,
+            "toolCalls": 1,
+            "steps": {
+              "completed": 1,
+              "total": 1
+            },
+            "success": true,
+            "modelCalls": 0,
+            "tokens": 0
+          },
+          "exported": {
+            "steps": 1,
+            "batches": 1,
+            "unchecked": [],
+            "byText": []
+          },
+          "batches": [
+            {
+              "target_app": "com.apple.TextEdit",
+              "frame": [
+                118,
+                73,
+                673,
+                439
+              ],
+              "steps": [
+                {
+                  "tool": "type",
+                  "args": {
+                    "text": "Milk\nEggs\nBread"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "task": "blender",
+          "model": {
+            "ms": 79119,
+            "toolCalls": 51,
+            "usage": {
+              "calls": 20,
+              "input": 42,
+              "cacheWrite": 30491,
+              "cacheRead": 567056,
+              "output": 3327
+            },
+            "cost": 0.3326,
+            "models": [
+              "claude-opus-5-5"
+            ],
+            "ending": "DONE: I deleted the default cube, added a torus and applied Shade Smooth to it. The outliner now shows only Camera, Light and Torus, and Blender's last-operation panel reads \"Shade Smooth\".",
+            "success": true
+          },
+          "replay": {
+            "ms": 2793,
+            "toolCalls": 1,
+            "steps": {
+              "completed": 5,
+              "total": 30
+            },
+            "failure": {
+              "error": "step_failed",
+              "failed_step": {
+                "index": 4,
+                "tool": "key",
+                "error": "expect_failed",
+                "expect": {
+                  "changed": true
+                },
+                "saw": {
+                  "changed": false
+                },
+                "message": "Nothing changed in the window within 2000 ms.",
+                "hint": "Nothing changed in the window within 2000 ms. Look, then fix this step or the state before it.",
+                "next_call": {
+                  "tool": "screenshot",
+                  "arguments": {
+                    "target_window_id": 3781
+                  }
+                }
+              },
+              "hint": "Step 5 (key) failed: Nothing changed in the window within 2000 ms. Look, then fix this step or the state before it."
+            },
+            "success": false,
+            "modelCalls": 0,
+            "tokens": 0
+          },
+          "exported": {
+            "steps": 33,
+            "batches": 2,
+            "unchecked": [
+              3,
+              11
+            ],
+            "byText": [
+              20,
+              29,
+              30,
+              32
+            ]
+          },
+          "batches": [
+            {
+              "target_app": "org.blenderfoundation.blender",
+              "frame": [
+                0,
+                30,
+                1280,
+                934
+              ],
+              "steps": [
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      200,
+                      700
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Cube",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1,
+                    "region": [
+                      1100,
+                      140,
+                      120,
+                      30
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      500,
+                      500
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "delete"
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "x"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      650,
+                      473
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      500,
+                      600
+                    ]
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "shift+a"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      530,
+                      470
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1,
+                    "region": [
+                      290,
+                      60,
+                      50,
+                      22
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      337,
+                      762
+                    ]
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      340,
+                      760
+                    ],
+                    "duration_ms": 200
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      340,
+                      762
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      1153,
+                      155
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      600,
+                      650
+                    ],
+                    "duration_ms": 200
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "x"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      1152,
+                      155
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Cube",
+                    "match": "contains",
+                    "region": [
+                      1032,
+                      137,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      600,
+                      650
+                    ],
+                    "duration_ms": 200
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "x"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "return"
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      269,
+                      70
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      269,
+                      100
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      300,
+                      122
+                    ],
+                    "duration_ms": 200
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "wait",
+                  "args": {
+                    "duration": 0.5
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "path": [
+                      [
+                        300,
+                        122
+                      ],
+                      [
+                        470,
+                        122
+                      ],
+                      [
+                        470,
+                        281
+                      ]
+                    ],
+                    "duration_ms": 300
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Torus",
+                    "match": "contains",
+                    "region": [
+                      350,
+                      233,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                }
+              ]
+            },
+            {
+              "target_app": "org.blenderfoundation.blender",
+              "frame": [
+                0,
+                30,
+                1280,
+                934
+              ],
+              "steps": [
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "contains",
+                    "region": [
+                      192,
+                      52,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "path": [
+                      [
+                        312,
+                        110
+                      ],
+                      [
+                        359,
+                        557
+                      ]
+                    ],
+                    "duration_ms": 300
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Shade Smooth",
+                    "match": "exact",
+                    "region": [
+                      239,
+                      509,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "date": "2026-11-22T09:52:38.056Z",
+      "note": "Blender again on a quiet desktop, with derived changed checks soft (18a)",
+      "results": [
+        {
+          "task": "blender",
+          "model": {
+            "ms": 55742,
+            "toolCalls": 32,
+            "usage": {
+              "calls": 13,
+              "input": 28,
+              "cacheWrite": 32040,
+              "cacheRead": 280251,
+              "output": 2301
+            },
+            "cost": 0.2624,
+            "models": [
+              "claude-opus-5-5"
+            ],
+            "ending": "DONE: I deleted the default cube, added a torus and applied Shade Smooth to it. The outliner now lists only the camera, light and torus, and the last-action panel reads \"Shade Smooth\".",
+            "success": true
+          },
+          "replay": {
+            "ms": 13785,
+            "toolCalls": 1,
+            "steps": {
+              "completed": 24,
+              "total": 24
+            },
+            "success": true,
+            "modelCalls": 0,
+            "tokens": 0
+          },
+          "exported": {
+            "steps": 24,
+            "batches": 1,
+            "unchecked": [
+              2,
+              6,
+              8
+            ],
+            "byText": [
+              18,
+              22
+            ]
+          },
+          "batches": [
+            {
+              "target_app": "org.blenderfoundation.blender",
+              "frame": [
+                0,
+                30,
+                1280,
+                932
+              ],
+              "steps": [
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      250,
+                      450
+                    ]
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "delete"
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "shift+a"
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      530,
+                      420
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      337,
+                      762
+                    ]
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Add",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Delete Global",
+                    "match": "contains",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Delete",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Add",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Mesh",
+                    "match": "exact",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      299,
+                      123
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Torus",
+                    "match": "contains",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "path": [
+                      [
+                        299,
+                        123
+                      ],
+                      [
+                        440,
+                        123
+                      ],
+                      [
+                        471,
+                        282
+                      ]
+                    ],
+                    "duration_ms": 300
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Torus",
+                    "match": "contains",
+                    "region": [
+                      351,
+                      234,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Shade Smooth",
+                    "match": "exact",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Shade Smooth",
+                    "match": "exact",
+                    "region": [
+                      240,
+                      510,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "The Blender task ran while another session drove a second Blender on the same desktop; the replay of this run sent its five steps to its own window (audit log, 09:19:48 UTC) with no other input in that second.",
+    "The Blender replay stopped at step 5 of 33: an escape key whose recorded expect (changed: true) did not hold at replay speed."
+  ]
+}
