@@ -299,7 +299,8 @@ few days, M one to two weeks, L longer or needs hardware the project lacks.
 | 16 | Run the v8 surface on Windows 11 and GNOME 46: the 7.8.1 input, the card's move-aside, the hand-off, replay with `changed` and `window` expects, guide with coordinates | **must** | not started (the Windows move-aside has never run) | Windows is in 48% of Codex's computer-use issue titles (gaps review A8); the Windows card has never run on Windows with the dodge (Blender review, open item 10) | `libexec/windows-status-card.ps1`; `docs/TESTING-IN-UTM.md` | M |
 | 17 | `doctor`: the stale-grant fix text, and the addon's version against the package's | **must** | done in the afternoon pass, uncommitted | Gaps review P0-4 (Codex #18896 open six months; TCC is 9.7% of Claude Code's computer-use titles); a 7.8.0 addon under 7.8.1 code gave "Unknown key numpad_decimal … Valid keys: … numpad_decimal" (Blender review, open item 9) | `src/session/doctor.ts:13`; `src/session/keys.ts:146` | XS |
 | 17a | macOS 27.3's System & App Protection Override: run on 27.3 beta; `doctor` names the new grant and which target apps the person chose; input to an app not chosen is refused by name with the fix | **must** | advice done in the afternoon pass; not run on 27.3 | Apple split the permission on 2026-11-16 (per-app "Choose Apps", "Ask First" or "At Any Time"); the server's one permission name was written before macOS 27 was run | `src/session/doctor.ts:9-13`; `src/session/contract.ts:242`; `native/src/permissions.rs:88` | S-M (needs a 27.3 machine or VM) |
-| 18 | A measured replay number: three tasks (one Blender lesson, one form, one file task) run model-driven and replayed; turns, input tokens, wall time, success | **must** | not started | The 45x-cost thread drew 495 points (gaps review A3); `docs/EFFICIENCY.md:24` says the savings are not measured. v8's headline claim needs a number | `docs/EFFICIENCY.md`, `benchmarks/compare.mjs` | S |
+| 18 | A measured replay number: three tasks run model-driven and replayed; turns, input tokens, wall time, success | **must** | measured 2026-11-22 (Calculator, TextEdit, Blender 5.3): two replays reached the end state 8x and 27x faster with no model call; the Blender replay stopped at step 5 of 33 (row 18a) | The 45x-cost thread drew 495 points (gaps review A3); `docs/EFFICIENCY.md` said the savings were not measured | `scripts/bench-replay.mjs`; `docs/EFFICIENCY.md`; `docs/reviews/2026-11-22-v8-release-plan-inputs/replay-bench.json` | S |
+| 18a | Replays of a model's run that hold up: the export drops detours (actions a later action undid, keys that changed nothing) and marks a check it derived from an incidental change as soft (reported, not stopping), or `run_steps` paces steps by `offsets_ms` | should | not started | The Blender replay above: an Escape whose recorded change (most likely a hover tooltip it dismissed) does not happen at replay speed stopped the batch; the export kept 33 steps for a task of about 10 | `src/session/step-journal.ts` (`exportSteps`); `src/session.ts` (`run_steps`) | S-M |
 | 19 | The release itself: CHANGELOG relabelled (7.8.0 released, 7.8.1 folded into 8.0.0), counts, tag, staged publish of the main and six platform packages, `npx` start on three systems | **must** | publishing works; labels wrong | Housekeeping rows 1-4 | `CHANGELOG.md`, `mcp-server.toml`, `.github/workflows/ci.yml:564-605` | XS |
 | 20 | Windows OCR (`Windows.Media.Ocr`): `read_window_text`, `click_text`, `wait_for_text` on Windows, and with them guide `text`, replay `text` expects and the browser sign-in check | should | not started | Gaps review P2-12 and A11; without it three of v8's features are macOS-only in part | `src/tool-catalog.ts:267-270` (darwin only) | M-L |
 | 21 | `confirm_action` and label confirmations (Send, Buy, Pay, Delete) | should | not started | Stopping at the irreversible step is the third most-loved feature; over-confirming is also a complaint (gaps review A6, Codex #7740). The sign-in hand-off covers typing, not a click on Pay | `src/session/legacy-policy.ts`, `src/approval-ledger.ts` | M |
@@ -354,10 +355,18 @@ under. With the other session's `agent_pointer` targeting added the same afterno
 87,037: the budget has under 100 bytes left, so the next parameter in `desktop` needs a trim first.
 
 Still open among the musts: **16** (a run on Windows 11 and GNOME 46), **17a**'s run on a 27.3 machine (whether an app
-not chosen fails, and how, is unknown until then), **18** (the measured replay number, which needs live runs with a
-model), and **19** (the release: tag, staged publish, `npx` on three systems). None of the new code has run on Windows
+not chosen fails, and how, is unknown until then), and **19** (the release: tag, staged publish, `npx` on three systems). None of the new code has run on Windows
 or Linux; glide and path moves have not yet been watched in Blender. Of the trainer's gaps, T1 (row 24), T2 (row 29)
 and T7 (row 29c) are open shoulds.
+
+**Row 18 was measured the same day** (`scripts/bench-replay.mjs`, `docs/EFFICIENCY.md`): Calculator, model 25.1 s and
+10 model calls ($0.13) against a replay of 3.0 s and none; TextEdit, 8.3 s and 3 calls ($0.02) against 0.3 s; Blender,
+the model reached the end state in 79.1 s with 20 calls and 51 tool calls ($0.33), and its replay stopped at step 5 of
+33 (row 18a). The Blender pair ran while another session drove a second Blender; the audit log shows the replay's five
+steps went to its own window with no other input in that second, but it should be run again on a quiet desktop after
+18a. The draft PR [zavora-ai/computer-use-mcp#63](https://github.com/zavora-ai/computer-use-mcp/pull/63) carries the
+v8 work so CI runs it on Windows and Linux runners, which covers the unit suite there and the Linux desktop job; it is
+not row 16's live run.
 
 ## Recommended scope and order
 
@@ -401,8 +410,9 @@ first showcase dry run happened the same day (8 of 8 steps in run 3).
 6. **The trainer's open gaps** (S each): retry in tiles when a whole-window read misses (29c, T7), then the overlay
    pointer opt-in for recordings with its label beside it (29, T2). Re-run the donut lesson with glide on and the
    pointer showing, and record it.
-7. **Measure replay** (S): the three tasks of row 18 (the donut lesson's take is the first: `takes/run-3/take.json`
-   holds its eight steps as `export_steps` batches); put the table in `docs/EFFICIENCY.md` and the README.
+7. ~~**Measure replay**: the three tasks of row 18.~~ Measured; the table is in `docs/EFFICIENCY.md` and the README.
+   Next: row 18a, then the Blender pair again on a quiet desktop, and the donut lesson's take
+   (`takes/run-3/take.json`, eight steps as `export_steps` batches) as a fourth task.
 8. **Shoulds by value**: Windows OCR (20), the macOS recorder (24, T1), `confirm_action` (21), secret fields hidden in
    captures (21a), `mouse_drag` in `desktop` with schema trimming (23; the budget has under 100 bytes left).
 9. **Release**: counts and docs, tag `v8.0.0`, stage and approve the seven packages, start it with `npx` on all three

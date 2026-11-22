@@ -23,6 +23,33 @@ sleep-and-screenshot loops, `read_window_text` with a `region` returns a few doz
 and its lines carry one `box` each with the window's `screen_origin` once (the per-line `screen` rectangle is gone).
 These are described, not measured as token counts: compare real usage on the same tasks before claiming a saving.
 
+## Replay against a model, measured (8.0)
+
+`scripts/bench-replay.mjs` has a model do a task once through this server (Claude Opus 5.5, effort medium, the
+`desktop` profile, the recording checked with `export_steps {action: "start"}`), then replays the exported batches with
+`run_steps` in a fresh copy of the app and checks the same end state. Run on macOS 26.2 on 2026-11-22; the raw results,
+with every exported batch, are in
+[`reviews/2026-11-22-v8-release-plan-inputs/replay-bench.json`](reviews/2026-11-22-v8-release-plan-inputs/replay-bench.json).
+
+| Task | Run | Reached the end state | Model calls | Tool calls | Input tokens (uncached + cache write + cache read) | Output tokens | Wall time | Model cost |
+|---|---|---|---:|---:|---|---:|---:|---:|
+| Calculator: 1234 × 5678 | model | yes | 10 | 9 | 22 + 16,621 + 135,253 | 792 | 25.1 s | $0.126 |
+| | replay | yes | 0 | 1 (8 steps) | 0 | 0 | 3.0 s | $0 |
+| TextEdit: type three lines | model | yes | 3 | 3 | 8 + 922 + 40,339 | 166 | 8.3 s | $0.016 |
+| | replay | yes | 0 | 1 | 0 | 0 | 0.3 s | $0 |
+| Blender 5.3: delete the cube, add a torus, shade smooth | model | yes | 20 | 51 | 42 + 30,491 + 567,056 | 3,327 | 79.1 s | $0.333 |
+| | replay | **no**: stopped at step 5 of 33 | 0 | 1 | 0 | 0 | 2.8 s | $0 |
+
+Where the replay worked it took 8x to 27x less time and no model call; the model's cost was small here because prompt
+caching served most of its input (the tool list and earlier turns). The Blender replay stopped at its fifth step, an
+Escape whose recorded `expect: {changed: true}` did not hold: in the recording the model pressed Delete, thought for
+several seconds, then pressed Escape, and the window changed in between (most likely a hover tooltip that Escape
+dismissed); the replay sends the two keys 70 ms apart, so nothing appears to dismiss. Two things follow. A replay runs
+at machine speed, and a check derived from a change the recording happened to see can be about time, not about the step.
+And an export of a model's run keeps its detours (33 steps for a task a person does in about 10). Both are open items
+in the v8 release plan. Model costs use Opus 5.5's prices ($4 input, $5 cache write, $0.20 cache read, $20 output per
+million tokens).
+
 The host-side helpers below are unchanged and still opt-in. Claude Code defers tool schemas and pays per search; hosts
 that load the whole list (Claude Desktop, Cursor, VS Code) are the ones the smaller default list helps.
 

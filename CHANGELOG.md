@@ -74,6 +74,11 @@ paused input (`handed_off`) and put its message on the card until `done`.
   platform package in node_modules resolves first). A key this release knows but the addon refuses is now blamed on the
   addon instead of being listed as valid in the same error.
 
+- **`scripts/bench-replay.mjs`**: a task done once by a model through the server and then replayed with `run_steps`,
+  with model calls, tool calls, tokens, wall time and success for both. First numbers (macOS 26.2, Claude Opus 5.5):
+  Calculator 25.1 s and 10 model calls against a 3.0 s replay; TextEdit 8.3 s against 0.3 s; a Blender replay stopped
+  at a check its recording took from an incidental change (`docs/EFFICIENCY.md`).
+
 ### Changed
 
 - **macOS permission advice.** On macOS 27.3 and later `doctor` names System & App Protection Override and the apps to
