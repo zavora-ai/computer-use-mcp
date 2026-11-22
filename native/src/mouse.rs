@@ -523,6 +523,12 @@ mod macos {
     }
 
     fn post(event: CGEvent) {
+        // 7.8.1: a modifier held across calls (hold_key down) marks every pointer event, as a held key on a keyboard
+        // does, so an app that reads flags off the click sees shift+click. Nothing held: the flags are unchanged.
+        let held = crate::keyboard::held_modifier_flags();
+        if held != CGEventFlags::CGEventFlagNull {
+            event.set_flags(event.get_flags() | held);
+        }
         event.post(CGEventTapLocation::HID);
     }
 

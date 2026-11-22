@@ -126,6 +126,8 @@ export class ScreenshotHandler {
     })
   }
 
+  #cursorDrawn = false
+
   #sent(result: ToolResult): ToolResult {
     this.#unchangedStreak = 0
     this.#lastResult = result
@@ -167,6 +169,70 @@ export class ScreenshotHandler {
    * failure — takes the native path in `handle` (on a worker thread when the native module can, 7.7.0 K4).
    */
   async handleAsync(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult | undefined> {
+    this.#cursorDrawn = false
+    const result = await this.#handleCapture(tool, args, signal)
+    if ((tool !== 'screenshot' && tool !== 'zoom') || !result || result.isError) return result
+    return this.#withPointer(tool, args, result)
+  }
+
+  /**
+   * 7.8.1: where the pointer is, in every screenshot and zoom: screen points and, when it is inside, image pixels.
+   * Captures leave the pointer out (an agent's own cursor would clutter every frame); `include_pointer` draws it: the
+   * real cursor on the ScreenCaptureKit paths, a marker where the capture path cannot draw one.
+   */
+  #withPointer(tool: string, args: Record<string, unknown>, result: ToolResult): ToolResult {
+    let pointer: { x: number; y: number } | undefined
+    try { pointer = this.#native.cursorPosition?.() } catch { pointer = undefined }
+    if (!pointer || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y)) return result
+    const content = result.content ?? []
+    const imageIndex = content.findIndex(c => c.type === 'image')
+    if (imageIndex < 0) return result
+    const text = content.find(c => c.type === 'text') as { type: 'text'; text: string } | undefined
+    let mapping: { originX: number; originY: number; scaleX: number; scaleY: number; imageWidth: number; imageHeight: number } | undefined
+    if (tool === 'screenshot') {
+      mapping = this.#lastMapping
+    } else {
+      const size = /^(\d+)x(\d+)/.exec(text?.text ?? '')
+      const region = Array.isArray(args.region) ? args.region as number[] : undefined
+      if (size && region && region.length === 4) {
+        const [x1, y1, x2, y2] = region as [number, number, number, number]
+        const { windowId } = typeof args.target_window_id === 'number' || typeof args.target_app === 'string' ? this.#captureWindow(args) : { windowId: undefined }
+        const bounds = windowId !== undefined ? this.#native.getWindow?.(windowId)?.bounds : undefined
+        const w = Number(size[1]), h = Number(size[2])
+        mapping = { originX: (bounds?.x ?? 0) + x1, originY: (bounds?.y ?? 0) + y1, scaleX: (x2 - x1) / w, scaleY: (y2 - y1) / h, imageWidth: w, imageHeight: h }
+      }
+    }
+    const px = Math.round(pointer.x), py = Math.round(pointer.y)
+    let line = `pointer at screen (${px}, ${py})`
+    let inside = false
+    let ix = 0, iy = 0
+    if (mapping && mapping.scaleX > 0 && mapping.scaleY > 0) {
+      ix = (pointer.x - mapping.originX) / mapping.scaleX
+      iy = (pointer.y - mapping.originY) / mapping.scaleY
+      inside = ix >= 0 && iy >= 0 && ix < mapping.imageWidth && iy < mapping.imageHeight
+      line += inside ? `, image (${Math.round(ix)}, ${Math.round(iy)})` : ', outside this image'
+    }
+    const next = content.slice()
+    if (args.include_pointer === true) {
+      if (this.#cursorDrawn) {
+        line += '; drawn (the real cursor)'
+      } else if (inside && typeof this.#native.annotateImage === 'function') {
+        const image = next[imageIndex] as { type: 'image'; data: string; mimeType: string }
+        const size = 18
+        try {
+          const marked = this.#native.annotateImage(image.data, JSON.stringify([{ x: Math.round(ix - size / 2), y: Math.round(iy - size / 2), width: size, height: size }]), null, null, 85)
+          next[imageIndex] = { type: 'image', data: marked.base64, mimeType: marked.mimeType }
+          line += '; marked with a box (this capture path cannot draw the cursor)'
+        } catch { line += '; not drawn' }
+      } else {
+        line += inside ? '; not drawn (no image annotation on this platform)' : ''
+      }
+    }
+    next.push({ type: 'text', text: line })
+    return { ...result, content: next }
+  }
+
+  async #handleCapture(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult | undefined> {
     if ((tool === 'screenshot' || tool === 'zoom') && signal?.aborted) throw abortError(signal)
     try {
       if (tool === 'screenshot' && this.#visionEnabled && this.#helper?.supportsCapture() && args.show_agent_pointer !== true) {
@@ -214,9 +280,10 @@ export class ScreenshotHandler {
     const { width, quality } = this.#captureParams(args)
     const bounds = this.#native.getWindow?.(windowId)?.bounds
     const capture = await this.#helperCapture({
-      windowId, width, format: quality === 0 ? 'png' : 'jpeg', quality: quality === 0 ? 100 : quality,
+      windowId, width, format: quality === 0 ? 'png' : 'jpeg', quality: quality === 0 ? 100 : quality, ...(args.include_pointer === true ? { cursor: true } : {}),
     }, signal)
     if (!capture) return undefined
+    this.#cursorDrawn = args.include_pointer === true
     const scope = JSON.stringify(['sck', windowId, width, quality, bounds])
     if (scope === this.#lastCaptureScope && capture.hash === this.#lastHash && this.#lastResult) {
       const unchanged = this.#unchangedReply(args)
@@ -257,7 +324,9 @@ export class ScreenshotHandler {
     try {
       capture = await this.#helperCapture({
         displayId, overlayPids: [process.pid], width, format: quality === 0 ? 'png' : 'jpeg', quality: quality === 0 ? 100 : quality,
+        ...(args.include_pointer === true ? { cursor: true } : {}),
       }, signal, ['display_not_found'])
+      if (capture) this.#cursorDrawn = args.include_pointer === true
     } catch (error) {
       if (!(error instanceof HelperFailure)) throw error
       return errJson({ error: 'display_not_found', display_id: displayId, remediation: ['list_displays gives each display\'s displayId.'] })
@@ -302,7 +371,9 @@ export class ScreenshotHandler {
       capture = await this.#helperCapture({
         displayId: 'main', overlayPids: [process.pid], region: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
         format: outputQuality === 0 ? 'png' : 'jpeg', quality: outputQuality === 0 ? 100 : outputQuality,
+        ...(args.include_pointer === true ? { cursor: true } : {}),
       }, signal, ['invalid_region'])
+      if (capture) this.#cursorDrawn = args.include_pointer === true
     } catch (error) {
       if (!(error instanceof HelperFailure)) throw error
       return errJson({ error: 'invalid_region', region: [x1, y1, x2, y2], message: error.message })
@@ -335,7 +406,9 @@ export class ScreenshotHandler {
         capture = await this.#helperCapture({
           windowId, region: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
           format: outputQuality === 0 ? 'png' : 'jpeg', quality: outputQuality === 0 ? 100 : outputQuality,
+          ...(args.include_pointer === true ? { cursor: true } : {}),
         }, signal, ['invalid_region'])
+        if (capture) this.#cursorDrawn = args.include_pointer === true
       } catch (error) {
         if (!(error instanceof HelperFailure)) throw error
         return errJson({ error: 'invalid_region', region: [x1, y1, x2, y2], window: { windowId, bounds: window.bounds }, message: error.message })

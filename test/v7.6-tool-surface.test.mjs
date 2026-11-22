@@ -39,7 +39,7 @@ test('the default profile is desktop and its tool list stays under the byte budg
   assert.equal(parseProfile('FULL'), 'full')
   const tools = await listed({ platform: 'darwin' })
   const size = bytes(tools)
-  assert.ok(size < 48_000, `desktop profile tools/list is ${size} bytes on the wire (budget 48,000; measured 45,942 on 2026-10-09, 44,324 on 2026-10-24, 44,736 on 2026-11-22 with modifiers, hold_keys and pressure)`)
+  assert.ok(size < 48_000, `desktop profile tools/list is ${size} bytes on the wire (budget 48,000; measured 45,942 on 2026-10-09, 44,324 on 2026-10-24, 44,736 on 2026-11-22 with modifiers, hold_keys and pressure, 45,448 with hold_key down/up and include_pointer)`)
   const names = new Set(tools.map(t => t.name))
   for (const expected of ['screenshot', 'zoom', 'click', 'type', 'key', 'scroll', 'read_window_text', 'click_text',
     'wait_for_window', 'wait_for_text', 'wait_for_stable', 'set_target', 'get_target', 'list_windows', 'doctor', 'get_tool_guide', 'agent_pointer']) {
@@ -53,7 +53,7 @@ test('the default profile is desktop and its tool list stays under the byte budg
 test('the full profile stays under its byte budget on macOS and still lists everything the platform has', async () => {
   const tools = await listed({ platform: 'darwin', profile: 'full' })
   const size = bytes(tools)
-  assert.ok(size < 88_000, `full profile tools/list is ${size} bytes on the wire (budget 88,000; measured 84,037 on 2026-10-09, 82,698 on 2026-10-24, 83,861 on 2026-11-22, down from 112,727)`)
+  assert.ok(size < 88_000, `full profile tools/list is ${size} bytes on the wire (budget 88,000; measured 84,037 on 2026-10-09, 82,698 on 2026-10-24, 83,861 then 84,573 on 2026-11-22, down from 112,727)`)
   const names = new Set(tools.map(t => t.name))
   const expected = Object.entries(TOOL_CATALOG).filter(([, meta]) => toolAvailableOn(meta, 'darwin')).map(([name]) => name)
   assert.deepEqual([...names].sort(), expected.sort())

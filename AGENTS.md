@@ -16,8 +16,8 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
 **Profiles:** `COMPUTER_USE_PROFILE=core|desktop|ax|scripting|windows-admin|full` (default `desktop` since 7.6: core plus the OCR and wait tools and `agent_pointer`; `full` lists everything)
 
 **Current surface (7.7.0):**
-- **Default list.** On macOS the default `desktop` profile lists 37 tools and 44,736 bytes on the wire (about 11k tokens);
-  `COMPUTER_USE_PROFILE=full` lists 78 tools and 83,861 bytes (112,727 before 7.6). 7.7.0 added `run_steps` and lists
+- **Default list.** On macOS the default `desktop` profile lists 37 tools and 45,448 bytes on the wire (about 11k tokens);
+  `COMPUTER_USE_PROFILE=full` lists 78 tools and 84,573 bytes (112,727 before 7.6). 7.7.0 added `run_steps` and lists
   the click aliases (`left_click`, `double_click` and the rest) only in `full`; they stay callable in every profile.
   Tool counts by profile on macOS: core 33, desktop 37, scripting 40, windows-admin 47, ax 54, full 78
   (Windows 31/33/36/45/50/76, Linux 31/33/36/37/50/68). A test derives these from the catalog and checks this file, the
@@ -40,6 +40,11 @@ This guide covers how to integrate `computer-use-mcp` into AI agent frameworks a
   drag for a plain one when only the flags were set. The numeric keypad has names on every platform (`numpad0` to
   `numpad9`, `numpad_decimal`, `numpad_enter`, `numpad_add` and the other operators; `kp1` and `numpad.` work too).
   `type` sends short text to Blender as key events, because Blender keeps only the first character of a pasted chunk.
+  `hold_key {action: "down"}` keeps keys held across calls until `{action: "up"}` or `{action: "release"}` (they come up
+  by themselves after 60 s, on Pause, Stop or take-over, and when the session ends); a modifier held that way marks the
+  pointer events on macOS. Every `screenshot` and `zoom` reports where the pointer is (screen and image), and
+  `include_pointer: true` draws it (macOS: the real cursor). The status card moves to a clear corner before the agent
+  clicks under it (macOS and Windows), since captures cannot see it.
 - **Every action says what happened (7.7).** Each action's result carries `effect` (`verified`, `changed`,
   `no_visible_change`, `unverified`), `route` and, for input, `delivery` (`hid` or `pid`). Every refusal and every
   unverified result adds a `hint` and a `next_call`: one read-only call this session can make as is. `verify: true` on

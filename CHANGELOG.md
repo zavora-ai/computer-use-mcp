@@ -15,6 +15,13 @@ Every change was checked against Blender 5.3.0 on macOS 26.2, reading the result
 - **`type` reaches Blender.** Blender keeps the first character of each key event's text, so text posted in chunks of
   20 arrived as one letter per chunk ("Relax Edge Loops" became "R"). Short text now goes to Blender as key events
   unless a `mode` is given.
+- **The status card no longer takes the agent's clicks.** On macOS the card is excluded from capture, so the agent
+  aims at the app it sees beneath it, and the card took the click: in a full-screen Blender it covers the viewport
+  header's X-ray and shading buttons, the navigation gizmo and the first outliner rows (0 of 12 clicks on the X-ray
+  button landed with the card up, 12 of 12 without it). Pointer input now asks the card to move to a clear corner
+  first (`dodge.json`; the server waits for `card.json` to show the move, 78-100 ms per click), and refuses with
+  `status_card_protected` only if it does not move. The Windows card publishes its rectangle and moves the same way
+  (not yet run on Windows).
 - **Window captures of secondary windows map to the screen.** ScreenCaptureKit drew Blender's main window, shrunk,
   into the frame of its file browser window, so `screenshot`, `read_window_text` and `click_text` on that window
   pointed at the wrong places (a click meant for the directory field made folders). The helper now checks that the
@@ -32,10 +39,18 @@ Every change was checked against Blender 5.3.0 on macOS 26.2, reading the result
 - The numeric keypad on every platform: `numpad0` to `numpad9`, `numpad_decimal`, `numpad_enter`, `numpad_add`,
   `numpad_subtract`, `numpad_multiply`, `numpad_divide`, `numpad_equals`, with `kp1`, `kp_1`, `numpad.` and similar
   spellings.
+- **Captures say where the pointer is.** Every `screenshot` and `zoom` reports the pointer in screen points and, when it
+  is inside, in image pixels. `include_pointer: true` draws it: the real cursor on macOS (ScreenCaptureKit, so
+  Blender's crosshair shows as the person sees it), a marked box where the capture path cannot draw a cursor.
+- **A key can stay held across calls.** `hold_key {action: "down"}` presses keys and returns; `{action: "up"}` releases
+  them and `{action: "release"}` releases everything. Held keys come up by themselves after 60 s, on Pause, Stop or
+  take-over, when the session ends, when the process exits, and on the emergency chord. Checked in Blender: Shift held
+  in one call turns a Grab drag in the next into smoothing (0.053 m of movement against 0.165 m unheld). On macOS a
+  modifier held this way, or through `hold_keys`, also marks the pointer events, as a keyboard does.
 - `skills/blender-direct`: Blender 5.3 by mouse, keyboard and OCR, with every feature of the 5.3 release mapped to a
   route and marked as run end to end or not.
 
-The default macOS list grows to 44,736 bytes (`desktop`, budget 48,000) and 83,861 (`full`, budget 88,000).
+The default macOS list grows to 45,448 bytes (`desktop`, budget 48,000) and 84,573 (`full`, budget 88,000).
 
 ## v7.8.0 (unreleased)
 

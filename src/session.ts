@@ -231,6 +231,7 @@ export function createSession(opts: SessionOptions = {}): Session {
       try { focus.restoreHidden() } catch { /* best effort */ }
       try { liveWatcher.close() } catch { /* nothing was being watched */ }
       try { control.close() } catch { /* the card is optional */ }
+      try { inputHandler.releaseHeldKeys() } catch { /* nothing held */ }
       try { macosHelper?.close?.() } catch { /* the warm helper exits with this process anyway */ }
       if (awakeTimer) clearTimeout(awakeTimer)
       try { n.releaseDisplayAwake?.() } catch { /* best effort */ }
@@ -339,6 +340,8 @@ export function createSession(opts: SessionOptions = {}): Session {
     pidStore,
     ...(macosHelper ? { helper: macosHelper } : {}),
     protectedRegion: () => control.cardRegion(),
+    clearOfCard: points => control.clearOfCard(points),
+    haltSignal: () => control.signal(),
   })
   const scripting = new ScriptingService({ native: n, spawnBounded })
   const runScriptHelper = scripting.runScript.bind(scripting)

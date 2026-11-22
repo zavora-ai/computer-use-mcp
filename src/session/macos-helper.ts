@@ -96,6 +96,8 @@ export interface MacosHelper {
     diff?: boolean | string
     /** With `diff`: an unchanged capture is not encoded (`unchanged: true`, empty `data`). */
     skipUnchanged?: boolean
+    /** 7.8.1: draw the pointer into the capture (ScreenCaptureKit's own cursor, `--cursor`). */
+    cursor?: boolean
   }, signal?: AbortSignal): Promise<HelperCapture & { data: Buffer }>
   ocr(options: {
     windowId?: number
@@ -485,7 +487,7 @@ export function createMacosHelper(options: {
     ensure,
     supportsCapture: () => sck,
     close: stopWarm,
-    async capture({ windowId, displayId, overlayPids, width, format = 'jpeg', quality = 80, region, diff, skipUnchanged }, signal) {
+    async capture({ windowId, displayId, overlayPids, width, format = 'jpeg', quality = 80, region, diff, skipUnchanged, cursor }, signal) {
       if (!sck) throw new HelperFailure('sck_unavailable', 'ScreenCaptureKit capture needs macOS 14 or later')
       const out = join(tmpdir(), `cu-mcp-sck-${process.pid}-${randomBytes(6).toString('hex')}.${format === 'png' ? 'png' : 'jpg'}`)
       const args = ['capture']
@@ -500,6 +502,7 @@ export function createMacosHelper(options: {
       args.push('--out', out, '--format', format, '--quality', String(quality))
       if (width) args.push('--width', String(Math.round(width)))
       if (region) args.push('--region', [region.x, region.y, region.width, region.height].join(','))
+      if (cursor) args.push('--cursor')
       if (diff) {
         args.push('--diff')
         if (typeof diff === 'string') args.push('--diff-key', diff)

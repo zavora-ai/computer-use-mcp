@@ -23,6 +23,8 @@ const numArray = (len: number) => z.array(z.number()).length(len)
 const intArray = (len: number) => z.array(z.number().int()).length(len)
 const coord = { coordinate: numArray(2).describe('[x, y] logical pixels') }
 // 7.8.1: modifiers held through a click, drag or scroll, pressed as keys (apps such as Blender track them that way).
+/** 7.8.1: captures leave the pointer out unless asked; its position is reported in every capture either way. */
+const includePointerParam = z.boolean().optional().describe('Draw the pointer into the image (macOS: the real cursor). Its position is reported either way.')
 const modifiersParam = z.array(z.enum(['shift', 'ctrl', 'alt', 'cmd'])).optional()
 const holdKeysParam = z.array(z.string()).max(4).optional().describe('Other keys held down for the gesture, e.g. ["c"].')
 const withTargeting = (schema: Record<string, ZodTypeAny>) => ({
@@ -120,6 +122,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       .describe('AI provider — sets optimal default width. anthropic=1024px, openai=1024px, gemini=768px, deepseek-flash=1280px, qwen/deepseek-vl/phi=896px. Default: auto (1024px).'),
     show_agent_pointer: z.boolean().optional()
       .describe('Render the virtual agent pointer into the returned screenshot without moving the OS cursor.'),
+    include_pointer: includePointerParam,
     resend: z.boolean().optional().describe('Send the image even when nothing changed since the last capture.'),
   }, NONE_READ)
   tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling. With target_app or target_window_id the region is in that window\'s points, from its top-left. To read text, read_window_text is cheaper than an image.', {
@@ -127,6 +130,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
       .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect (window points when a target is given)'),
     quality: z.number().int().min(0).max(100).optional()
       .describe('Image quality. 0 = PNG (lossless, best for text). 1-100 = JPEG. Default: 0 (PNG).'),
+    include_pointer: includePointerParam,
     target_app: z.string().optional().describe('Zoom into this app\'s main window (largest titled window)'),
     target_window_id: targetWindowIdParam,
     target_title: targetTitleParam,
@@ -222,9 +226,11 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     delivery: deliveryParam,
     verify: verifyParam,
   }, CG_MUT)
-  tool('hold_key', 'Hold keys for a duration', {
-    keys: z.array(z.string()),
-    duration: z.number().positive().max(10).describe('Seconds (max 10). Pause, Stop and cancellation release the keys at once.'),
+  tool('hold_key', 'Hold keys for a duration, or down in one call and up in a later one (action).', {
+    keys: z.array(z.string()).optional().describe('Keys to hold or release; not needed for release.'),
+    action: z.enum(['hold', 'down', 'up', 'release']).optional()
+      .describe('hold (default): down for duration, then up. down: stay held across calls until up or release; released by itself after 60 s, on Pause, Stop or take-over, and when the session ends. up: release these keys. release: release everything held.'),
+    duration: z.number().positive().max(10).optional().describe('Seconds for hold (max 10). Pause, Stop and cancellation release the keys at once.'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
     focus_strategy: focusStrategyParam,

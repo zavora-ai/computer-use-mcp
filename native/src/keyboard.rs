@@ -1014,6 +1014,11 @@ mod macos {
         keys.iter().fold(CGEventFlags::CGEventFlagNull, |flags, (_, flag)| flags | *flag)
     }
 
+    /// 7.8.1: the flags of modifiers held across calls by `key_down`, for pointer events to carry, as a keyboard does.
+    pub(crate) fn held_modifier_flags() -> CGEventFlags {
+        held_flags(&held())
+    }
+
     /// Press keys and keep them down until `key_up` (or the emergency latch) releases them. Each key-down carries the
     /// flags of every modifier held so far, as a real keyboard would.
     #[napi]
@@ -1405,7 +1410,7 @@ pub(crate) use win::send_inputs;
 
 /// 7.8.1 (macOS): modifier keys pressed as keys around a pointer gesture (see `ModifierKeys`).
 #[cfg(target_os = "macos")]
-pub(crate) use macos::{hold_modifier_keys, release_modifier_keys, with_modifier_keys};
+pub(crate) use macos::{held_modifier_flags, hold_modifier_keys, release_modifier_keys, with_modifier_keys};
 
 #[cfg(test)]
 mod tests {

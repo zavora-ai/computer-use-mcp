@@ -33,6 +33,8 @@ const NON_PHYSICAL_TOOLS = new Set(['cursor_position', 'read_clipboard', 'write_
  * forgotten hold cannot keep keys down for long.
  */
 export const MAX_HOLD_SECONDS = 10
+/** 7.8.1: keys held across calls (hold_key down) come up by themselves after this long. */
+export const HELD_KEYS_MAX_MS = 60_000
 
 /**
  * 7.8.1 (macOS): apps that take only the first character of a key event's text. Blender's event layer keeps one
@@ -133,6 +135,12 @@ export class InputHandler {
   readonly #pidStore: PidDeliveryStore | undefined
   readonly #helper: MacosHelper | undefined
   readonly #protectedRegion: (() => CardRect | undefined) | undefined
+  readonly #clearOfCard: ((points: Array<[number, number]>) => Promise<void>) | undefined
+  readonly #haltSignal: (() => AbortSignal) | undefined
+  readonly #heldKeysMaxMs: number
+  /** 7.8.1: keys down across calls (hold_key down), each with its auto-release timer. */
+  readonly #held = new Map<string, ReturnType<typeof setTimeout>>()
+  #exitHook: (() => void) | undefined
 
   constructor(options: {
     native: NativeModule
@@ -149,6 +157,12 @@ export class InputHandler {
     helper?: MacosHelper
     /** Screen rectangle no pointer action may land in: the Linux status card, which shows on screen to the agent. */
     protectedRegion?: () => CardRect | undefined
+    /** 7.8.1: move the status card off these points when captures cannot see it (macOS), before input lands there. */
+    clearOfCard?: (points: Array<[number, number]>) => Promise<void>
+    /** 7.8.1: aborted when the person pauses or stops the agent, or the session ends; held keys come up then. */
+    haltSignal?: () => AbortSignal
+    /** 7.8.1: how long hold_key down may hold before the keys come up by themselves (default 60 s). */
+    heldKeysMaxMs?: number
   }) {
     this.#native = options.native
     this.#targets = options.targets
@@ -160,6 +174,26 @@ export class InputHandler {
     this.#pidStore = options.pidStore
     this.#helper = options.helper
     this.#protectedRegion = options.protectedRegion
+    this.#clearOfCard = options.clearOfCard
+    this.#haltSignal = options.haltSignal
+    this.#heldKeysMaxMs = options.heldKeysMaxMs ?? HELD_KEYS_MAX_MS
+  }
+
+  /** Keys held across calls (hold_key down), in the order they went down. */
+  heldKeys(): string[] { return [...this.#held.keys()] }
+
+  /**
+   * 7.8.1: release keys held across calls: these, or all. Called by hold_key up/release, the auto-release timer, the
+   * halt signal (Pause, Stop, take-over, session end) and process exit. A release is never refused.
+   */
+  releaseHeldKeys(keys?: string[]): string[] {
+    const targets = keys ? keys.filter(key => this.#held.has(key)) : [...this.#held.keys()]
+    for (const key of targets) { clearTimeout(this.#held.get(key)); this.#held.delete(key) }
+    if (targets.length) {
+      try { this.#native.keyUp?.(targets.slice().reverse()) } catch { /* the native layer releases what it holds */ }
+    }
+    if (this.#held.size === 0 && this.#exitHook) { process.removeListener('exit', this.#exitHook); this.#exitHook = undefined }
+    return targets
   }
 
   /** Can this platform/native module post input to a process? */
@@ -344,6 +378,7 @@ export class InputHandler {
     const { x, y } = point
     // Before activating anything: a point off the screens, or on the status card, is refused with nothing changed.
     this.#validateCoordinates(x, y)
+    await this.#clearCard([[x, y]])
     await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
     this.#native.mouseMove(x, y)
     await this.#sleep(50)
@@ -527,6 +562,7 @@ export class InputHandler {
       const resolved = target()
       const [x, y] = coordinate()
       this.#validateCoordinates(x, y)
+      await this.#clearCard([[x, y]])
       await focus(resolved)
       this.#native.mouseMove(x, y)
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
@@ -539,6 +575,7 @@ export class InputHandler {
       const from = args.start_coordinate ? coordinate('start_coordinate') : to
       const path = Array.isArray(args.path) ? args.path as [number, number][] : [from, to]
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      await this.#clearCard(path)
       await focus(resolved)
       this.#native.mouseMove(from[0], from[1])
       await this.#sleep(50)
@@ -559,6 +596,7 @@ export class InputHandler {
       const resolved = target()
       const [x, y] = coordinate()
       this.#validateCoordinates(x, y)
+      await this.#clearCard([[x, y]])
       await focus(resolved)
       this.#native.mouseButton(tool === 'left_mouse_down' ? 'press' : 'release', x, y)
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
@@ -588,6 +626,7 @@ export class InputHandler {
         return { ...ok(`Scrolled ${direction} ${amount}${this.#pidNote(route, outcome)}`), contract: { delivery: 'pid', effect: pidEffect(outcome) } }
       }
       this.#validateCoordinates(x, y)
+      await this.#clearCard([[x, y]])
       await focus(resolved)
       this.#native.mouseMove(x, y)
       await this.#sleep(15)
@@ -676,10 +715,50 @@ export class InputHandler {
     }
 
     if (tool === 'hold_key') {
-      if (!Array.isArray(args.keys) || !args.keys.every(key => typeof key === 'string')) {
-        throw new Error('Invalid keys: expected string[]')
+      const action = typeof args.action === 'string' ? args.action : 'hold'
+      if (action === 'release') {
+        const released = this.releaseHeldKeys()
+        return ok(released.length ? `Released ${released.join('+')}` : 'Nothing was held')
+      }
+      if (!Array.isArray(args.keys) || args.keys.length === 0 || !args.keys.every(key => typeof key === 'string')) {
+        throw new Error('Invalid keys: expected a non-empty string[]')
       }
       const keys = normalizeHeldKeys(args.keys, this.#platform)
+      if (action === 'up') {
+        const released = this.releaseHeldKeys(keys)
+        const untracked = keys.filter(key => !released.includes(key))
+        if (untracked.length) { try { this.#native.keyUp?.(untracked) } catch (error) { throw explainNativeKeyError(error) } }
+        const still = this.heldKeys()
+        return ok(`Released ${keys.join('+')}${still.length ? `; still held: ${still.join('+')}` : ''}`)
+      }
+      if (action === 'down') {
+        if (!this.#native.keyDown || !this.#native.keyUp) {
+          throw new StructuredToolError('holding keys across calls needs a newer native module', {
+            error: 'hold_unsupported', remediation: ['Rebuild the native module (npm run build:native) or reinstall the package.'],
+          })
+        }
+        const resolved = target()
+        await focus(resolved)
+        try { this.#native.keyDown(keys) } catch (error) { throw explainNativeKeyError(error) }
+        for (const key of keys) {
+          if (this.#held.has(key)) continue
+          const timer = setTimeout(() => { this.releaseHeldKeys([key]) }, this.#heldKeysMaxMs)
+          timer.unref?.()
+          this.#held.set(key, timer)
+        }
+        const halt = this.#haltSignal?.()
+        if (halt?.aborted) this.releaseHeldKeys()
+        else halt?.addEventListener('abort', () => { this.releaseHeldKeys() }, { once: true })
+        if (!this.#exitHook && this.#held.size) {
+          this.#exitHook = () => { try { this.#native.keyUp?.([...this.#held.keys()].reverse()) } catch { /* exiting */ } }
+          process.once('exit', this.#exitHook)
+        }
+        if (resolved.bundleId) this.#targets.update(resolved, 'keyboard')
+        return ok(`Holding ${this.heldKeys().join('+')} until hold_key {action: "up"} or {action: "release"}; `
+          + `they come up by themselves after ${Math.round(this.#heldKeysMaxMs / 1000)} s, on Pause, Stop or take-over, and when the session ends.`)
+      }
+      if (action !== 'hold') throw new Error(`Invalid action: ${action} (hold, down, up or release)`)
+      if (typeof args.duration !== 'number') throw new Error('hold needs duration (seconds); use action "down" to hold across calls')
       const resolved = target()
       await focus(resolved)
       const requested = number('duration', 1)
@@ -749,6 +828,7 @@ export class InputHandler {
         }
       }
       for (const [x, y] of path) this.#validateCoordinates(x, y)
+      await this.#clearCard(path)
       if (pressure && (this.#platform !== 'darwin' || !this.#native.mousePenEvent)) {
         throw new StructuredToolError('pen pressure is unavailable here', {
           error: 'pressure_unsupported', platform: this.#platform,
@@ -822,6 +902,7 @@ export class InputHandler {
       }
       if (locations.length === 0) return this.#noCoordinates()
       for (const [x, y] of locations) this.#validateCoordinates(x, y)
+      await this.#clearCard(locations)
       // press_ctrl advertises default true, so additive is the documented behavior.
       // The modifier has to be held across the click, which only the native
       // additive entry point does — tapping it separately selects nothing.
@@ -863,6 +944,7 @@ export class InputHandler {
     }
     if (edits.length === 0) return this.#noCoordinates()
     for (const [x, y] of edits) this.#validateCoordinates(x, y)
+    await this.#clearCard(edits.map(([x, y]) => [x, y] as [number, number]))
     for (const [x, y, text] of edits) {
       this.#checkAbort(signal, 'multi_edit aborted before the next edit')
       this.#native.mouseMove(x, y)
@@ -967,6 +1049,11 @@ export class InputHandler {
       throw new Error('Invalid pressure: expected a number from 0 to 1, or a list of 1 to 64 of them')
     }
     return values as number[]
+  }
+
+  /** 7.8.1: the card is not in captures on macOS, so it moves aside rather than take input meant for the app under it. */
+  async #clearCard(points: ReadonlyArray<readonly [number, number]>): Promise<void> {
+    if (this.#clearOfCard && points.length > 0) await this.#clearOfCard(points.map(([x, y]) => [x, y] as [number, number]))
   }
 
   #validateCoordinates(x: number, y: number): void {

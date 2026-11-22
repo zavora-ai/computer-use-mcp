@@ -54,6 +54,9 @@ func option(_ name: String, in args: [String]) -> String? {
 
 func flag(_ name: String, in args: [String]) -> Bool { args.contains(name) }
 
+/// 7.8.1: `capture --cursor` draws the pointer into this capture (ScreenCaptureKit's own cursor, as the person sees it).
+var captureShowsCursor = false
+
 func frameDict(_ rect: CGRect) -> [String: Double] {
     ["x": Double(rect.origin.x), "y": Double(rect.origin.y), "width": Double(rect.width), "height": Double(rect.height)]
 }
@@ -136,7 +139,7 @@ func captureWindow(id: UInt32, width: Int?, scale userScale: Double?, minPixelSc
     // Without scalesToFit, SCK draws the window at its backing size into the
     // top-left of the buffer: a smaller buffer crops it, a larger one pads it.
     config.scalesToFit = true
-    config.showsCursor = false
+    config.showsCursor = captureShowsCursor
     config.ignoreShadowsSingleWindow = true
     config.captureResolution = .best
     let image = try await withSckTimeout(10, "capture the window") { try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) }
@@ -152,7 +155,7 @@ func captureWindow(id: UInt32, width: Int?, scale userScale: Double?, minPixelSc
         source.width = config.width
         source.height = config.height
         source.scalesToFit = true
-        source.showsCursor = false
+        source.showsCursor = captureShowsCursor
         source.captureResolution = .best
         if let fixed = try? await withSckTimeout(10, "capture the window's screen area") { try await SCScreenshotManager.captureImage(contentFilter: onDisplay, configuration: source) } {
             return WindowImage(image: fixed, scale: Double(fixed.width) / max(1, Double(window.frame.width)), frame: window.frame)
@@ -221,7 +224,7 @@ func captureDisplay(id: CGDirectDisplayID?, width: Int?, overlayPids: Set<pid_t>
     config.width = max(1, Int(pixelWidth.rounded()))
     config.height = max(1, Int(pixelHeight.rounded()))
     config.scalesToFit = true
-    config.showsCursor = false
+    config.showsCursor = captureShowsCursor
     config.captureResolution = .best
     let image = try await withSckTimeout(10, "capture the display") { try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) }
     return WindowImage(image: image, scale: Double(image.width) / max(1, Double(display.width)), frame: CGDisplayBounds(wanted))
@@ -402,6 +405,8 @@ func runCommand(_ args: [String]) async throws -> [String: Any] {
         let quality = min(1, max(0.01, (Double(option("--quality", in: args) ?? "80") ?? 80) / 100))
         let region = try parseRegion(option("--region", in: args))
         let width = option("--width", in: args).flatMap { Int($0) }
+        captureShowsCursor = flag("--cursor", in: args)
+        defer { captureShowsCursor = false }
         var captured: WindowImage
         var source: [String: Any]
         if let displayText = option("--display", in: args) {
