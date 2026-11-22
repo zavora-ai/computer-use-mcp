@@ -69,6 +69,12 @@ paused input (`handed_off`) and put its message on the card until `done`.
   `expect.text` (a comma between digits reads as a point, an O beside a digit as a zero), so "1.000" finds "1,000". A
   step's own `expect` that held is what `export_steps` returns, instead of one derived from the recording. A checked
   recording reads the text in a band around each click, not the whole window, where Vision joins neighbouring labels.
+  Exact matching ignores symbols at either end of a line, since OCR reads an icon beside a label as a glyph ("• Object
+  Mode" in Blender's mode pie), and `text_not_found` lists the `similar` lines before the first 40 it saw.
+- **Soft checks for what a recording happened to see** (v8 plan, 18a). A `changed: true` check that `export_steps`
+  derives from the recording is now `soft`: when it does not hold on replay it is reported in `soft_unmet` and the batch
+  goes on. A change seen while a model thought (a hover tooltip, then a key that dismissed it) does not recur at replay
+  speed, and stopped a Blender replay at its fifth step. A window that opened, and a check someone wrote, stay hard.
 - **`doctor` checks the native addon** (`native_addon`): the functions this release calls, the platform package's
   version against this package's, and a newer checkout build that the platform package shadows (in a checkout, the
   platform package in node_modules resolves first). A key this release knows but the addon refuses is now blamed on the

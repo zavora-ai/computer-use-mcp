@@ -39,6 +39,8 @@ with every exported batch, are in
 | | replay | yes | 0 | 1 | 0 | 0 | 0.3 s | $0 |
 | Blender 5.3: delete the cube, add a torus, shade smooth | model | yes | 20 | 51 | 42 + 30,491 + 567,056 | 3,327 | 79.1 s | $0.333 |
 | | replay | **no**: stopped at step 5 of 33 | 0 | 1 | 0 | 0 | 2.8 s | $0 |
+| Blender 5.3, again with soft derived checks, quiet desktop | model | yes | 13 | 32 | 28 + 32,040 + 280,251 | 2,301 | 55.7 s | $0.262 |
+| | replay | yes, all 24 steps | 0 | 1 (24 steps) | 0 | 0 | 13.8 s | $0 |
 
 Where the replay worked it took 8x to 27x less time and no model call; the model's cost was small here because prompt
 caching served most of its input (the tool list and earlier turns). The Blender replay stopped at its fifth step, an
@@ -46,8 +48,12 @@ Escape whose recorded `expect: {changed: true}` did not hold: in the recording t
 several seconds, then pressed Escape, and the window changed in between (most likely a hover tooltip that Escape
 dismissed); the replay sends the two keys 70 ms apart, so nothing appears to dismiss. Two things follow. A replay runs
 at machine speed, and a check derived from a change the recording happened to see can be about time, not about the step.
-And an export of a model's run keeps its detours (33 steps for a task a person does in about 10). Both are open items
-in the v8 release plan. Model costs use Opus 5.5's prices ($4 input, $5 cache write, $0.20 cache read, $20 output per
+And an export of a model's run keeps its detours (33 steps for a task a person does in about 10). The first is
+addressed the same evening: a check the export derives from a change is now `soft`, reported in `soft_unmet` without
+stopping the replay. With that, on a desktop no other session was driving, the Blender pair ran again: the model took
+55.7 s and 13 calls, and the replay of its 24 steps reached the end state in 13.8 s (4x faster, no model call); whether a
+soft check missed on that replay was not yet recorded (the script counts `softUnmet` from now on). Pruning detours is
+still open in the v8 release plan. Model costs use Opus 5.5's prices ($4 input, $5 cache write, $0.20 cache read, $20 output per
 million tokens).
 
 The host-side helpers below are unchanged and still opt-in. Claude Code defers tool schemas and pays per search; hosts

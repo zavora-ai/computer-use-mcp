@@ -396,3 +396,36 @@ test('a key this release knows but the addon refuses points at doctor\'s addon c
   assert.match(unknown, /Valid keys:/)
   assert.doesNotMatch(unknown, /older/, 'a name this release does not know is just unknown')
 })
+
+// ── Replays at machine speed (v8 plan, 18a) ────────────────────────────────────────────────────
+
+test('a soft check that does not hold is reported and the batch goes on; a hard one still stops it', async () => {
+  const native = desktop()
+  // the window never changes: every changed check misses
+  native.takeScreenshot = () => ({ base64: 'AAAA', width: 400, height: 300, mimeType: 'image/jpeg', hash: 'still', unchanged: false })
+  const { client } = await connect(native)
+  try {
+    const soft = payload(await client.callTool('run_steps', {
+      target_window_id: 1,
+      steps: [
+        { tool: 'key', args: { text: 'escape' }, expect: { changed: true, soft: true, timeout_ms: 100 } },
+        { tool: 'key', args: { text: 'return' } },
+      ],
+    }))
+    assert.equal(soft.completed, 2, JSON.stringify(soft))
+    assert.equal(soft.stopped_at, null)
+    assert.equal(soft.soft_unmet.length, 1)
+    assert.equal(soft.soft_unmet[0].index, 0)
+    assert.equal(soft.steps[0].soft, true)
+
+    const hard = payload(await client.callTool('run_steps', {
+      target_window_id: 1,
+      steps: [
+        { tool: 'key', args: { text: 'escape' }, expect: { changed: true, timeout_ms: 100 } },
+        { tool: 'key', args: { text: 'return' } },
+      ],
+    }))
+    assert.equal(hard.error, 'step_failed')
+    assert.equal(hard.stopped_at, 0)
+  } finally { await client.close() }
+})

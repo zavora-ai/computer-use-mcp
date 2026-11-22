@@ -682,6 +682,351 @@
           ]
         }
       ]
+    },
+    {
+      "date": "2026-11-22T09:52:38.056Z",
+      "note": "Blender again on a quiet desktop, with derived changed checks soft (18a)",
+      "results": [
+        {
+          "task": "blender",
+          "model": {
+            "ms": 55742,
+            "toolCalls": 32,
+            "usage": {
+              "calls": 13,
+              "input": 28,
+              "cacheWrite": 32040,
+              "cacheRead": 280251,
+              "output": 2301
+            },
+            "cost": 0.2624,
+            "models": [
+              "claude-opus-5-5"
+            ],
+            "ending": "DONE: I deleted the default cube, added a torus and applied Shade Smooth to it. The outliner now lists only the camera, light and torus, and the last-action panel reads \"Shade Smooth\".",
+            "success": true
+          },
+          "replay": {
+            "ms": 13785,
+            "toolCalls": 1,
+            "steps": {
+              "completed": 24,
+              "total": 24
+            },
+            "success": true,
+            "modelCalls": 0,
+            "tokens": 0
+          },
+          "exported": {
+            "steps": 24,
+            "batches": 1,
+            "unchecked": [
+              2,
+              6,
+              8
+            ],
+            "byText": [
+              18,
+              22
+            ]
+          },
+          "batches": [
+            {
+              "target_app": "org.blenderfoundation.blender",
+              "frame": [
+                0,
+                30,
+                1280,
+                932
+              ],
+              "steps": [
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      250,
+                      450
+                    ]
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "delete"
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "shift+a"
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      530,
+                      420
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click",
+                  "args": {
+                    "coordinate": [
+                      337,
+                      762
+                    ]
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Add",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "key",
+                  "args": {
+                    "text": "escape"
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Delete Global",
+                    "match": "contains",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Delete",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Add",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Mesh",
+                    "match": "exact",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "coordinate": [
+                      299,
+                      123
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Torus",
+                    "match": "contains",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "mouse_move",
+                  "args": {
+                    "path": [
+                      [
+                        299,
+                        123
+                      ],
+                      [
+                        440,
+                        123
+                      ],
+                      [
+                        471,
+                        282
+                      ]
+                    ],
+                    "duration_ms": 300
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Torus",
+                    "match": "contains",
+                    "region": [
+                      351,
+                      234,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Object",
+                    "match": "exact",
+                    "nth": 1,
+                    "button": "left",
+                    "click_count": 1
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_text",
+                  "args": {
+                    "text": "Shade Smooth",
+                    "match": "exact",
+                    "gone": false,
+                    "timeout_ms": 10000,
+                    "poll_ms": 500
+                  }
+                },
+                {
+                  "tool": "click_text",
+                  "args": {
+                    "text": "Shade Smooth",
+                    "match": "exact",
+                    "region": [
+                      240,
+                      510,
+                      240,
+                      36
+                    ]
+                  },
+                  "expect": {
+                    "changed": true,
+                    "soft": true
+                  }
+                },
+                {
+                  "tool": "wait_for_stable",
+                  "args": {
+                    "quiet_ms": 800,
+                    "timeout_ms": 10000,
+                    "poll_ms": 250
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "notes": [

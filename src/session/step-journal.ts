@@ -233,7 +233,10 @@ export function exportSteps(entries: readonly JournalEntry[]): {
       if (entry.opened && (entry.opened.kind || entry.opened.title)) {
         step.expect = { window: { ...(entry.opened.kind ? { kind: entry.opened.kind } : {}), ...(entry.opened.title ? { title: entry.opened.title } : {}) } }
       } else if (entry.effect === 'changed' || entry.effect === 'verified') {
-        step.expect = { changed: true }
+        // 8.0 (v8 plan, 18a): soft. The recording saw the window change, but a change can be about time rather than the
+        // step (a hover tooltip that appeared while a model thought, then a key that dismissed it), and a replay runs at
+        // machine speed. An unmet soft check is reported and the replay goes on; a window that opened stays a hard check.
+        step.expect = { changed: true, soft: true }
       } else if (entry.tool !== 'write_clipboard' && entry.tool !== 'hold_key' && entry.tool !== 'mouse_move') {
         unchecked.push(index)
       }

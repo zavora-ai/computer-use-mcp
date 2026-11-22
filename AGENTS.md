@@ -798,10 +798,12 @@ for (const batch of batches) await client.callTool('run_steps', batch)
   hand too: `{tool: 'key', args: {text: 'cmd+s'}, expect: {window: {kind: 'dialog'}}}`. `match` (`exact`, `contains`,
   `regex`) says how `text` is matched. A query with a digit tolerates OCR's misreads in numbers here, in `click_text`
   and in `wait_for_text`: a comma between digits reads as a point and an O beside a digit as a zero, so "1.000" finds
-  Blender's "1,000" and "0°" its "O°". Each step reports `at_ms` and `ms`, for chapters and captions.
+  Blender's "1,000" and "0°" its "O°". Each step reports `at_ms` and `ms`, for chapters and captions. `soft: true`
+  reports an unmet check in `soft_unmet` and goes on instead of stopping.
 - **What the export does.** The batch target is the app most steps were aimed at, and `frame` is its window's frame at
   the first step. Window ids are dropped (they do not survive a restart); a step aimed at another window of the app (a
-  dialog) names it with `target_title`. A step whose recording saw the window change gets `expect: {changed: true}`; one
+  dialog) names it with `target_title`. A step whose recording saw the window change gets `expect: {changed: true,
+  soft: true}` (a change can be about time, not the step, and a replay runs at machine speed); one
   that opened a window gets `expect: {window}`; the rest are listed in `unchecked`. With `start`, a click on a word is
   exported as `click_text` (the word, its `nth`, and the band around the click it was read in), so the replay finds it
   even when the layout moved. A `run_steps` step's own `expect` that held is exported as written, so a replay checks

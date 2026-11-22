@@ -10,7 +10,7 @@ import { createComputerUseServer } from '../dist/server.js'
 import { connectInProcess } from '../dist/client.js'
 import { createSession } from '../dist/session.js'
 import { REDACTED, exportSteps, textUnder } from '../dist/session/step-journal.js'
-import { digitTolerant, findText } from '../dist/session/agent-desktop-handlers.js'
+import { digitTolerant, findText, similarLines, textCore } from '../dist/session/agent-desktop-handlers.js'
 import { listedTools, buildInstructions } from '../dist/instructions.js'
 import { TOOL_CATALOG } from '../dist/tool-catalog.js'
 import { describeAction } from '../dist/session/operator-control.js'
@@ -81,9 +81,9 @@ test('the export keeps coordinates in the first frame, names dialogs by title an
   const [batch] = batches
   assert.equal(batch.target_app, APP)
   assert.deepEqual(batch.frame, [100, 100, 800, 600])
-  assert.deepEqual(batch.steps[0], { tool: 'click', args: { coordinate: [300, 200] }, expect: { changed: true } })
+  assert.deepEqual(batch.steps[0], { tool: 'click', args: { coordinate: [300, 200] }, expect: { changed: true, soft: true } })
   assert.deepEqual(batch.steps[1].args.path, [[300, 200], [400, 200]], 'moved 40 right and 10 up: brought back into the first frame')
-  assert.deepEqual(batch.steps[2], { tool: 'click_text', args: { text: 'Save', match: 'exact', region: [0, 40, 240, 36], target_app: APP, target_title: 'Save As' }, expect: { changed: true } })
+  assert.deepEqual(batch.steps[2], { tool: 'click_text', args: { text: 'Save', match: 'exact', region: [0, 40, 240, 36], target_app: APP, target_title: 'Save As' }, expect: { changed: true, soft: true } })
   assert.deepEqual(batch.steps[3].expect, { window: { kind: 'dialog', title: 'Save As' } })
   assert.equal(batch.steps[5].expect, undefined, 'a wait checks itself')
   assert.deepEqual(unchecked, [4])
@@ -145,7 +145,7 @@ test('a checked recording captures before and after, and notes the window that o
     const body = payload(await client.callTool('export_steps', { action: 'stop' }))
     assert.equal(body.recording, false)
     const steps = body.batches[0].steps
-    assert.deepEqual(steps[0].expect, { changed: true })
+    assert.deepEqual(steps[0].expect, { changed: true, soft: true })
     assert.equal(steps[1].expect, undefined, 'x changed nothing on screen')
     assert.equal(steps[2].expect.window.title, 'Save As')
     assert.deepEqual(body.unchecked, [1])
@@ -386,6 +386,35 @@ test('T6: an expect on text passes its match to the wait', { skip: process.platf
       { tool: 'key', args: { text: 'return' }, expect: { text: '^Torus\\.\\d{3}$', match: 'regex', timeout_ms: 500 } },
     ] }))
     assert.equal(met.steps[0].expect, 'met', JSON.stringify(met))
+  } finally { session.close() }
+})
+
+test('exact matching ignores an icon read as a glyph beside the label (Blender\'s mode pie)', () => {
+  const lines = [
+    { text: '• Object Mode', confidence: 1, box: { x: 0, y: 0, w: 130, h: 14 } },
+    { text: '& Edit Mode', confidence: 1, box: { x: 200, y: 0, w: 110, h: 14 } },
+    { text: 'Object Mode Settings', confidence: 1, box: { x: 0, y: 40, w: 200, h: 14 } },
+  ]
+  const [hit] = findText(lines, 'Object Mode', 'exact')
+  assert.equal(hit.matched, 'Object Mode', 'the words, not the glyph')
+  // the click lands on the words: they start after "• " (2 of 13 characters)
+  assert.equal(hit.point.x, Math.round(130 * (2 / 13) + (130 * (11 / 13)) / 2))
+  assert.equal(findText(lines, 'Object Mode', 'exact').length, 1, 'a longer line is still not an exact match')
+  assert.equal(findText(lines, 'Edit Mode', 'exact').length, 1)
+  assert.deepEqual(textCore('  * Vertex Paint  '), { text: 'Vertex Paint', start: 4 })
+  assert.deepEqual(similarLines(lines, 'object mode'), ['• Object Mode', 'Object Mode Settings'])
+})
+
+test('click_text that finds nothing lists the near misses first', { skip: process.platform !== 'darwin' }, async () => {
+  const native = fakeNative()
+  const lines = Array.from({ length: 45 }, (_, i) => ({ text: `row ${i}`, confidence: 1, box: { x: 0, y: i * 15, w: 60, h: 12 } }))
+  lines.push({ text: 'Mode: Object', confidence: 1, box: { x: 0, y: 700, w: 90, h: 12 } })
+  const helper = { supportsCapture: () => true, ensure: async () => ({ ok: true, path: '/fake' }), ocr: async () => ({ width: 800, height: 900, scale: 1, lines }) }
+  const session = createSession({ native, macosHelper: helper, profile: 'desktop' })
+  try {
+    const r = payload(await session.dispatch('click_text', { text: 'Object', match: 'exact', target_window_id: 1 }))
+    assert.equal(r.error, 'text_not_found')
+    assert.deepEqual(r.similar, ['Mode: Object'], 'beyond the first 40 lines, and still reported')
   } finally { session.close() }
 })
 

@@ -220,6 +220,7 @@ async function replay(client, batches, window) {
   let completed = 0
   let total = 0
   let calls = 0
+  let softUnmet = 0
   let failure
   for (const batch of batches) {
     // The batch names the app; with more than one window of it open (another session's Blender), the host aims it at
@@ -230,9 +231,10 @@ async function replay(client, batches, window) {
     const reply = body(result)
     completed += reply.completed ?? 0
     total += reply.total ?? batch.steps.length
+    softUnmet += (reply.soft_unmet ?? []).length
     if (result.isError) { failure = { error: reply.error, failed_step: reply.failed_step, hint: reply.hint }; break }
   }
-  return { ms: Date.now() - started, toolCalls: calls, steps: { completed, total }, ...(failure ? { failure } : {}) }
+  return { ms: Date.now() - started, toolCalls: calls, steps: { completed, total }, softUnmet, ...(failure ? { failure } : {}) }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────────────────────────

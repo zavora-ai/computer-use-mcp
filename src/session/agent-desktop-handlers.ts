@@ -94,6 +94,19 @@ export function digitTolerant(text: string): string {
   return text.replace(/(?<=\d),(?=\d)/g, '.').replace(/[Oo](?=[\d.,°%])|(?<=[\d.,])[Oo]/g, '0')
 }
 
+/** A line's words without the symbols at either end (an icon read as "•", "*" or "&"), and where they start. */
+export function textCore(text: string): { text: string; start: number } {
+  const lead = /^[^\p{L}\p{N}]*/u.exec(text)?.[0].length ?? 0
+  const core = text.slice(lead).replace(/[^\p{L}\p{N}]+$/u, '')
+  return { text: core, start: lead }
+}
+
+/** For a text_not_found reply: the lines that contain the text, which is usually where a near miss is. */
+export function similarLines(lines: readonly TextLine[], query: string): string[] {
+  const needle = (textCore(query).text || query).toLowerCase()
+  return lines.filter(line => line.text.toLowerCase().includes(needle)).slice(0, 10).map(line => line.text)
+}
+
 /**
  * Find `query` in OCR lines, in reading order (top to bottom, then left to right).
  * For a match inside a longer line, the click point is estimated from the
@@ -109,11 +122,16 @@ export function findText(
   // 8.0 (T6): a query with a digit tolerates OCR's misreads in numbers, on both sides, so "1.000" finds "1,000".
   const fold = mode !== 'regex' && /\d/.test(query) ? digitTolerant : (text: string) => text
   const needle = fold(query.trim().toLowerCase())
+  // 8.0: an icon beside a label is read as a glyph ("• Object Mode" in Blender's mode pie), so exact compares the
+  // words, without symbols at either end, on both sides.
+  const needleCore = textCore(needle).text || needle
   for (const line of lines) {
     let start = -1
     let length = 0
     if (mode === 'exact') {
-      if (fold(line.text.trim().toLowerCase()) === needle) { start = line.text.indexOf(line.text.trim()); length = line.text.trim().length }
+      // Fold first (it reads the "°" after an O), then drop the end symbols; both keep offsets into the line.
+      const core = textCore(fold(line.text.toLowerCase()))
+      if (core.text && core.text === needleCore) { start = core.start; length = core.text.length }
     } else if (mode === 'contains') {
       start = fold(line.text.toLowerCase()).indexOf(needle)
       length = needle.length
@@ -414,8 +432,10 @@ export async function handleAgentDesktopTool(
       return errJson({
         error: 'text_not_found', text: args.text, match: mode, nth, matches: matches.length,
         window: windowSummary(result.window),
+        // 8.0: the near misses first; the first 40 lines alone hid "• Object Mode" from a search for "Object Mode".
+        similar: similarLines(result.lines, args.text),
         seen: result.lines.slice(0, 40).map(line => line.text),
-        remediation: ['Check `seen` for how the text was read; try match "contains" or "regex", or read_window_text with a region.'],
+        remediation: ['Check `similar` and `seen` for how the text was read; try match "contains" or "regex", or read_window_text with a region.'],
         untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }

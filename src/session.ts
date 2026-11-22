@@ -40,7 +40,7 @@ import { InputHandler, VERIFIABLE_TOOLS, pointerMotionFromEnv, type PointerMotio
 import { ScriptingService } from './session/scripting-service.js'
 import { OpenAiCompatibilityHandler } from './session/openai-handler.js'
 import { handleCoreTool } from './session/core-handlers.js'
-import { findText, handleAgentDesktopTool, mapOcrLines } from './session/agent-desktop-handlers.js'
+import { findText, handleAgentDesktopTool, mapOcrLines, similarLines } from './session/agent-desktop-handlers.js'
 import { REDACTED, StepJournal, cleanArgs, exportSteps, holdsRedaction, textUnder, type JournalWindow, type RecordInput } from './session/step-journal.js'
 import { listClassifiedWindows, resolveAppWindow } from './session/window-select.js'
 import { BROWSERS, authHandoffEnabled, focusWall, textWall, titleWall, typesText, wallMessage, type Wall } from './session/auth-wall.js'
@@ -899,8 +899,9 @@ export function createSession(opts: SessionOptions = {}): Session {
     const nth = typeof args.nth === 'number' && args.nth >= 1 ? Math.floor(args.nth) : 1
     if (matches.length < nth) {
       return errJson({
-        error: 'text_not_found', tool: 'agent_pointer', text, nth, matches: matches.length, seen: lines.slice(0, 30).map(line => line.text),
-        hint: 'The text was not read there; check seen for how it was read, narrow it with region, or point with coordinate.',
+        error: 'text_not_found', tool: 'agent_pointer', text, nth, matches: matches.length,
+        similar: similarLines(lines, text), seen: lines.slice(0, 30).map(line => line.text),
+        hint: 'The text was not read there; check similar and seen for how it was read, narrow it with region, or point with coordinate.',
       })
     }
     const chosen = matches[nth - 1]
@@ -1133,6 +1134,8 @@ export function createSession(opts: SessionOptions = {}): Session {
     const records: Array<Record<string, unknown>> = []
     let failed: { index: number; result: ToolResult } | undefined
     let weakest: Effect = 'verified'
+    // 8.0 (18a): soft checks that did not hold; reported, and the batch goes on.
+    const softUnmet: Array<Record<string, unknown>> = []
     // 8.0: when each step started and how long it took, so chapters, captions and narration line up with a recording.
     const batchStarted = Date.now()
     for (const [index, step] of planned.entries()) {
@@ -1173,7 +1176,10 @@ export function createSession(opts: SessionOptions = {}): Session {
         record.expect = missed ? 'unmet' : 'met'
         // An authored check that held is what a replay of this step should check: export_steps keeps it (T8).
         if (!missed && journal.lastSeq > seqBefore) journal.annotate(journal.lastSeq, { expect: step.expect })
-        if (missed) {
+        if (missed && step.expect.soft === true) {
+          record.soft = true
+          softUnmet.push({ index, tool: step.tool, ...missed })
+        } else if (missed) {
           failed = {
             index,
             result: errJson({
@@ -1207,6 +1213,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     const completed = records.filter(record => record.ok === true).length
     const payload: Record<string, unknown> = {
       completed, total: planned.length, stopped_at: failed?.index ?? null, steps: records,
+      ...(softUnmet.length ? { soft_unmet: softUnmet } : {}),
       ...(offset ? { shifted: offset } : {}),
     }
     if (failed) {
