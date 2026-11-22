@@ -17,6 +17,7 @@ import type { InputHandler } from './input-handlers.js'
 import { HelperFailure, type HelperOcr, type MacosHelper } from './macos-helper.js'
 import type { TargetStateController } from './target-state.js'
 import { listClassifiedWindows, resolveAppWindow, titleMatches, type WindowKind } from './window-select.js'
+import { SCREEN_TEXT_UNTRUSTED } from './untrusted.js'
 
 export const AGENT_DESKTOP_TOOLS = new Set(['read_window_text', 'click_text', 'wait_for_window', 'wait_for_text', 'wait_for_stable'])
 export const WAIT_FOR_WINDOW_POLL_MS = 250
@@ -85,6 +86,15 @@ export interface TextMatch {
 export interface ScreenOrigin { x: number; y: number }
 
 /**
+ * 8.0 (T6): what OCR gets wrong in numbers, folded away: a comma between digits reads as a decimal point, and an O next
+ * to a digit, a decimal point or a degree sign reads as zero (Blender's "1.000" came back "1,000", "0°" as "O°"). Each
+ * replacement keeps the length, so character offsets into the original text stay valid.
+ */
+export function digitTolerant(text: string): string {
+  return text.replace(/(?<=\d),(?=\d)/g, '.').replace(/[Oo](?=[\d.,°%])|(?<=[\d.,])[Oo]/g, '0')
+}
+
+/**
  * Find `query` in OCR lines, in reading order (top to bottom, then left to right).
  * For a match inside a longer line, the click point is estimated from the
  * character offsets: Vision gives one box per line, and text is close to
@@ -96,14 +106,16 @@ export function findText(
 ): TextMatch[] {
   const matches: TextMatch[] = []
   const pattern = mode === 'regex' ? new RegExp(query, 'i') : undefined
-  const needle = query.trim().toLowerCase()
+  // 8.0 (T6): a query with a digit tolerates OCR's misreads in numbers, on both sides, so "1.000" finds "1,000".
+  const fold = mode !== 'regex' && /\d/.test(query) ? digitTolerant : (text: string) => text
+  const needle = fold(query.trim().toLowerCase())
   for (const line of lines) {
     let start = -1
     let length = 0
     if (mode === 'exact') {
-      if (line.text.trim().toLowerCase() === needle) { start = line.text.indexOf(line.text.trim()); length = line.text.trim().length }
+      if (fold(line.text.trim().toLowerCase()) === needle) { start = line.text.indexOf(line.text.trim()); length = line.text.trim().length }
     } else if (mode === 'contains') {
-      start = line.text.toLowerCase().indexOf(needle)
+      start = fold(line.text.toLowerCase()).indexOf(needle)
       length = needle.length
     } else {
       const found = pattern!.exec(line.text)
@@ -293,6 +305,7 @@ async function waitForText(args: Record<string, unknown>, context: AgentDesktopC
         matches: matches.length,
         window: windowSummary(result.window),
         screen_origin: screenOrigin(result.window),
+        untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }
     if (gone && matches.length === 0) return okJson({ gone: true, waitedMs, polls, reads, window: windowSummary(result.window) })
@@ -302,6 +315,7 @@ async function waitForText(args: Record<string, unknown>, context: AgentDesktopC
         window: windowSummary(result.window),
         // What the last poll read, so the caller can see how the text was read instead.
         seen: seen.slice(0, 20), ...(seen.length > 20 ? { seenTruncated: seen.length - 20 } : {}),
+        untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }
     if (await pace(context, pollMs, pollStarted, waitedMs, timeoutMs)) return errJson({ error: 'cancelled', waitedMs: now() - started, polls })
@@ -379,6 +393,7 @@ export async function handleAgentDesktopTool(
       count: result.lines.length,
       lines: result.lines,
       ...(result.ocrMs !== undefined ? { ocrMs: result.ocrMs } : {}),
+      untrusted: SCREEN_TEXT_UNTRUSTED,
     })
   }
 
@@ -401,6 +416,7 @@ export async function handleAgentDesktopTool(
         window: windowSummary(result.window),
         seen: result.lines.slice(0, 40).map(line => line.text),
         remediation: ['Check `seen` for how the text was read; try match "contains" or "regex", or read_window_text with a region.'],
+        untrusted: SCREEN_TEXT_UNTRUSTED,
       })
     }
     const chosen = matches[nth - 1]
@@ -418,6 +434,7 @@ export async function handleAgentDesktopTool(
       matches: matches.length,
       window: windowSummary(result.window),
       result: message && message.type === 'text' ? message.text : 'Clicked',
+      untrusted: SCREEN_TEXT_UNTRUSTED,
     })
   }
 

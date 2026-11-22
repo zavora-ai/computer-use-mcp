@@ -104,6 +104,26 @@ Blender's file browser is its own window titled "Blender File View". Target it b
 Do not guess positions in the file browser. Its toolbar has a new-folder button beside the directory field, and a
 misplaced double-click makes folders in whatever directory is showing.
 
+## Repeating a sequence
+
+Work out a sequence once, then replay it. `export_steps {action: "start"}`, do it (strokes, keys, menu picks),
+`export_steps {action: "stop"}`: each batch is `run_steps` arguments with the window's `frame` and an `expect` on each
+step (the viewport changed, the dialog opened). A replay refuses to start when the Blender window is another size,
+because the editors lay out differently, and stops at the first step that did not do what it did when recorded: a key
+that did nothing, a menu that did not open. In Sculpt Mode the brush outline follows the pointer, so `changed` holds for
+any stroke, even one beside the mesh; check what a stroke did by looking. A click on a header word is replayed as
+`click_text`, so it still finds "View" if the header moved. Blender keeps 32 undo steps, so a long replay cannot be
+undone in one go: save first.
+Add your own checks with `expect: {text: "..."}` (OCR) or `expect: {region: [x, y, w, h], changed: true}` for one
+editor.
+
+## Teaching instead of doing
+
+With `COMPUTER_USE_PROFILE=guide` (or the `guide-me` prompt) point instead of acting:
+`agent_pointer {action: "move", text: "X-Ray", target_app: "org.blenderfoundation.blender", label: "Toggle X-ray"}`,
+say what to press, then `wait_for_stable` until the person has done it. Icons have no text: point with `coordinate`
+from a `zoom`.
+
 ## Rendering
 
 `key "f12"` over the viewport, then `wait_for_window {title: "Render"}`, then `wait_for_stable {target_window_id,

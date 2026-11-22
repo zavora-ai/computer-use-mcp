@@ -31,6 +31,13 @@ struct CardFrame: Decodable {
     let reason: String?
     /// 7.8: the live watcher is looking at this target.
     let watching: CardWatching?
+    /// 8.0: the agent handed the desktop to the person (a sign-in, a 2FA code).
+    let handoff: CardHandoff?
+}
+
+struct CardHandoff: Decodable {
+    let kind: String
+    let message: String
 }
 
 struct CardWatching: Decodable {
@@ -290,7 +297,10 @@ final class Card {
             stopButton.isEnabled = true
         case "paused":
             dot.layer?.backgroundColor = NSColor.systemOrange.cgColor
-            if frame?.reason == "takeover" {
+            if let handoff = frame?.handoff {
+                title.stringValue = "Your turn · \(elapsed)"
+                action.stringValue = "\(handoff.message) Press Resume when you are done."
+            } else if frame?.reason == "takeover" {
                 title.stringValue = "You took over · \(elapsed)"
                 action.stringValue = "The agent waits while you use the mouse or keyboard, and resumes when you stop."
             } else if frame?.watching != nil {

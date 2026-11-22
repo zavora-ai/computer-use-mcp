@@ -4,8 +4,8 @@
  */
 
 import { createRequire } from 'module'
-import { existsSync } from 'fs'
-import { join } from 'path'
+import { existsSync, readFileSync, statSync } from 'fs'
+import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
 /**
@@ -106,6 +106,47 @@ let cachedPath: string | undefined
 function addonPath(): string {
   if (cachedPath === undefined) cachedPath = resolveAddonPath()
   return cachedPath
+}
+
+/** 8.0: which addon loaded, from where, and whether it matches this package (for `doctor`). */
+export interface AddonInfo {
+  path: string
+  source: 'override' | 'platform_package' | 'checkout'
+  /** This package's version. */
+  packageVersion?: string
+  /** The platform package's version, when the addon came from one. */
+  addonVersion?: string
+  /** A build at the package root newer than the addon that loaded: in a checkout, the platform package shadows it. */
+  shadowedBuild?: string
+}
+
+/**
+ * 8.0 (Blender review, open item 9): describe the addon `loadNative` loaded. In a checkout with node_modules, the
+ * platform package (an older release) resolves before the checkout's own build, so new TypeScript ran against an old
+ * addon and refused key names it listed as valid. Undefined until the addon has loaded.
+ */
+export function describeLoadedAddon(options: { path?: string; packageRoot?: string; env?: NodeJS.ProcessEnv } = {}): AddonInfo | undefined {
+  const path = options.path ?? cachedPath
+  if (path === undefined) return undefined
+  const packageRoot = options.packageRoot ?? join(fileURLToPath(import.meta.url), '..', '..')
+  const version = (file: string): string | undefined => {
+    try { return JSON.parse(readFileSync(file, 'utf8')).version } catch { return undefined }
+  }
+  const override = (options.env ?? process.env).COMPUTER_USE_NATIVE_PATH
+  const fromPackage = /[\\/]node_modules[\\/]@zavora-ai[\\/]computer-use-mcp-[^\\/]+[\\/]/.test(path)
+  const source: AddonInfo['source'] = override && path === override ? 'override' : fromPackage ? 'platform_package' : 'checkout'
+  const info: AddonInfo = { path, source }
+  const packageVersion = version(join(packageRoot, 'package.json'))
+  if (packageVersion) info.packageVersion = packageVersion
+  const addonVersion = fromPackage ? version(join(dirname(path), 'package.json')) : undefined
+  if (addonVersion) info.addonVersion = addonVersion
+  if (source !== 'checkout') {
+    const local = join(packageRoot, `computer-use-napi.${process.platform}-${process.arch}.node`)
+    try {
+      if (local !== path && existsSync(local) && statSync(local).mtimeMs > statSync(path).mtimeMs) info.shadowedBuild = local
+    } catch { /* a file vanished between the checks: nothing to report */ }
+  }
+  return info
 }
 
 // ── v5 Accessibility shapes ───────────────────────────────────────────────────

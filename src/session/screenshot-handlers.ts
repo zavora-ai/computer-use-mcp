@@ -6,6 +6,7 @@ import type { TargetStateController } from './target-state.js'
 import type { VirtualPointerController } from './virtual-pointer.js'
 import { resolveAppWindow, WindowSelectionError } from './window-select.js'
 import { HelperFailure, type MacosHelper } from './macos-helper.js'
+import { withImageNote } from './untrusted.js'
 
 export interface CachedScreenshot {
   mimeType: string
@@ -172,7 +173,8 @@ export class ScreenshotHandler {
     this.#cursorDrawn = false
     const result = await this.#handleCapture(tool, args, signal)
     if ((tool !== 'screenshot' && tool !== 'zoom') || !result || result.isError) return result
-    return this.#withPointer(tool, args, result)
+    // 8.0: a capture can carry text written to steer an agent; the reply says what it is.
+    return withImageNote(this.#withPointer(tool, args, result))
   }
 
   /**

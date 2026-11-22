@@ -186,7 +186,9 @@ $timer.Add_Tick({
     'stopped' { $dot.Fill = '#D64545'; $title.Text = "Agent stopped · $elapsed"; $action.Text = 'No further desktop input this session. Restart the server to resume.'; $pause.IsEnabled = $false; $stop.Content = 'Close'; $stop.IsEnabled = $true }
     'paused'  {
       $dot.Fill = '#E8A33D'; $pause.Content = 'Resume'; $pause.IsEnabled = $true; $stop.IsEnabled = $true
-      if ($null -ne $script:frame -and [string]$script:frame.reason -eq 'takeover') {
+      if ($null -ne $script:frame -and $script:frame.handoff) {
+        $title.Text = "Your turn · $elapsed"; $action.Text = [string]$script:frame.handoff.message + ' Press Resume when you are done.'
+      } elseif ($null -ne $script:frame -and [string]$script:frame.reason -eq 'takeover') {
         $title.Text = "You took over · $elapsed"; $action.Text = 'The agent waits while you use the mouse or keyboard, and resumes when you stop.'
       } elseif ($null -ne $script:frame -and $script:frame.watching) {
         $title.Text = "Agent paused · $elapsed"; $action.Text = 'The watch sees nothing and nothing is changed until you resume.'

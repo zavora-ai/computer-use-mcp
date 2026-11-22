@@ -407,7 +407,10 @@ class Card:
             self.stop_button.set_label('Close')
         elif effective == 'paused':
             color = 'orange'
-            if frame.get('reason') == 'takeover':
+            if frame.get('handoff'):
+                title = 'Your turn · %s' % elapsed
+                action = '%s Press Resume when you are done.' % frame['handoff'].get('message', '')
+            elif frame.get('reason') == 'takeover':
                 title = 'You took over · %s' % elapsed
                 action = 'The agent waits while you use the mouse or keyboard, and resumes when you stop.'
             elif frame.get('watching'):

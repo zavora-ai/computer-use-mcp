@@ -37,6 +37,26 @@ export const MAX_HOLD_SECONDS = 10
 export const HELD_KEYS_MAX_MS = 60_000
 
 /**
+ * 8.0: how the pointer reaches a point. `jump` (the default) moves it there in one event, as before. `glide` makes
+ * clicks, drags and scrolls travel from where the pointer is, eased, so a person watching (or a recording) can follow
+ * it and apps that act on hover see a movement. `COMPUTER_USE_POINTER_MOTION=glide` turns it on.
+ */
+export type PointerMotion = 'jump' | 'glide'
+export function pointerMotionFromEnv(env: NodeJS.ProcessEnv = process.env): PointerMotion {
+  return env.COMPUTER_USE_POINTER_MOTION?.trim().toLowerCase() === 'glide' ? 'glide' : 'jump'
+}
+/** One motion event about every 8 ms (about 120 a second). */
+export const MOTION_STEP_MS = 8
+/** Glide speed and bounds: 1.5 px per ms, never under 120 ms or over 600 ms. */
+export const GLIDE_PX_PER_MS = 1.5
+export const GLIDE_MIN_MS = 120
+export const GLIDE_MAX_MS = 600
+/** A mouse_move path with no duration_ms: about 1 px per ms, between 100 ms and 5 s. */
+export const PATH_PX_PER_MS = 1
+export const PATH_MIN_MS = 100
+export const PATH_MAX_MS = 5_000
+
+/**
  * 7.8.1 (macOS): apps that take only the first character of a key event's text. Blender's event layer keeps one
  * character per key event, so Unicode text posted in chunks lost all but the first character of each chunk.
  */
@@ -138,6 +158,8 @@ export class InputHandler {
   readonly #clearOfCard: ((points: Array<[number, number]>) => Promise<void>) | undefined
   readonly #haltSignal: (() => AbortSignal) | undefined
   readonly #heldKeysMaxMs: number
+  /** 8.0: clicks, drags and scrolls travel to their point instead of jumping. */
+  readonly #glide: boolean
   /** 7.8.1: keys down across calls (hold_key down), each with its auto-release timer. */
   readonly #held = new Map<string, ReturnType<typeof setTimeout>>()
   #exitHook: (() => void) | undefined
@@ -163,6 +185,8 @@ export class InputHandler {
     haltSignal?: () => AbortSignal
     /** 7.8.1: how long hold_key down may hold before the keys come up by themselves (default 60 s). */
     heldKeysMaxMs?: number
+    /** 8.0: `glide` makes pointer actions travel to their point (default `jump`). */
+    pointerMotion?: PointerMotion
   }) {
     this.#native = options.native
     this.#targets = options.targets
@@ -177,6 +201,57 @@ export class InputHandler {
     this.#clearOfCard = options.clearOfCard
     this.#haltSignal = options.haltSignal
     this.#heldKeysMaxMs = options.heldKeysMaxMs ?? HELD_KEYS_MAX_MS
+    this.#glide = options.pointerMotion === 'glide'
+  }
+
+  /** 8.0: whether pointer actions glide to their point. */
+  pointerMotion(): PointerMotion { return this.#glide ? 'glide' : 'jump' }
+
+  /**
+   * 8.0: move the cursor from where it is to (x, y) through eased intermediate positions instead of one jump. Without a
+   * duration it takes the glide time for the distance. A cursor position that cannot be read leaves the jump to the
+   * caller.
+   */
+  async #travel(x: number, y: number, durationMs?: number, signal?: AbortSignal): Promise<void> {
+    let from: { x: number; y: number } | undefined
+    try { from = this.#native.cursorPosition() } catch { from = undefined }
+    if (!from || !Number.isFinite(from.x) || !Number.isFinite(from.y)) return
+    const distance = Math.hypot(x - from.x, y - from.y)
+    if (distance < 2) return
+    const duration = durationMs ?? Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, distance / GLIDE_PX_PER_MS))
+    const steps = Math.max(2, Math.min(1250, Math.round(duration / MOTION_STEP_MS)))
+    for (let step = 1; step <= steps; step++) {
+      this.#checkAbort(signal, 'pointer travel aborted')
+      const t = step / steps
+      const eased = t * t * (3 - 2 * t)
+      this.#native.mouseMove(Math.round(from.x + (x - from.x) * eased), Math.round(from.y + (y - from.y) * eased))
+      await this.#sleep(duration / steps)
+    }
+  }
+
+  /** 8.0: glide to a point before a pointer action when the session asks for it. */
+  async #approach(x: number, y: number, signal?: AbortSignal): Promise<void> {
+    if (this.#glide) await this.#travel(x, y, undefined, signal)
+  }
+
+  /** 8.0: move through waypoints at a constant speed, `durationMs` in all, with no button held. */
+  async #movePath(path: ReadonlyArray<readonly [number, number]>, durationMs: number, signal?: AbortSignal): Promise<void> {
+    const lengths = path.slice(1).map((point, index) => Math.hypot(point[0] - path[index][0], point[1] - path[index][1]))
+    const total = lengths.reduce((sum, length) => sum + length, 0)
+    const allSteps = Math.max(path.length - 1, Math.min(1250, Math.round(durationMs / MOTION_STEP_MS)))
+    for (let segment = 1; segment < path.length; segment++) {
+      const share = total > 0 ? lengths[segment - 1] / total : 1 / (path.length - 1)
+      const steps = Math.max(1, Math.round(allSteps * share))
+      const pause = (durationMs * share) / steps
+      const [fromX, fromY] = path[segment - 1]
+      const [toX, toY] = path[segment]
+      for (let step = 1; step <= steps; step++) {
+        this.#checkAbort(signal, 'mouse_move aborted mid-path')
+        const ratio = step / steps
+        this.#native.mouseMove(Math.round(fromX + (toX - fromX) * ratio), Math.round(fromY + (toY - fromY) * ratio))
+        await this.#sleep(pause)
+      }
+    }
   }
 
   /** Keys held across calls (hold_key down), in the order they went down. */
@@ -380,6 +455,7 @@ export class InputHandler {
     this.#validateCoordinates(x, y)
     await this.#clearCard([[x, y]])
     await this.#focus.ensure(resolved, this.#focus.strategyFor(tool, args), { tool, force: true })
+    await this.#approach(x, y)
     this.#native.mouseMove(x, y)
     await this.#sleep(50)
     await this.#withHeldKeys(holdKeys, async () => {
@@ -560,13 +636,45 @@ export class InputHandler {
 
     if (tool === 'mouse_move') {
       const resolved = target()
-      const [x, y] = coordinate()
-      this.#validateCoordinates(x, y)
-      await this.#clearCard([[x, y]])
+      // 8.0: a path with no button held (a hover with Shift down), or a timed move to a point.
+      let path: Array<[number, number]> | undefined
+      if (args.path !== undefined) {
+        if (!Array.isArray(args.path) || args.path.length < 2 || args.path.length > 64
+          || !args.path.every(point => Array.isArray(point) && point.length >= 2 && typeof point[0] === 'number' && typeof point[1] === 'number')) {
+          throw new Error('Invalid path: expected 2 to 64 [x, y] points')
+        }
+        path = (args.path as number[][]).map(point => [point[0], point[1]])
+      }
+      if (!path && args.coordinate === undefined) throw new Error('mouse_move needs coordinate or path')
+      const points = path ?? [coordinate()]
+      const modifiers = this.#modifiers(args)
+      const held = [...new Set([...normalizeHeldKeys(modifiers, this.#platform), ...this.#heldKeys(args)])]
+      const duration = typeof args.duration_ms === 'number' ? Math.max(0, Math.min(10_000, args.duration_ms)) : undefined
+      for (const [x, y] of points) this.#validateCoordinates(x, y)
+      await this.#clearCard(points)
       await focus(resolved)
-      this.#native.mouseMove(x, y)
+      const holding = held.length ? ` holding ${held.join('+')}` : ''
+      if (!path) {
+        const [x, y] = points[0]
+        await this.#withHeldKeys(held, async () => {
+          if (duration !== undefined && duration > 0) await this.#travel(x, y, duration, signal)
+          else await this.#approach(x, y, signal)
+          this.#native.mouseMove(x, y)
+        })
+        if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
+        return ok(`Moved to (${x}, ${y})${holding}`)
+      }
+      // Reach the path's start (gliding when the session glides), then travel through it with the keys held.
+      const waypoints = path
+      const [startX, startY] = waypoints[0]
+      await this.#approach(startX, startY, signal)
+      this.#native.mouseMove(startX, startY)
+      const length = waypoints.slice(1).reduce((sum, point, index) => sum + Math.hypot(point[0] - waypoints[index][0], point[1] - waypoints[index][1]), 0)
+      const pathMs = duration ?? Math.min(PATH_MAX_MS, Math.max(PATH_MIN_MS, length / PATH_PX_PER_MS))
+      await this.#withHeldKeys(held, () => this.#movePath(waypoints, pathMs, signal))
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
-      return ok(`Moved to (${x}, ${y})`)
+      const [endX, endY] = waypoints[waypoints.length - 1]
+      return ok(`Moved through ${waypoints.length} waypoints to (${endX}, ${endY}) in ${Math.round(pathMs)} ms${holding}`)
     }
 
     if (tool === 'left_click_drag') {
@@ -577,6 +685,7 @@ export class InputHandler {
       for (const [x, y] of path) this.#validateCoordinates(x, y)
       await this.#clearCard(path)
       await focus(resolved)
+      await this.#approach(from[0], from[1], signal)
       this.#native.mouseMove(from[0], from[1])
       await this.#sleep(50)
       signal?.throwIfAborted()
@@ -598,6 +707,7 @@ export class InputHandler {
       this.#validateCoordinates(x, y)
       await this.#clearCard([[x, y]])
       await focus(resolved)
+      await this.#approach(x, y, signal)
       this.#native.mouseButton(tool === 'left_mouse_down' ? 'press' : 'release', x, y)
       if (resolved.bundleId) this.#targets.update(resolved, 'pointer')
       return ok(tool === 'left_mouse_down' ? 'Mouse down' : 'Mouse up')
@@ -628,6 +738,7 @@ export class InputHandler {
       this.#validateCoordinates(x, y)
       await this.#clearCard([[x, y]])
       await focus(resolved)
+      await this.#approach(x, y, signal)
       this.#native.mouseMove(x, y)
       await this.#sleep(15)
       const deltaX = typeof args.delta_x === 'number' ? args.delta_x : direction === 'left' ? -amount : direction === 'right' ? amount : 0
@@ -850,6 +961,7 @@ export class InputHandler {
           await this.#sleep(40)
         }
       }
+      await this.#approach(startX, startY, signal)
       this.#native.mouseMove(startX, startY)
       await this.#sleep(15)
       await this.#withHeldKeys(holdKeys, async () => {

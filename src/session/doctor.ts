@@ -1,5 +1,6 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process'
-import type { NativeModule } from '../native.js'
+import { release as osRelease } from 'node:os'
+import type { AddonInfo, NativeModule } from '../native.js'
 import { offThread } from './native-async.js'
 import type { SpawnBounded, SpawnResult } from './spawn.js'
 import { utf8Env } from './input-handlers.js'
@@ -10,7 +11,53 @@ import type { LegacyPolicyConfig } from './legacy-policy.js'
  * (Peekaboo 4.9.4 follows it). Both names are given until the new one is confirmed on a macOS 27 machine.
  */
 export const ACCESSIBILITY_SETTINGS = 'System Settings > Privacy & Security > Accessibility (on macOS 27 and later: Device Control and Data Access)'
-const ACCESSIBILITY_REMEDIATION = `Open ${ACCESSIBILITY_SETTINGS} and enable your terminal, IDE, or agent host. Restart the host app afterwards.`
+
+/**
+ * 8.0 (gaps review P0-4): a grant can be listed and switched on yet not match the app after an update or a re-sign, and
+ * then macOS refuses the app as if it were off (Codex #18896 stayed open six months on this).
+ */
+export const STALE_GRANT_FIX = 'If the host is already listed and switched on, remove it with − and add it again: an update can leave an entry that no longer matches the app.'
+
+/**
+ * 8.0: macOS 27.3 (beta 2, 2026-11-16) splits Device Control and Data Access. Automation tools get System & App
+ * Protection Override, with the apps they may control chosen per app ("Choose Apps", each "At Any Time" or "Ask
+ * First"); Accessibility becomes an entitlement for assistive technologies. Written from Apple's notes before a 27.3
+ * machine was run: the pane name is what Apple published.
+ */
+export const APP_PROTECTION_OVERRIDE_SETTINGS = 'System Settings > Privacy & Security > System & App Protection Override'
+
+/** The macOS version from the Darwin release (`os.release()`): Darwin 25.2 is macOS 26.2, Darwin 26.3 is macOS 27.3. */
+export function macosVersion(darwinRelease: string): { major: number; minor: number } | undefined {
+  const match = /^(\d+)\.(\d+)/.exec(darwinRelease)
+  if (!match) return undefined
+  const darwin = Number(match[1])
+  // Darwin 20 was macOS 11; Apple then numbered macOS 26 after macOS 15 (Darwin 25).
+  const major = darwin >= 25 ? darwin + 1 : darwin - 9
+  return { major, minor: Number(match[2]) }
+}
+
+/** Whether this macOS has the per-app automation grant (27.3 and later). */
+export function hasAppProtectionOverride(darwinRelease: string): boolean {
+  const version = macosVersion(darwinRelease)
+  return version !== undefined && (version.major > 27 || (version.major === 27 && version.minor >= 3))
+}
+
+/** What to tell the person to grant for input and the accessibility tree, on the running macOS. */
+export function accessibilityRemediation(darwinRelease: string = osRelease()): string {
+  if (hasAppProtectionOverride(darwinRelease)) {
+    return `Open ${APP_PROTECTION_OVERRIDE_SETTINGS}, switch on your terminal, IDE, or agent host, and under Choose Apps add each app the agent should control (At Any Time, or Ask First to be asked). Restart the host app afterwards. ${STALE_GRANT_FIX}`
+  }
+  return `Open ${ACCESSIBILITY_SETTINGS} and enable your terminal, IDE, or agent host. Restart the host app afterwards. ${STALE_GRANT_FIX}`
+}
+
+/**
+ * 8.0: native functions this release calls. An addon without them is older than the TypeScript layer (a checkout
+ * whose node_modules holds the previous platform package), and the tools that need them fail.
+ */
+export function expectedNativeFunctions(platform: NodeJS.Platform): string[] {
+  const common = ['keyDown', 'keyUp', 'mousePress', 'mouseDragTo', 'mouseRelease']
+  return platform === 'darwin' ? [...common, 'mousePenEvent', 'mouseClickModified', 'mouseScrollModified'] : common
+}
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
@@ -58,6 +105,10 @@ export async function runDoctor(options: {
   execFileSync?: typeof defaultExecFileSync
   /** 7.6.1: the operator control state (the desktop status card). */
   controlStatus?: () => Record<string, unknown>
+  /** 8.0: the Darwin release (`os.release()`), to name the right macOS permission pane. */
+  osRelease?: string
+  /** 8.0: which native addon loaded and whether it matches this package. */
+  addon?: () => AddonInfo | undefined
   /** v7.5: agent-desktop state — helper build, user-active guard, pid delivery records. */
   agentDesktop?: () => Promise<{
     helper?: { ok: boolean; path?: string; reason?: string; remediation?: string; sck?: boolean } | null
@@ -71,6 +122,7 @@ export async function runDoctor(options: {
   const isWindows = platform === 'win32'
   const isLinux = platform === 'linux'
   const executeFile = options.execFileSync ?? defaultExecFileSync
+  const darwinRelease = options.osRelease ?? osRelease()
   const checks: DoctorCheck[] = []
   const add = (input: DoctorCheck) => {
     const check = { ...input }
@@ -98,6 +150,33 @@ export async function runDoctor(options: {
       remediation: ['Run npm run build for source checkouts, or reinstall @zavora-ai/computer-use-mcp for your platform.'],
     })
   }
+  // 8.0 (Blender review, open item 9): an addon older than this TypeScript layer fails the tools that need what it lacks,
+  // with errors that contradict themselves ("Unknown key numpad_decimal … Valid keys: … numpad_decimal").
+  {
+    const nativeFunctions = options.native as unknown as Record<string, unknown>
+    const missing = expectedNativeFunctions(platform).filter(name => typeof nativeFunctions[name] !== 'function')
+    const info = options.addon?.()
+    const mismatch = info?.addonVersion && info.packageVersion && info.addonVersion !== info.packageVersion
+      ? `the addon is ${info.addonVersion} and this package is ${info.packageVersion}` : undefined
+    const problems = [
+      ...(missing.length ? [`the addon lacks ${missing.join(', ')}`] : []),
+      ...(mismatch ? [mismatch] : []),
+      ...(info?.shadowedBuild ? [`a newer build at ${info.shadowedBuild} is not the one loaded`] : []),
+    ]
+    add({
+      id: 'native_addon',
+      status: problems.length ? 'warn' : 'pass',
+      summary: problems.length
+        ? `The native addon does not match this release: ${problems.join('; ')}.`
+        : `The native addon has every function this release calls${info ? ` (${info.source}${info.addonVersion ? ` ${info.addonVersion}` : ''})` : ''}.`,
+      details: { ...(info ?? {}), ...(missing.length ? { missing } : {}) },
+      remediation: [
+        info?.source === 'platform_package'
+          ? `Install the platform package at ${info.packageVersion ?? 'this package\'s version'}, or point COMPUTER_USE_NATIVE_PATH at a build from this checkout (npm run build:native).`
+          : 'Rebuild the addon from this checkout (npm run build:native), or reinstall the package so the platform package matches it.',
+      ],
+    })
+  }
   // macOS reports permission through TCC. A capture can still return an image
   // without Screen Recording access — the desktop wallpaper with every window
   // missing — so the permission itself is the fact, not the image payload.
@@ -115,14 +194,14 @@ export async function runDoctor(options: {
         ...(captureTrust ? { screenRecordingGranted: captureTrust.granted } : {}),
       },
       remediation: isMacos
-        ? ['Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
+        ? [`Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards. ${STALE_GRANT_FIX}`]
         : ['Run from an interactive desktop session. If using RDP/VMs, ensure Desktop Duplication or GDI capture is available.'],
     })
   } catch (error) {
     add({
       id: 'display_capture', status: 'fail', summary: failure(error),
       remediation: isMacos
-        ? ['Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards.']
+        ? [`Open System Settings > Privacy & Security > Screen & System Audio Recording and enable your terminal, IDE, or agent host. Restart the host app afterwards. ${STALE_GRANT_FIX}`]
         : ['Run from an interactive desktop session. If using RDP/VMs, ensure Desktop Duplication or GDI capture is available.'],
     })
   }
@@ -173,14 +252,14 @@ export async function runDoctor(options: {
         ...(axTrust ? { accessibilityGranted: axTrust.granted } : {}),
       },
       remediation: isMacos
-        ? [ACCESSIBILITY_REMEDIATION]
+        ? [accessibilityRemediation(darwinRelease)]
         : ['UI Automation is built into Windows. If controls are missing, run the agent at the same integrity level as the target app.'],
     })
   } catch (error) {
     add({
       id: isWindows ? 'ui_automation' : 'accessibility', status: 'fail', summary: failure(error),
       remediation: isMacos
-        ? [ACCESSIBILITY_REMEDIATION]
+        ? [accessibilityRemediation(darwinRelease)]
         : ['Run the agent from an interactive desktop session and avoid crossing elevated/non-elevated integrity boundaries.'],
     })
   }

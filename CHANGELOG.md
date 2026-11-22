@@ -1,5 +1,89 @@
 # Changelog
 
+## v8.0.0 (unreleased)
+
+The next release is 8.0.0; it also carries the unreleased 7.8.1 changes below. Record and replay, and guide mode: the two items of [the 2026-10-25 gaps review](docs/reviews/2026-10-25-computer-use-gaps.md)
+(P2-11, P2-15) that following a Blender tutorial showed matter most, and a hand-off to the person at sign-in and
+verification screens. Desktop lists 39 tools on macOS (47,912 bytes) and full 80 (87,037).
+
+Checked live in Blender 5.3.0 on macOS 26.2, reading the result back from Blender: seven recorded actions (X-ray on and
+off, a sculpt stroke and its undo, opening and closing the View menu) exported with an `expect` each and replayed with
+every expect met, ending in the state the recording ended in; the click on "View" came back as `click_text` and landed
+3 points from the recorded click; an unbound key's `expect: {changed: true}` stopped its batch with the next step not
+run; `agent_pointer {text: "View"}` found the header's View, not "ViewLayer", and the card showed its label; `hand_off`
+paused input (`handed_off`) and put its message on the card until `done`.
+
+### Added
+
+- **`export_steps`: the actions that worked, as `run_steps` batches to replay.** The session keeps every step-tool
+  action that succeeded (the last 300) with the window it was aimed at. `export_steps {action: "start"}` also checks each
+  action as it is recorded: the target is captured before and after, a click reads the text under it first, typing
+  notes whether the focused field is sensitive, and a window that opens is noted. The export names the app instead of
+  window ids, keeps coordinates in the window's frame at the first step, names a dialog by its title, turns a click on a
+  word into `click_text`, and gives each step an `expect` from what it did (`changed: true`, or the window that opened);
+  steps nothing confirmed are listed in `unchecked`. `force`, `verify` and approval tokens are never exported; secrets
+  are replaced by a placeholder that `run_steps` refuses.
+- **`expect` on a `run_steps` step.** After the step: the window (or a region) changed, or did not; text appeared or
+  went (OCR, macOS); a window appeared or went. An unmet expect stops the batch with `expect_failed`, what was seen and a
+  `next_call`, and reports the rest not run, so only the broken step needs re-planning.
+- **`frame` on `run_steps`.** Steps recorded in a window's frame move with the window, and a window of another size
+  refuses the batch with `frame_changed` before anything runs.
+- **Guide mode.** `COMPUTER_USE_PROFILE=guide` lists the observation, OCR and wait tools and `agent_pointer`, and
+  nothing that clicks, types or changes the machine (26 tools on macOS, 23 on Windows and Linux), with instructions for
+  pointing and explaining. The `guide-me` prompt asks the same of any profile. `agent_pointer {text}` points at a label
+  read by OCR (macOS), and `label` shows on the status card as "Look here: ...".
+- **Sign-in and verification screens are handed to the person, by default.** Before `type`, `set_value`, `fill_form`,
+  `multi_edit`, a paste or a single key, the server looks for a wall: the focused field is protected (a password field)
+  or labelled as a code field, the window's title says sign-in or verification, or, in a browser whose page fields are
+  not in the accessibility tree, the window's text shows a code prompt or a password field beside a sign-in heading
+  (OCR, macOS, kept 3 s per window). On a wall the call is refused with `sign_in_required` and what was seen, and the
+  desktop is handed to the person: mutations return `handed_off` and the status card says "Your turn" with what to do,
+  until they press Resume. `COMPUTER_USE_AUTH_HANDOFF=off` (or `authHandoff: false` for an embedding host) lifts it for
+  an operator whose agent must sign in, such as a test account in a recorded tutorial; no tool argument does.
+- **`hand_off`.** The agent asks the person for anything else only they should do (a CAPTCHA, a payment, a consent):
+  input pauses with its message on the card, `wait_ms` waits for Resume, and `action: "done"` resumes once the person
+  says in the conversation that it is finished (for hosts with no card). It is in every profile, `guide` included.
+- **A hand-off ends by itself** (from [the v8 release plan](docs/reviews/2026-11-22-v8-release-plan.md), roadmap H1).
+  A sign-in screen the server handed over resumes once its window closes, or moves on to a title (and, in a browser,
+  page text) that is no wall; `hand_off {done_when: "window_gone" | "text_gone", text, target_app}` ends when that
+  window closes or that text leaves it (text: OCR, macOS). The condition must hold on two polls in a row, and a person's
+  own pause is never ended by it. Before, only Resume or `hand_off {action: "done"}` ended one.
+- **`mouse_move` travels a path with no button held.** `path` (2 to 64 points) at about 1 px per ms or over
+  `duration_ms`, with `modifiers` and `hold_keys` down for the whole path: a hover with Shift held, a brush cursor
+  drawn across a mesh. `coordinate` with `duration_ms` travels there from where the pointer is. A stopped path lets its
+  keys up. Before, `mouse_move` was one jump and `mouse_drag` always held a button.
+- **`COMPUTER_USE_POINTER_MOTION=glide`** (or `pointerMotion: "glide"` for an embedding host): clicks, `click_text`,
+  drags, scrolls and button presses travel from where the pointer is, eased, at 1.5 px per ms (120 to 600 ms), so a
+  person watching, or a screen recording, can follow the pointer. Off by default: a jump is faster.
+- **Step times.** Each `run_steps` step reports `at_ms` (from the batch's start) and `ms`, and `export_steps` returns
+  `started_at` and `offsets_ms` (when each exported action finished), so chapters, captions and narration line up with
+  a recording.
+- **Screen content is labelled untrusted** (gaps review P0-3). `read_window_text`, `click_text` and `wait_for_text`
+  results carry `untrusted`; `get_ui_tree`, `find_element` and `get_focused_element` add a second text block saying
+  so (the first stays the JSON clients parse), on Linux too; every `screenshot` and `zoom` says that what the image shows
+  is data, never instructions.
+- **Pointing and checks that hold up in Blender** (gaps T4, T5, T6 and T8 from the Blender trainer's live runs).
+  `agent_pointer {text}` takes `nth`, `region`, `target_window_id` and `target_title`, so it can point at the second
+  "Torus" or inside a secondary window such as Blender's File View. `run_steps` `expect` takes `match` (`exact`,
+  `contains`, `regex`). A query with a digit tolerates OCR's misreads in numbers in `click_text`, `wait_for_text` and
+  `expect.text` (a comma between digits reads as a point, an O beside a digit as a zero), so "1.000" finds "1,000". A
+  step's own `expect` that held is what `export_steps` returns, instead of one derived from the recording. A checked
+  recording reads the text in a band around each click, not the whole window, where Vision joins neighbouring labels.
+- **`doctor` checks the native addon** (`native_addon`): the functions this release calls, the platform package's
+  version against this package's, and a newer checkout build that the platform package shadows (in a checkout, the
+  platform package in node_modules resolves first). A key this release knows but the addon refuses is now blamed on the
+  addon instead of being listed as valid in the same error.
+
+### Changed
+
+- **macOS permission advice.** On macOS 27.3 and later `doctor` names System & App Protection Override and the apps to
+  choose under Choose Apps (Apple split Device Control and Data Access in 27.3 beta 2); written from Apple's notes, not
+  yet run on 27.3. Every macOS permission fix now also says to remove and re-add a host that is listed and switched on,
+  which is what an update or a re-sign can leave behind (gaps review P0-4). The `accessibility_permission_denied` hint
+  names both grants.
+- Eight tool descriptions (`doctor`, `zoom`, `read_window_text`, `wait_for_text`, `wait_for_stable`, `list_windows`,
+  `get_tool_guide`, `control_status`) are shorter, to keep `desktop` under its 48,000-byte budget with the new parameters.
+
 ## v7.8.1 (unreleased)
 
 Driving Blender 5.3 with the mouse and keyboard alone, from [the 2026-11-22 Blender review](docs/reviews/2026-11-22-blender-direct-control.md).

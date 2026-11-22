@@ -3,6 +3,7 @@ import type { SpawnBounded } from './spawn.js'
 import type { AccessibilityHandlerContext } from './accessibility-handlers.js'
 import { sanitizeAccessibilityResult } from './accessibility-handlers.js'
 import { ok, errJson, type ToolResult } from '../result.js'
+import { withUntrustedNote } from './untrusted.js'
 const TOOLS = new Set(['get_ui_tree', 'get_focused_element', 'find_element', 'click_element', 'set_value', 'press_button', 'fill_form'])
 
 /** The window the window manager reports as focused, or null when it reports none. */
@@ -30,5 +31,7 @@ export async function handleLinuxAccessibility(tool: string, args: Record<string
     details: result.stderr.slice(0, 1000) })
   const output = JSON.parse(result.stdout)
   if (output?.error) return errJson(output)
-  return ok(JSON.stringify(sanitizeAccessibilityResult(output)))
+  const reply = ok(JSON.stringify(sanitizeAccessibilityResult(output)))
+  // 8.0: names and values read from the tree are labelled untrusted, as on macOS and Windows.
+  return focusQuery || tool === 'get_ui_tree' || tool === 'find_element' ? withUntrustedNote(reply) : reply
 }

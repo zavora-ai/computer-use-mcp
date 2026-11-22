@@ -145,10 +145,11 @@ prompts are normal setup requirements. Downloads is not guaranteed to bypass tho
 | Build agent hosts | Add persistent desktop sessions, verified workflows, an MCP App console, isolated browser contexts and supervised runtimes. |
 | Stay in control | A desktop status card (on by default on macOS and Windows; `COMPUTER_USE_STATUS_CARD=true` on Linux) shows what the agent is doing with Pause and Stop, and `ctrl+alt+escape` stops it. Moving the mouse or typing pauses the agent until you stop. A locked screen is refused by name, and on macOS and Windows the display stays awake while the agent works. Neither the card nor the agent's pointer appears in its screenshots (on Linux the card is painted out of them, and it reserves a strip of the desktop instead of floating on top). |
 
-The default profile, **`desktop`**, exposes 37 tools on macOS: observation,
+The default profile, **`desktop`**, exposes 39 tools on macOS: observation,
 coordinates, OCR for apps that draw their own UI, waits and the session target.
-Set `COMPUTER_USE_PROFILE=full` for every tool (78 on macOS), or `core`, `ax`,
-`scripting` and `windows-admin` for other bounds. Tools that don't exist on your
+Set `COMPUTER_USE_PROFILE=full` for every tool (80 on macOS), or `core`, `ax`,
+`scripting` and `windows-admin` for other bounds, or `guide` for a read-only profile that points and
+explains while the person does the task. Tools that don't exist on your
 platform are not listed. Optional host services add their own tools. The server's
 instructions to the agent are generated for your platform and profile, so they only
 name tools that are there.

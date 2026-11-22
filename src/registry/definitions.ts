@@ -82,15 +82,23 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   const VIRTUAL_MUT = TOOL_CATALOG.agent_pointer
   const DYNAMIC_MUT = TOOL_CATALOG.openai_computer
 
-  tool('doctor', 'Run first-run onboarding diagnostics. Checks native binary compatibility, permissions, display capture, clipboard, Accessibility/UI Automation, scripting, PowerShell, policy, and audit logging; returns machine-readable remediation steps.', {
+  tool('doctor', 'Diagnose the install: the native addon, permissions, capture, clipboard, accessibility, scripting, PowerShell, policy and audit, with the fix for each problem.', {
     include_remediation: z.boolean().optional().default(true).describe('Include exact setup/fix steps for failed or warning checks'),
   }, NONE_READ)
   tool('policy_status', 'Show active policy and audit configuration without revealing approval tokens.', {}, NONE_READ)
-  tool('agent_pointer', 'Manage a non-interrupting virtual agent pointer. Moving it does not move the user cursor or focus any app; use screenshot(show_agent_pointer=true) to render it into observations.', {
-    action: z.enum(['get', 'move', 'show', 'hide', 'reset']).describe('Virtual pointer operation'),
-    coordinate: numArray(2).optional().describe('[x, y] logical pixels for action=move'),
-    visible: z.boolean().optional().describe('Optional visibility override for move/reset'),
-    native_overlay: z.boolean().optional().describe('Show/update the native always-on-top overlay window when available. Defaults true for visible pointer actions.'),
+  tool('agent_pointer', 'A pointer overlay for the person to see; it moves no cursor and focuses nothing. screenshot(show_agent_pointer=true) draws it into a capture.', {
+    action: z.enum(['get', 'move', 'show', 'hide', 'reset']),
+    coordinate: numArray(2).optional().describe('[x, y] for move'),
+    visible: z.boolean().optional(),
+    native_overlay: z.boolean().optional(),
+    // 8.0: point at a label, in any window of the app; the shared targeting is described in the instructions.
+    text: z.string().optional().describe('Move to this text (OCR, macOS); nth, region [x, y, w, h] and the target narrow it.'),
+    nth: z.number().optional(),
+    region: numArray(4).optional(),
+    target_app: z.string().optional(),
+    target_window_id: z.number().optional(),
+    target_title: z.string().optional(),
+    label: z.string().optional().describe('What to do there, shown on the status card.'),
   }, VIRTUAL_MUT)
   tool('openai_computer', 'OpenAI Computer Use compatibility adapter. Accepts a single action or batched actions[] using click, double_click, scroll, type, wait, keypress, drag, move, screenshot.', {
     action: openAiActionSchema.optional().describe('Single OpenAI-style computer action'),
@@ -125,7 +133,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     include_pointer: includePointerParam,
     resend: z.boolean().optional().describe('Send the image even when nothing changed since the last capture.'),
   }, NONE_READ)
-  tool('zoom', 'View a specific region of the screen at full resolution. Useful for reading small text, inspecting UI details, or verifying pixel-level content. Returns the cropped region without downscaling. With target_app or target_window_id the region is in that window\'s points, from its top-left. To read text, read_window_text is cheaper than an image.', {
+  tool('zoom', 'A region of the screen at full resolution, not downscaled: small text, UI details, pixels. With target_app or target_window_id the region is in that window\'s points, from its top-left. To read text, read_window_text is cheaper than an image.', {
     region: intArray(4)
       .describe('[x1, y1, x2, y2] — top-left and bottom-right corners of the region to inspect (window points when a target is given)'),
     quality: z.number().int().min(0).max(100).optional()
@@ -146,22 +154,53 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   // v7.6 R7: the v7 click variants stay callable as thin aliases of click (the registry parses with passthrough, so
   // target_app, target_window_id, delivery and force still work on them); they cost a line each in the list.
   const alias = { undeclaredArgs: ALIAS_TARGETING_ARGS }
-  tool('run_steps', 'Several actions in one call, in order. Every step is checked before any runs, the target is focused once, and the batch stops at the first failing step (the rest are reported not run). For a known sequence: click a field, type, press return. Look between steps you are unsure of.', {
+  tool('run_steps', 'Several actions in one call, in order. Every step is checked before any runs, the target is focused once, and the batch stops at the first failing step or unmet expect (the rest not run). For a known sequence, or a replay of export_steps.', {
     steps: z.array(z.object({
       tool: z.enum(RUN_STEP_TOOLS),
       args: z.record(z.string(), z.unknown()).optional().describe('The tool\'s own arguments.'),
-    })).min(1).max(30).describe('{tool, args} each. A step with no target uses the batch target.'),
+      // 8.0 (P2-11): what must hold after the step, or the batch stops there.
+      expect: z.object({
+        changed: z.boolean().optional(),
+        text: z.string().optional(),
+        match: z.enum(['exact', 'contains', 'regex']).optional(),
+        window: z.object({ kind: z.string().optional(), title: z.string().optional() }).optional(),
+        gone: z.boolean().optional(),
+        region: numArray(4).optional(),
+        timeout_ms: z.number().int().optional(),
+      }).optional().describe('Must hold after the step or the batch stops: changed (window, or region [x, y, w, h]); text (OCR) or window appears, or goes (gone).'),
+    })).min(1).max(30).describe('{tool, args, expect} each. A step with no target uses the batch target.'),
     target_app: targetAppParam,
     target_window_id: targetWindowIdParam,
+    frame: intArray(4).optional().describe('Window frame [x, y, w, h] at recording: coordinates follow the window.'),
     capture: z.enum(['none', 'window', 'screen']).optional().describe('One capture after the last step (default none).'),
     region: intArray(4).optional().describe('With capture window: [x1, y1, x2, y2] in window points.'),
   }, CG_MUT)
+  tool('hand_off', 'The person\'s turn, for what only they should do (sign in, 2FA, CAPTCHA, payment): input pauses and the status card asks them until Resume or done_when holds. done: they said it is finished.', {
+    message: z.string().optional().describe('What they should do.'),
+    action: z.enum(['request', 'done']).optional(),
+    wait_ms: z.number().int().optional().describe('Wait this long for Resume.'),
+    done_when: z.enum(['resume', 'window_gone', 'text_gone']).optional().describe('window_gone: target_app\'s window closes; text_gone: text leaves it.'),
+    text: z.string().optional(),
+    target_app: targetAppParam,
+  }, NONE_READ)
+  tool('export_steps', 'The actions that worked, as run_steps batches with an expect per step, to replay. start: check each action from now (before/after, text under a click); export (default): return them; stop: end checking.', {
+    action: z.enum(['export', 'start', 'stop']).optional(),
+    since: z.number().int().optional().describe('After this seq (an earlier next_since).'),
+    last: z.number().int().optional().describe('The last N.'),
+  }, NONE_READ)
   tool('left_click', 'Alias of click (button left, count 1). Prefer click.', coord, CG_MUT, alias)
   tool('right_click', 'Alias of click (button right). Prefer click.', coord, CG_MUT, alias)
   tool('middle_click', 'Alias of click (button middle). Prefer click.', coord, CG_MUT, alias)
   tool('double_click', 'Alias of click (count 2). Prefer click.', coord, CG_MUT, alias)
   tool('triple_click', 'Alias of click (count 3). Prefer click.', coord, CG_MUT, alias)
-  tool('mouse_move', 'Move OS cursor to coordinates (last resort — prefer agent_pointer for non-interrupting pointer). Requires target frontmost for subsequent clicks.', withTargeting(coord), CG_MUT)
+  // 8.0: a path with no button held (a hover with Shift down), and travel the person can follow.
+  tool('mouse_move', 'Move the cursor to coordinate, or along path with no button held. agent_pointer shows a point without moving it.', withTargeting({
+    coordinate: numArray(2).optional(),
+    path: z.array(numArray(2)).min(2).max(64).optional(),
+    duration_ms: z.number().int().min(0).max(10000).optional().describe('Travel time (default: jump; path ~1 px/ms).'),
+    modifiers: modifiersParam,
+    hold_keys: holdKeysParam,
+  }), CG_MUT)
   tool('left_click_drag', 'Click and drag', withTargeting({
     coordinate: numArray(2),
     start_coordinate: numArray(2).optional(),
@@ -245,7 +284,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     force: forceParam,
   }, AX_MUT)
   tool('get_frontmost_app', 'Get the currently frontmost app', {}, AX_READ)
-  tool('list_windows', 'List visible on-screen windows, optionally filtered by bundle ID. Each window has a kind (main, document, dialog, panel, toast, other), so a notification toast is not mistaken for a blocking dialog', {
+  tool('list_windows', 'Visible windows, optionally for one bundle ID, each with a kind (main, document, dialog, panel, toast, other), so a toast is not taken for a blocking dialog', {
     bundle_id: z.string().optional().describe('Bundle ID to filter windows by'),
   }, AX_READ)
   tool('discover_applications', 'Find installed and running applications by name or ID before choosing an app. Supports Office suite queries. Returns stable IDs, targetApp when known, running state and optional bounded capability probes; never launches apps.', {
@@ -364,7 +403,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   }, AX_READ)
 
   // ── v5: Strategy advisor ────────────────────────────────────────────────
-  tool('get_tool_guide', 'Recommend the best automation approach for a task. Call this BEFORE committing to screenshot-and-click — it suggests scripting or accessibility paths when they exist.', {
+  tool('get_tool_guide', 'The best route for a task. Call it before screenshot-and-click: it names scripting or accessibility routes when they exist.', {
     task_description: z.string().describe('Natural-language description of the task to automate'),
   }, NONE_READ)
   tool('get_app_capabilities', 'Discover what automation approaches work for an app: scriptable? accessible? running? hidden? On macOS also whether pid delivery worked for it the last time it was tried.', {
@@ -380,7 +419,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     languages: z.array(z.string()).max(8).optional().describe('Recognition languages in priority order, e.g. ["en-US"]; default: automatic'),
     fast: z.boolean().optional().describe('Faster, less accurate recognition'),
   }
-  tool('read_window_text', 'macOS. Read the text in a window with on-device OCR (Apple Vision), with each line\'s box in window points (screen point = the result\'s screen_origin + box). Works on apps that draw their own UI (Unreal, Blender) where get_ui_tree is empty, on covered windows, without activating anything, and costs a few dozen tokens instead of an image. No network.', {
+  tool('read_window_text', 'macOS. The text in a window by on-device OCR (Apple Vision), each line\'s box in window points (screen point = screen_origin + box). For apps that draw their own UI (Unreal, Blender) where get_ui_tree is empty, and covered windows; activates nothing, costs a few dozen tokens, no network.', {
     ...ocrTarget,
     min_confidence: z.number().min(0).max(1).optional().describe('Drop lines recognised with lower confidence (0-1)'),
   }, NONE_READ)
@@ -404,7 +443,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
   }, NONE_READ)
 
   // v7.6 R3: waits that replace sleep-and-screenshot loops (macOS: OCR and ScreenCaptureKit)
-  tool('wait_for_text', 'macOS. Wait until text appears in a window (or, with gone: true, disappears), polling the on-device OCR (default every 500 ms, minimum 200; fast recognition, confirmed with accurate before it returns). Returns the matched line with its box in window points and its screen point, as soon as it matches; on timeout an error listing the last lines read. Does not activate the app or move the cursor. Use instead of sleeping and taking screenshots.', {
+  tool('wait_for_text', 'macOS. Wait until text appears in a window (or, with gone: true, goes), by on-device OCR. Returns the matched line (box in window points, screen point); on timeout, the last lines read. Activates nothing. Use instead of sleeping and screenshots.', {
     text: z.string().min(1).describe('Text to wait for'),
     match: z.enum(['exact', 'contains', 'regex']).optional().default('contains').describe('exact: the whole line; contains: a case-insensitive substring; regex: a case-insensitive JavaScript regular expression'),
     gone: z.boolean().optional().default(false).describe('Wait for the text to disappear instead'),
@@ -413,7 +452,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     min_confidence: z.number().min(0).max(1).optional().describe('Ignore lines recognised with lower confidence (0-1)'),
     ...ocrTarget,
   }, NONE_READ)
-  tool('wait_for_stable', 'macOS. Wait until a window has stopped changing: it is captured repeatedly (ScreenCaptureKit, covered windows fine) and returns when consecutive captures have been identical for quiet_ms. Use after a click or load, before reading or clicking, instead of sleeping. Does not activate the app or move the cursor. On timeout returns an error with the number of changes seen.', {
+  tool('wait_for_stable', 'macOS. Wait until a window (covered is fine) stops changing: captures identical for quiet_ms. Use after a click or load instead of sleeping. Activates nothing. On timeout, how many changes were seen.', {
     target_app: ocrTarget.target_app,
     target_window_id: ocrTarget.target_window_id,
     target_title: ocrTarget.target_title,
@@ -431,7 +470,7 @@ export function defineV7Tools(registry: Pick<ToolRegistry, 'define' | 'getMeta'>
     clear: z.boolean().optional().default(false),
   }, NONE_READ)
   tool('get_target', 'Show the session target window (set by set_target or by the last activation, click or keystroke) and whether it is still on screen.', {}, NONE_READ)
-  tool('control_status', 'Whether the person has paused or stopped the agent from the desktop status card (state running | paused | stopped, since when, what the agent is waiting on). Read-only. Call it after a mutating tool returns paused_by_user or stopped_by_user.', {}, NONE_READ)
+  tool('control_status', 'Whether the person paused or stopped the agent from the status card (running | paused | stopped, since when, what it waits on, any hand-off). Call it after paused_by_user, stopped_by_user or handed_off.', {}, NONE_READ)
 
   // ── v5: Agent Spaces ────────────────────────────────────────────────────
   // macOS Space mutation uses best-effort backends selected by

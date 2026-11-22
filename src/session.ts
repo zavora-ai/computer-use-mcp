@@ -10,9 +10,10 @@ import { coerceArguments, withToolDefaults } from './registry/definitions.js'
 
 import { discoverApplications } from './session/application-discovery.js'
 import { okJson } from './result.js'
-import { loadNative, type NativeModule } from './native.js'
+import { offThread } from './session/native-async.js'
+import { describeLoadedAddon, loadNative, type NativeModule } from './native.js'
 import { DEFAULT_PROFILE, MUTATING_TOOLS, RUN_STEP_TOOLS, callMutates, getToolMeta, parseProfile, toolAvailableOn, toolInProfile } from './tool-catalog.js'
-import { applyContract, withRefusalAdvice, type Effect } from './session/contract.js'
+import { applyContract, targetArgs, withRefusalAdvice, type Effect } from './session/contract.js'
 import { sleep, sleepAbortable, defaultSpawnBounded } from './session/spawn.js'
 import type { SpawnBounded } from './session/spawn.js'
 import { FocusError, StructuredToolError, WindowNotFoundError } from './session/errors.js'
@@ -35,11 +36,14 @@ import { handleLinuxAccessibility } from './session/linux-atspi.js'
 import { handleAccessibilityTool } from './session/accessibility-handlers.js'
 import { SpacesHandler } from './session/spaces-handlers.js'
 import { ScreenshotHandler } from './session/screenshot-handlers.js'
-import { InputHandler } from './session/input-handlers.js'
+import { InputHandler, VERIFIABLE_TOOLS, pointerMotionFromEnv, type PointerMotion } from './session/input-handlers.js'
 import { ScriptingService } from './session/scripting-service.js'
 import { OpenAiCompatibilityHandler } from './session/openai-handler.js'
 import { handleCoreTool } from './session/core-handlers.js'
-import { handleAgentDesktopTool } from './session/agent-desktop-handlers.js'
+import { findText, handleAgentDesktopTool, mapOcrLines } from './session/agent-desktop-handlers.js'
+import { REDACTED, StepJournal, cleanArgs, exportSteps, holdsRedaction, textUnder, type JournalWindow, type RecordInput } from './session/step-journal.js'
+import { listClassifiedWindows, resolveAppWindow } from './session/window-select.js'
+import { BROWSERS, authHandoffEnabled, focusWall, textWall, titleWall, typesText, wallMessage, type Wall } from './session/auth-wall.js'
 import { createMacosHelper, type MacosHelper } from './session/macos-helper.js'
 import { defaultPidDeliveryPath, PidDeliveryStore } from './session/pid-delivery.js'
 import { createUserActivityGuard, type UserActivityGuard } from './session/user-activity.js'
@@ -175,10 +179,31 @@ export interface SessionOptions {
    * 7.7.0 (K2): the registry's argument check, so each run_steps step is validated exactly like a direct call. Absent
    * (a session without a registry, as in tests): steps are checked by tool name and availability only.
    */
+  /**
+   * 8.0: hand the desktop to the person when the agent is about to type into a sign-in or verification screen
+   * (default on; `COMPUTER_USE_AUTH_HANDOFF=off`). For an operator whose agent must sign in, e.g. to a test account.
+   */
+  authHandoff?: boolean
+  /**
+   * 8.0: `glide` makes clicks, drags and scrolls travel to their point, eased, so a person or a recording can follow the
+   * pointer (default `jump`; `COMPUTER_USE_POINTER_MOTION=glide`).
+   */
+  pointerMotion?: PointerMotion
+  /** 8.0: how often a hand-off's watcher polls (tests shorten it). */
+  handOffPollMs?: number
   validateArguments?: (tool: string, args: Record<string, unknown>) =>
     | { ok: true; args: Record<string, unknown> }
     | { ok: false; issues: Array<{ path: string; message: string }> }
 }
+
+/** 8.0: a sign-in or verification wall, where it was seen, and the window it was in. */
+type FoundWall = Wall & { source: 'focus' | 'title' | 'text'; window?: JournalWindow }
+/** 8.0: what ends a hand-off besides Resume: the window closing, text leaving it, or a detected wall moving on. */
+type HandOffWatch =
+  | { mode: 'window_gone' | 'text_gone'; windowId: number; title?: string; text?: string }
+  | { mode: 'wall'; windowId: number; title?: string; source: FoundWall['source'] }
+/** 8.0: how often the hand-off watcher looks (twice in a row must agree before it ends the hand-off). */
+export const HANDOFF_POLL_MS = 750
 
 const IS_WINDOWS = process.platform === 'win32'
 /** 7.7.0 (K5): tools that capture the screen, refused with the mutating ones while the screen is locked. */
@@ -230,6 +255,7 @@ export function createSession(opts: SessionOptions = {}): Session {
       // 7.6.1: apps hidden by prepare_display that the agent never restored come back when the session ends.
       try { focus.restoreHidden() } catch { /* best effort */ }
       try { liveWatcher.close() } catch { /* nothing was being watched */ }
+      stopHandOffWatch()
       try { control.close() } catch { /* the card is optional */ }
       try { inputHandler.releaseHeldKeys() } catch { /* nothing held */ }
       try { macosHelper?.close?.() } catch { /* the warm helper exits with this process anyway */ }
@@ -342,6 +368,7 @@ export function createSession(opts: SessionOptions = {}): Session {
     protectedRegion: () => control.cardRegion(),
     clearOfCard: points => control.clearOfCard(points),
     haltSignal: () => control.signal(),
+    pointerMotion: opts.pointerMotion ?? pointerMotionFromEnv(),
   })
   const scripting = new ScriptingService({ native: n, spawnBounded })
   const runScriptHelper = scripting.runScript.bind(scripting)
@@ -373,6 +400,8 @@ export function createSession(opts: SessionOptions = {}): Session {
       auditEnabled,
       auditLogPath,
       controlStatus: () => control.status(),
+      // 8.0: which addon loaded (only when this session loaded it; an embedding host's own native is its business).
+      addon: () => (opts.native ? undefined : describeLoadedAddon()),
       agentDesktop: async () => {
         const availability = macosHelper ? await macosHelper.ensure() : null
         return {
@@ -401,7 +430,7 @@ export function createSession(opts: SessionOptions = {}): Session {
   }
 
   /** Every reply through the result contract: effect, route and delivery on actions; hint and next_call on refusals. */
-  async function dispatch(
+  async function dispatchChecked(
     tool: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
@@ -411,6 +440,33 @@ export function createSession(opts: SessionOptions = {}): Session {
     const result = await dispatchRaw(tool, args, signal, onProgress, requestContext)
     if (requestContext?.preflight) return result
     return applyContract(tool, withToolDefaults(tool, args), result, process.platform, callable)
+  }
+
+  /**
+   * 8.0 (P2-11): every step tool that works is kept for export_steps, with the window it was aimed at. While a
+   * recording is checked (export_steps start), an action is also captured before and after, a click first reads the
+   * text under it, typing notes whether the focused field is sensitive, and a window that opens is noted.
+   */
+  async function dispatch(
+    tool: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    onProgress?: ProgressReporter,
+    requestContext?: SessionRequestContext,
+  ): Promise<ToolResult> {
+    if (requestContext?.preflight || !STEP_TOOLS.has(tool)) return dispatchChecked(tool, args, signal, onProgress, requestContext)
+    const window = windowFor(args)
+    const checked = journal.recording && MUTATING_TOOLS.has(tool)
+    const before = checked ? await beforeAction(tool, args, window, signal) : undefined
+    const sent = checked && VERIFIABLE_TOOLS.has(tool) && args.verify !== true ? { ...args, verify: true } : args
+    const result = await dispatchChecked(tool, sent, signal, onProgress, requestContext)
+    if (result.isError) return result
+    const entry: RecordInput = { tool, args: cleanArgs(args), checked, ...(window ? { window } : {}) }
+    const effect = result.structuredContent?.effect
+    if (typeof effect === 'string') entry.effect = effect as Effect
+    if (before) Object.assign(entry, await afterAction(before, window, signal))
+    journal.record(entry)
+    return result
   }
 
   async function dispatchRaw(
@@ -499,6 +555,30 @@ export function createSession(opts: SessionOptions = {}): Session {
 
     if (requestContext?.preflight) return { content: [{ type: 'text', text: JSON.stringify({ authorized: true, clientRoots: requestContext.clientRoots ?? opts.getClientRoots?.() }) }] }
 
+    // 8.0: a password or a one-time code is the person's to type. On a sign-in or verification screen the call is
+    // refused and the desktop handed to them until they press Resume.
+    if (mutates && authHandoff && typesText(tool, args)) {
+      const wall = await authWall(args, signal)
+      if (wall) {
+        const app = policyDecision.targetApp
+        const message = wallMessage(wall, app)
+        control.handOff({ kind: wall.kind, message, detected: true })
+        // 8.0: it ends by itself once the window closes or moves on to something that is no wall.
+        if (wall.window) watchHandOff({ mode: 'wall', windowId: wall.window.windowId, ...(wall.window.title ? { title: wall.window.title } : {}), source: wall.source })
+        const result = errJson({
+          error: 'sign_in_required', tool, kind: wall.kind, seen: wall.seen, asked: message,
+          ...(wall.window ? { resumes_when: 'the person presses Resume, or the window closes or moves past the sign-in' } : {}),
+          hint: `${wall.seen[0].toUpperCase()}${wall.seen.slice(1)}: the person was asked to do it. Tell them, then wait until control_status says running (it resumes when they finish, or on Resume).`.slice(0, 240),
+        })
+        writeAudit({
+          timestamp: startedAtIso, duration_ms: Date.now() - startedAt, tool, mutates,
+          args: redactAuditValue('args', args), policy: policyDecision,
+          result: { isError: true, text: result.content[0].type === 'text' ? result.content[0].text : undefined },
+        })
+        return result
+      }
+    }
+
     let acquired = false
     if (mutates) {
       try {
@@ -526,6 +606,9 @@ export function createSession(opts: SessionOptions = {}): Session {
     try {
       result = await (async (): Promise<ToolResult> => {
       if (tool === 'run_steps') return runSteps(args, signal, requestContext)
+      if (tool === 'export_steps') return exportStepsTool(args)
+      if (tool === 'hand_off') return handOffTool(args, signal)
+      if (tool === 'agent_pointer' && typeof args.text === 'string' && args.text) return pointAtText(args, signal)
       const clientRoots = requestContext?.clientRoots ?? opts.getClientRoots?.()
       const extracted = await handleAdminTool(tool, args, {
         spawnBounded,
@@ -662,6 +745,312 @@ export function createSession(opts: SessionOptions = {}): Session {
     return result
   }
 
+  // ── Record and replay (8.0, P2-11) ────────────────────────────────────────
+
+  const journal = new StepJournal()
+  const CLICK_TOOLS = new Set(['click', 'left_click', 'right_click', 'middle_click', 'double_click', 'triple_click'])
+
+  /** The window a call is aimed at: its window id, its app's main (or titled) window, or the session target's. */
+  const windowFor = (args: Record<string, unknown>): JournalWindow | undefined => {
+    try {
+      const id = typeof args.window_id === 'number' ? args.window_id : typeof args.target_window_id === 'number' ? args.target_window_id : undefined
+      const title = typeof args.target_title === 'string' && args.target_title ? args.target_title : undefined
+      const app = typeof args.target_app === 'string' && args.target_app ? args.target_app
+        : typeof args.bundle_id === 'string' && args.bundle_id ? args.bundle_id : undefined
+      const remembered = id === undefined && app === undefined ? targetController.observationWindow() : undefined
+      const record = id !== undefined ? n.getWindow(id)
+        : app !== undefined ? resolveAppWindow(n, app, title)
+          : remembered !== undefined ? n.getWindow(remembered) : undefined
+      if (!record) return undefined
+      return {
+        windowId: record.windowId,
+        ...(record.bundleId ? { bundleId: record.bundleId } : {}),
+        ...(record.title ? { title: record.title } : {}),
+        bounds: { x: record.bounds.x, y: record.bounds.y, width: record.bounds.width, height: record.bounds.height },
+      }
+    } catch { return undefined }
+  }
+
+  /** A hash of a window, or of a region of it ([x, y, width, height] in window points); undefined when it cannot be captured. */
+  const hashWindow = async (windowId: number | undefined, region?: readonly number[], signal?: AbortSignal): Promise<string | undefined> => {
+    try {
+      if (windowId !== undefined && macosHelper?.supportsCapture()) {
+        const area = region && region.length === 4 ? { x: region[0], y: region[1], width: region[2], height: region[3] } : undefined
+        return (await macosHelper.capture({ windowId, width: 480, format: 'jpeg', quality: 60, ...(area ? { region: area } : {}) }, signal)).hash
+      }
+      return (await offThread(n, 'takeScreenshot', 480, undefined, 60, undefined, windowId)).hash
+    } catch { return undefined }
+  }
+
+  interface BeforeAction { hash?: string; ownHash: boolean; app?: string; windows?: Set<number>; under?: RecordInput['under']; sensitive?: boolean }
+
+  async function beforeAction(tool: string, args: Record<string, unknown>, window: JournalWindow | undefined, signal?: AbortSignal): Promise<BeforeAction> {
+    const before: BeforeAction = { ownHash: !VERIFIABLE_TOOLS.has(tool) }
+    const app = window?.bundleId ?? (typeof args.target_app === 'string' && args.target_app ? args.target_app : undefined)
+    if (app) {
+      before.app = app
+      try { before.windows = new Set(n.listWindows(app).map(record => record.windowId)) } catch { /* no window list */ }
+    }
+    if (before.ownHash) before.hash = await hashWindow(window?.windowId, undefined, signal)
+    const point = Array.isArray(args.coordinate) && typeof args.coordinate[0] === 'number' && typeof args.coordinate[1] === 'number'
+      ? args.coordinate as [number, number] : undefined
+    if (CLICK_TOOLS.has(tool) && window && point && macosHelper) {
+      // A band around the click, not the whole window: Vision joins neighbouring labels into one long line, and a
+      // word's place inside a long line is only estimated (15 points out on Blender's header). The export keeps the band.
+      const wx = point[0] - window.bounds.x
+      const wy = point[1] - window.bounds.y
+      const width = Math.min(240, Math.round(window.bounds.width))
+      const height = Math.min(36, Math.round(window.bounds.height))
+      const x = Math.max(0, Math.min(Math.round(wx - width / 2), Math.round(window.bounds.width) - width))
+      const y = Math.max(0, Math.min(Math.round(wy - height / 2), Math.round(window.bounds.height) - height))
+      try {
+        const ocr = await macosHelper.ocr({ windowId: window.windowId, region: { x, y, width, height } }, signal)
+        const under = textUnder(mapOcrLines(ocr, window.bounds), wx, wy)
+        if (under) before.under = { ...under, region: [x, y, width, height] }
+      } catch { /* no text under the click */ }
+    }
+    if (tool === 'type' && typeof n.getFocusedElement === 'function') {
+      try { if (n.getFocusedElement()?.sensitive === true) before.sensitive = true } catch { /* unknown */ }
+    }
+    return before
+  }
+
+  async function afterAction(before: BeforeAction, window: JournalWindow | undefined, signal?: AbortSignal): Promise<Partial<RecordInput>> {
+    const after: Partial<RecordInput> = {}
+    if (before.ownHash) {
+      await sleep(250)
+      const hash = await hashWindow(window?.windowId, undefined, signal)
+      if (before.hash && hash) after.effect = before.hash === hash ? 'no_visible_change' : 'changed'
+    }
+    if (before.under) after.under = before.under
+    if (before.sensitive) after.sensitive = true
+    if (before.app && before.windows) {
+      try {
+        const known = before.windows
+        if (n.listWindows(before.app).some(record => !known.has(record.windowId))) {
+          const opened = listClassifiedWindows(n, before.app, { ax: true }).find(record => !known.has(record.windowId))
+          if (opened) after.opened = { kind: opened.kind, ...(opened.title ? { title: opened.title } : {}) }
+        }
+      } catch { /* no window list */ }
+    }
+    return after
+  }
+
+  /** export_steps: start (checked recording), stop, or export (default) the actions that worked as run_steps batches. */
+  function exportStepsTool(args: Record<string, unknown>): ToolResult {
+    if (args.action === 'start') {
+      const since = journal.start()
+      return okJson({
+        recording: true, since,
+        message: 'Recording: each action is now captured before and after, a click reads the text under it, and a window that opens is noted. Do the task, then call export_steps.',
+      })
+    }
+    const startedAt = args.action === 'stop' ? journal.stop() : undefined
+    const range = typeof args.since === 'number' ? { since: args.since }
+      : typeof args.last === 'number' ? { last: args.last }
+        : startedAt !== undefined ? { since: startedAt } : {}
+    const selected = journal.select(range)
+    const exported = exportSteps(selected)
+    const oldest = journal.oldestSeq()
+    const notes: string[] = []
+    if (selected.length === 0) notes.push('Nothing to export: actions are recorded as they succeed (run_steps steps included).')
+    else notes.push(`Replay with run_steps, passing ${exported.batches.length === 1 ? 'the batch' : 'each batch in turn'} as its arguments.`)
+    if (exported.unchecked.length) notes.push(`Steps ${exported.unchecked.join(', ')} have no expect (nothing confirmed what they did); add one, or record with export_steps start.`)
+    if (exported.redacted.length) notes.push(`Steps ${exported.redacted.join(', ')} hold a redacted value; run_steps refuses them until it is filled in.`)
+    if (typeof range.since === 'number' && oldest !== undefined && range.since + 1 < oldest) notes.push(`Only actions from ${oldest} on are kept (the last 300).`)
+    return okJson({
+      count: selected.length,
+      ...(selected.length ? { from_seq: selected[0].seq, to_seq: selected[selected.length - 1].seq } : {}),
+      next_since: journal.lastSeq,
+      recording: journal.recording,
+      batches: exported.batches,
+      // 8.0: when each exported step's action finished, in ms after the first, in step order across the batches.
+      ...(selected.length ? { started_at: new Date(selected[0].at).toISOString(), offsets_ms: selected.map(entry => entry.at - selected[0].at) } : {}),
+      ...(exported.unchecked.length ? { unchecked: exported.unchecked } : {}),
+      ...(exported.redacted.length ? { redacted: exported.redacted } : {}),
+      ...(exported.converted.length ? { by_text: exported.converted } : {}),
+      hint: notes.join(' '),
+    })
+  }
+
+  /**
+   * agent_pointer with text: find the text by OCR in the target window and move the pointer to it, for the person to
+   * see (guide mode). Nothing is clicked, focused or moved but the overlay.
+   */
+  async function pointAtText(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    const text = String(args.text)
+    if (!callable('read_window_text')) {
+      return errJson({ error: 'platform_unsupported', tool: 'agent_pointer', message: 'Pointing at text needs OCR (macOS); pass coordinate instead.' })
+    }
+    // Any window of the app (target_window_id, or target_app with target_title), and a region of it, as read_window_text takes them.
+    const target: Record<string, unknown> = {}
+    for (const key of ['target_app', 'target_window_id', 'target_title', 'region']) if (args[key] !== undefined) target[key] = args[key]
+    const read = await dispatchChecked('read_window_text', target, signal)
+    if (read.isError) return read
+    const body = (read.structuredContent ?? {}) as { lines?: Array<{ text: string; confidence: number; box: { x: number; y: number; w: number; h: number } }>; screen_origin?: { x: number; y: number } }
+    const lines = body.lines ?? []
+    // The label itself before a longer word that contains it ("View" before "ViewLayer").
+    const origin = body.screen_origin ?? { x: 0, y: 0 }
+    const word = `(?<![A-Za-z0-9])${text.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`
+    const exact = findText(lines, text, 'exact', origin)
+    let whole: ReturnType<typeof findText> = []
+    try { whole = findText(lines, word, 'regex', origin) } catch { whole = [] }
+    const matches = exact.length ? exact : whole.length ? whole : findText(lines, text, 'contains', origin)
+    const nth = typeof args.nth === 'number' && args.nth >= 1 ? Math.floor(args.nth) : 1
+    if (matches.length < nth) {
+      return errJson({
+        error: 'text_not_found', tool: 'agent_pointer', text, nth, matches: matches.length, seen: lines.slice(0, 30).map(line => line.text),
+        hint: 'The text was not read there; check seen for how it was read, narrow it with region, or point with coordinate.',
+      })
+    }
+    const chosen = matches[nth - 1]
+    virtualPointer.move(chosen.point.x, chosen.point.y, true)
+    return okJson({
+      ...virtualPointer.current(),
+      pointed_at: { text: chosen.matched, line: chosen.line.text, screen: chosen.point },
+      matches: matches.length,
+      ...(typeof args.label === 'string' && args.label ? { label: args.label } : {}),
+      nativeOverlay: virtualPointer.syncOverlay(args.native_overlay !== false),
+      note: 'Pointer overlay only; nothing was clicked and the cursor and focus did not change.',
+    })
+  }
+
+  // ── Hand-off to the person (8.0) ──────────────────────────────────────────
+
+  const authHandoff = opts.authHandoff ?? authHandoffEnabled()
+  const wallCache = new Map<number, { at: number; wall: Wall | undefined }>()
+
+  /**
+   * Whether the agent is about to type into a sign-in or verification screen: the focused field first (a protected
+   * field is a wall; a plain field the accessibility tree knows is not), then the window's title, then for browsers,
+   * whose page fields are often not in the tree, the window's text by OCR (kept 3 s per window).
+   */
+  async function authWall(args: Record<string, unknown>, signal?: AbortSignal): Promise<FoundWall | undefined> {
+    let focused: ReturnType<NativeModule['getFocusedElement']> = null
+    try { focused = typeof n.getFocusedElement === 'function' ? n.getFocusedElement() : null } catch { focused = null }
+    const byFocus = focusWall(focused)
+    if (byFocus === 'none') return undefined
+    const window = windowFor(args)
+    if (byFocus) return { ...byFocus, source: 'focus', window }
+    const byTitle = titleWall(window?.title)
+    if (byTitle) return { ...byTitle, source: 'title', window }
+    const wall = window ? await browserTextWall(window, signal) : undefined
+    return wall ? { ...wall, source: 'text', window } : undefined
+  }
+
+  /** A browser window's text, read by OCR (macOS), as a wall or none; kept 3 s per window. */
+  async function browserTextWall(window: JournalWindow, signal?: AbortSignal, fresh = false): Promise<Wall | undefined> {
+    if (!macosHelper || !window.bundleId || !BROWSERS.has(window.bundleId)) return undefined
+    const cached = wallCache.get(window.windowId)
+    if (!fresh && cached && Date.now() - cached.at < 3000) return cached.wall
+    let wall: Wall | undefined
+    try {
+      const ocr = await macosHelper.ocr({ windowId: window.windowId, fast: true }, signal)
+      wall = textWall(mapOcrLines(ocr, window.bounds).map(line => line.text))
+    } catch { wall = undefined }
+    wallCache.set(window.windowId, { at: Date.now(), wall })
+    return wall
+  }
+
+  // ── The hand-off ends by itself (8.0, roadmap H1) ─────────────────────────
+  //
+  // A hand-off used to end only on Resume or `hand_off done`. Now a watcher ends it when what the person was asked to
+  // do is visibly done: the sign-in window closed or moved on to a page that is no wall, the window named in
+  // `done_when: window_gone` closed, or the text named in `done_when: text_gone` left the window. It must hold on two
+  // polls in a row, and a person's own pause is never ended by it (`endHandOff` resumes only a hand-off).
+
+  let handOffWatch: ReturnType<typeof setInterval> | undefined
+
+  function stopHandOffWatch(): void {
+    if (handOffWatch) clearInterval(handOffWatch)
+    handOffWatch = undefined
+  }
+
+  /** Whether the watched condition holds now: the hand-off's work looks done. */
+  async function handOffDone(watch: HandOffWatch): Promise<boolean> {
+    const record = (() => { try { return n.getWindow(watch.windowId) } catch { return null } })()
+    if (!record) return true // the window closed
+    if (watch.mode === 'window_gone') return false
+    if (watch.mode === 'text_gone') {
+      if (!macosHelper || !watch.text) return false
+      try {
+        const ocr = await macosHelper.ocr({ windowId: watch.windowId, fast: true })
+        return findText(mapOcrLines(ocr, record.bounds), watch.text, 'contains').length === 0
+      } catch { return false }
+    }
+    if (watch.mode !== 'wall') return false
+    // A detected wall: the window moved on (its title changed) to something that is no wall.
+    const title = record.title ?? ''
+    if (title === (watch.title ?? '') || titleWall(title)) return false
+    // In a browser the next page (a code prompt after the password) can carry a neutral title, so its text is read
+    // again whatever showed the wall first; any other window has moved on.
+    const now: JournalWindow = { windowId: record.windowId, ...(record.bundleId ? { bundleId: record.bundleId } : {}), title, bounds: record.bounds }
+    return !(await browserTextWall(now, undefined, true))
+  }
+
+  function watchHandOff(watch: HandOffWatch): void {
+    stopHandOffWatch()
+    let met = 0
+    let busy = false
+    const timer = setInterval(() => {
+      if (busy) return
+      if (!control.status().handoff || control.state() === 'stopped') { stopHandOffWatch(); return }
+      busy = true
+      void handOffDone(watch).then(done => {
+        met = done ? met + 1 : 0
+        if (met >= 2 && handOffWatch === timer) {
+          stopHandOffWatch()
+          wallCache.clear()
+          control.endHandOff()
+        }
+      }, () => { met = 0 }).finally(() => { busy = false })
+    }, opts.handOffPollMs ?? HANDOFF_POLL_MS)
+    timer.unref?.()
+    handOffWatch = timer
+  }
+
+  /** hand_off: ask the person to do something only they should do; done: they said it is finished. */
+  async function handOffTool(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+    if (args.action === 'done') {
+      const resumed = control.endHandOff()
+      stopHandOffWatch()
+      wallCache.clear()
+      return okJson({ resumed, state: control.state(), ...(resumed ? {} : { message: 'Nothing was handed off; control_status says the state.' }) })
+    }
+    const message = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : 'Finish this step yourself.'
+    const kind = typeof args.kind === 'string' ? args.kind : 'other'
+    // 8.0: done_when names what ends it besides Resume: the target window closing, or text leaving it.
+    const doneWhen = args.done_when === 'window_gone' || args.done_when === 'text_gone' ? args.done_when : 'resume'
+    let watch: HandOffWatch | undefined
+    if (doneWhen !== 'resume') {
+      const text = typeof args.text === 'string' && args.text.trim() ? args.text.trim() : undefined
+      if (doneWhen === 'text_gone' && !text) return errJson({ error: 'invalid_arguments', tool: 'hand_off', message: 'done_when text_gone needs text: what should leave the window.' })
+      if (doneWhen === 'text_gone' && !callable('read_window_text')) {
+        return errJson({ error: 'platform_unsupported', tool: 'hand_off', message: 'done_when text_gone needs OCR (macOS); use window_gone, or resume.' })
+      }
+      const window = windowFor(args)
+      if (!window) return errJson({ error: 'window_not_found', tool: 'hand_off', message: `done_when ${doneWhen} needs the window to watch: target_app (or set_target) with the window on screen.` })
+      watch = { mode: doneWhen, windowId: window.windowId, ...(window.title ? { title: window.title } : {}), ...(text ? { text } : {}) }
+    }
+    if (!control.handOff({ kind, message })) {
+      return errJson({ error: 'stopped_by_user', tool: 'hand_off', message: 'The person stopped the agent; report what you have and finish.' })
+    }
+    if (watch) watchHandOff(watch)
+    const card = control.status().card
+    const waitMs = typeof args.wait_ms === 'number' ? Math.min(600_000, Math.max(0, args.wait_ms)) : 0
+    const started = Date.now()
+    while (waitMs > 0 && control.state() === 'paused' && Date.now() - started < waitMs && !signal?.aborted) await sleep(250)
+    const resumed = control.state() === 'running'
+    return okJson({
+      handed_off: true, asked: message, resumed, waitedMs: Date.now() - started,
+      ...(watch ? { done_when: doneWhen } : {}),
+      hint: resumed ? 'The person resumed: look at the screen before going on.'
+        : watch ? `It ends when the person presses Resume or ${doneWhen === 'window_gone' ? 'the window closes' : 'the text leaves the window'}; wait (control_status, or hand_off with wait_ms) until it says running.`
+        : card.enabled ? 'The status card asks the person and shows Resume. Tell them too; wait (control_status, or hand_off with wait_ms) until it says running.'
+          : 'No status card here: ask the person in the conversation, and when they say it is done call hand_off with action done.',
+    })
+  }
+
   // ── run_steps (7.7.0, K2) ─────────────────────────────────────────────────
 
   const STEP_TOOLS = new Set<string>(RUN_STEP_TOOLS)
@@ -680,13 +1069,20 @@ export function createSession(opts: SessionOptions = {}): Session {
       ...(typeof args.target_app === 'string' && args.target_app ? { target_app: args.target_app } : {}),
       ...(typeof args.target_window_id === 'number' ? { target_window_id: args.target_window_id } : {}),
     }
-    const planned: Array<{ tool: string; args: Record<string, unknown> }> = []
+    const planned: Array<{ tool: string; args: Record<string, unknown>; expect?: Record<string, unknown>; own: boolean }> = []
     const problems: Array<Record<string, unknown>> = []
     steps.forEach((step, index) => {
       const name = typeof step?.tool === 'string' ? step.tool : ''
       const given = step?.args && typeof step.args === 'object' ? step.args as Record<string, unknown> : {}
+      const expect = step && typeof (step as { expect?: unknown }).expect === 'object' && (step as { expect?: unknown }).expect !== null
+        ? (step as { expect: Record<string, unknown> }).expect : undefined
       if (!STEP_TOOLS.has(name)) { problems.push({ index, tool: name || null, message: 'not allowed in run_steps' }); return }
       if (!callable(name)) { problems.push({ index, tool: name, message: 'not available in this profile or on this platform' }); return }
+      // 8.0: an exported step whose secret was redacted is never sent as the placeholder.
+      if (holdsRedaction(given)) { problems.push({ index, tool: name, message: `holds "${REDACTED}": put the real value in first` }); return }
+      if (expect && typeof expect.text === 'string' && !callable('wait_for_text')) {
+        problems.push({ index, tool: name, message: 'expect.text needs OCR (macOS); use expect.changed or expect.window here' }); return
+      }
       // A step without its own target uses the batch's, when the tool takes one.
       const takesTarget = name !== 'wait' && name !== 'write_clipboard'
       const hasOwn = given.target_app !== undefined || given.target_window_id !== undefined || given.window_id !== undefined
@@ -697,7 +1093,7 @@ export function createSession(opts: SessionOptions = {}): Session {
         && merged.window_id === undefined && typeof batchTarget.target_window_id === 'number') merged.window_id = batchTarget.target_window_id
       const checked = opts.validateArguments ? opts.validateArguments(name, merged) : { ok: true as const, args: merged }
       if (!checked.ok) problems.push({ index, tool: name, issues: checked.issues })
-      else planned.push({ tool: name, args: checked.args })
+      else planned.push({ tool: name, args: checked.args, ...(expect ? { expect } : {}), own: hasOwn || given.target_title !== undefined })
     })
     if (problems.length > 0) {
       return errJson({
@@ -707,9 +1103,38 @@ export function createSession(opts: SessionOptions = {}): Session {
       })
     }
 
+    // 8.0: steps recorded with the window's frame move with the window; a window of another size refuses them all.
+    let offset: [number, number] | undefined
+    if (Array.isArray(args.frame) && args.frame.length === 4) {
+      const [fx, fy, fw, fh] = args.frame as number[]
+      const window = windowFor(batchTarget)
+      if (!window) {
+        return errJson({ error: 'window_not_found', tool: 'run_steps', message: 'No step ran: frame needs the target window on screen (target_app, target_window_id or set_target).' })
+      }
+      const { x, y, width, height } = window.bounds
+      if (Math.abs(width - fw) > 2 || Math.abs(height - fh) > 2) {
+        return errJson({
+          error: 'frame_changed', tool: 'run_steps',
+          message: `No step ran: the window is ${width}x${height}; the steps were recorded at ${fw}x${fh}.`,
+          recorded: [fx, fy, fw, fh], now: [x, y, width, height],
+        })
+      }
+      if (x !== fx || y !== fy) {
+        offset = [x - fx, y - fy]
+        for (const step of planned) {
+          if (step.own) continue
+          for (const key of ['coordinate', 'start_coordinate', 'path']) {
+            if (step.args[key] !== undefined) step.args[key] = shiftPoints(step.args[key], offset[0], offset[1])
+          }
+        }
+      }
+    }
+
     const records: Array<Record<string, unknown>> = []
     let failed: { index: number; result: ToolResult } | undefined
     let weakest: Effect = 'verified'
+    // 8.0: when each step started and how long it took, so chapters, captions and narration line up with a recording.
+    const batchStarted = Date.now()
     for (const [index, step] of planned.entries()) {
       // The person's pause or stop first: it also aborts the signal, and its refusal says more than "aborted".
       if (MUTATING_TOOLS.has(step.tool)) {
@@ -726,17 +1151,40 @@ export function createSession(opts: SessionOptions = {}): Session {
         break
       }
       control.begin(describeAction(step.tool, step.args, resolvedFor(step.args)), { mutates: MUTATING_TOOLS.has(step.tool) })
+      const checkTarget = expectTarget(batchTarget, step.args)
+      const region = Array.isArray(step.expect?.region) && step.expect.region.length === 4 ? step.expect.region as number[] : undefined
+      const beforeHash = typeof step.expect?.changed === 'boolean' ? await hashWindow(windowFor(checkTarget)?.windowId, region, signal) : undefined
+      const stepStarted = Date.now()
+      const seqBefore = journal.lastSeq
       const result = await dispatch(step.tool, step.args, signal, undefined, requestContext)
       control.finish(result.isError ? 'failed' : 'done')
       const reply = result.structuredContent ?? {}
       const summary = result.content.find(block => block.type === 'text')
       const record: Record<string, unknown> = {
         index, tool: step.tool, ok: !result.isError,
+        at_ms: stepStarted - batchStarted, ms: Date.now() - stepStarted,
         ...(summary && summary.type === 'text' ? { summary: summary.text.slice(0, 200) } : {}),
       }
       for (const key of ['effect', 'route', 'delivery', 'error', 'hint'] as const) if (reply[key] !== undefined) record[key] = reply[key]
       records.push(record)
       if (result.isError) { failed = { index, result }; break }
+      if (step.expect) {
+        const missed = await unmetExpect(step.expect, checkTarget, beforeHash, region, signal)
+        record.expect = missed ? 'unmet' : 'met'
+        // An authored check that held is what a replay of this step should check: export_steps keeps it (T8).
+        if (!missed && journal.lastSeq > seqBefore) journal.annotate(journal.lastSeq, { expect: step.expect })
+        if (missed) {
+          failed = {
+            index,
+            result: errJson({
+              error: 'expect_failed', expect: step.expect, ...missed,
+              hint: `${String(missed.message)} Look, then fix this step or the state before it.`.slice(0, 240),
+              next_call: { tool: 'screenshot', arguments: targetArgs(checkTarget) },
+            }),
+          }
+          break
+        }
+      }
       const effect = reply.effect as Effect | undefined
       if (effect && EFFECT_RANK[effect] < EFFECT_RANK[weakest]) weakest = effect
       if (!effect && MUTATING_TOOLS.has(step.tool) && EFFECT_RANK.unverified < EFFECT_RANK[weakest]) weakest = 'unverified'
@@ -757,7 +1205,10 @@ export function createSession(opts: SessionOptions = {}): Session {
     }
 
     const completed = records.filter(record => record.ok === true).length
-    const payload: Record<string, unknown> = { completed, total: planned.length, stopped_at: failed?.index ?? null, steps: records }
+    const payload: Record<string, unknown> = {
+      completed, total: planned.length, stopped_at: failed?.index ?? null, steps: records,
+      ...(offset ? { shifted: offset } : {}),
+    }
     if (failed) {
       // The steps before the failure ran and changed things; the reply says which, why the batch stopped, and the
       // failing step's own advice.
@@ -783,6 +1234,77 @@ export function createSession(opts: SessionOptions = {}): Session {
         }),
       },
     }
+  }
+
+  /** Move a point, or every point of a path, by (dx, dy). */
+  function shiftPoints(value: unknown, dx: number, dy: number): unknown {
+    if (!Array.isArray(value)) return value
+    if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') return [value[0] + dx, value[1] + dy, ...value.slice(2)]
+    return value.map(point => shiftPoints(point, dx, dy))
+  }
+
+  /** Where a step's expect is checked: the step's own target, else the batch's. */
+  function expectTarget(batchTarget: Record<string, unknown>, stepArgs: Record<string, unknown>): Record<string, unknown> {
+    const own: Record<string, unknown> = {}
+    for (const key of ['target_app', 'target_window_id', 'target_title']) if (stepArgs[key] !== undefined) own[key] = stepArgs[key]
+    if (typeof stepArgs.window_id === 'number' && own.target_window_id === undefined) own.target_window_id = stepArgs.window_id
+    return own.target_app !== undefined || own.target_window_id !== undefined ? own : { ...batchTarget, ...own }
+  }
+
+  /**
+   * 8.0: check a step's expect after it ran. undefined when it holds; otherwise what was seen instead, with a message.
+   * changed polls the window (or region) until it differs from before the step; window and text wait for them.
+   */
+  async function unmetExpect(
+    expect: Record<string, unknown>, target: Record<string, unknown>, beforeHash: string | undefined,
+    region: number[] | undefined, signal?: AbortSignal,
+  ): Promise<Record<string, unknown> | undefined> {
+    const timeout = typeof expect.timeout_ms === 'number' ? Math.min(30_000, Math.max(0, expect.timeout_ms)) : undefined
+    const gone = expect.gone === true
+    if (typeof expect.changed === 'boolean') {
+      const windowId = windowFor(target)?.windowId
+      if (!beforeHash) return { saw: { changed: null }, message: 'The target could not be captured before the step, so a change could not be checked.' }
+      const wait = timeout ?? (expect.changed ? 2000 : 300)
+      const deadline = Date.now() + wait
+      let after: string | undefined
+      if (expect.changed) {
+        for (;;) {
+          after = await hashWindow(windowId, region, signal)
+          if ((after && after !== beforeHash) || Date.now() >= deadline || signal?.aborted) break
+          await sleep(100)
+        }
+        if (!after || after === beforeHash) return { saw: { changed: false }, message: `Nothing changed in the ${region ? 'region' : 'window'} within ${wait} ms.` }
+      } else {
+        await sleep(wait)
+        after = await hashWindow(windowId, region, signal)
+        if (after && after !== beforeHash) return { saw: { changed: true }, message: `The ${region ? 'region' : 'window'} changed; this step was expected to leave it as it was.` }
+      }
+    }
+    if (expect.window && typeof expect.window === 'object') {
+      const wanted = expect.window as Record<string, unknown>
+      const app = typeof target.target_app === 'string' ? target.target_app : windowFor(target)?.bundleId
+      if (!app) return { saw: { window: null }, message: 'expect.window needs the app: give the batch a target_app.' }
+      const waited = await dispatchChecked('wait_for_window', {
+        target_app: app, ...(typeof wanted.kind === 'string' ? { kind: wanted.kind } : {}),
+        ...(typeof wanted.title === 'string' ? { title: wanted.title } : {}), ...(gone ? { gone: true } : {}),
+        timeout_ms: timeout ?? 3000,
+      }, signal)
+      if (waited.isError) {
+        const name = `${typeof wanted.kind === 'string' ? `${wanted.kind} ` : ''}window${typeof wanted.title === 'string' ? ` "${wanted.title}"` : ''}`
+        return { saw: { windows: waited.structuredContent?.windows ?? null }, message: gone ? `The ${name} did not close.` : `No ${name} appeared.` }
+      }
+    }
+    if (typeof expect.text === 'string' && expect.text) {
+      const match = expect.match === 'exact' || expect.match === 'regex' ? expect.match : undefined
+      const waited = await dispatchChecked('wait_for_text', {
+        ...target, text: expect.text, ...(match ? { match } : {}), ...(gone ? { gone: true } : {}), ...(region ? { region } : {}),
+        timeout_ms: timeout ?? 3000,
+      }, signal)
+      if (waited.isError) {
+        return { saw: { seen: waited.structuredContent?.seen ?? null }, message: gone ? `"${expect.text}" was still there.` : `"${expect.text}" did not appear.` }
+      }
+    }
+    return undefined
   }
 
   /** The app and window a call is aimed at, as the policy and the target state resolve them, for the status card. */
